@@ -1,0 +1,12 @@
+insightface
+onnxruntime
+pillow-heif
+scikit-learn
+opencv-python-headless
+tqdm
+Pillow
+numpy
+fastapi
+uvicorn[standard]
+sqlalchemy
+python-multipart
