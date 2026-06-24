@@ -12,6 +12,8 @@ a = Analysis(
     datas=[
         (str(ROOT / 'frontend' / 'dist'), 'frontend_dist'),
         (str(ROOT / 'frontend' / 'public' / 'favicon.png'), '.'),
+        # insightface's pickle_object.py looks for sys._MEIPASS/objects/*.pkl when frozen
+        (str(ROOT / '.venv/Lib/site-packages/insightface/data/objects'), 'objects'),
     ],
     hiddenimports=[
         # insightface
