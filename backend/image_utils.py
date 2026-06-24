@@ -25,14 +25,19 @@ def load_image_bgr(path: Path) -> np.ndarray | None:
             return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         except Exception:
             return None
-    img = cv2.imread(str(path))
-    if img is None:
-        try:
-            pil = Image.open(path).convert("RGB")
-            return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
-        except Exception:
-            return None
-    return img
+    # cv2.imread fails silently on Windows with non-ASCII paths; use imdecode instead
+    try:
+        buf = np.fromfile(str(path), dtype=np.uint8)
+        img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if img is not None:
+            return img
+    except Exception:
+        pass
+    try:
+        pil = Image.open(path).convert("RGB")
+        return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+    except Exception:
+        return None
 
 
 def crop_thumbnail(img_bgr: np.ndarray, bbox: np.ndarray, size: int = 160) -> np.ndarray:
