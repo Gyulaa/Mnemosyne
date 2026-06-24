@@ -6,6 +6,7 @@ Usage:
   ./dist/Mnemosyne/Mnemosyne  (packaged build)
 """
 
+import mimetypes
 import os
 import sys
 import socket
@@ -13,6 +14,12 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
+
+# Windows registry often maps .js → text/plain; override to ensure correct MIME types
+mimetypes.add_type('application/javascript', '.js')
+mimetypes.add_type('application/javascript', '.mjs')
+mimetypes.add_type('text/css', '.css')
+mimetypes.add_type('image/svg+xml', '.svg')
 
 # ── Path resolution: frozen (PyInstaller) vs development ──────────────────────
 if getattr(sys, 'frozen', False):
@@ -43,7 +50,15 @@ def _free_port() -> int:
 
 
 def _open_browser(port: int) -> None:
-    time.sleep(2.5)
+    # Wait until the server actually responds before opening the browser
+    import urllib.request
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen(f'http://127.0.0.1:{port}/', timeout=1)
+            break
+        except Exception:
+            time.sleep(0.5)
     webbrowser.open(f'http://localhost:{port}')
 
 
