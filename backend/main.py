@@ -8,7 +8,8 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import update as sql_update, func
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy import update as sql_update, func, nullslast
 from sqlalchemy.orm import Session
 from starlette.responses import Response, FileResponse
 
@@ -160,29 +161,144 @@ def stats(db: Session = Depends(get_db)):
 
 @app.get("/api/images")
 def list_images(
-    status: Optional[str] = None,
-    limit: int = Query(default=100, le=1000),
-    offset: int = 0,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    filter: str = Query(default="all"),  # all / done / no_face / error / pending
+    search: str = Query(default=""),
+    sort: str = Query(default="id_desc"),  # id_desc / exif_date_desc / exif_date_asc / filename_asc
+    include_person_ids: str = Query(default=""),  # comma-separated — show only images with these persons
+    include_mode: str = Query(default="or"),  # or = any person present, and = all persons must be present
+    exclude_person_ids: str = Query(default=""),  # comma-separated — hide images with these persons
     db: Session = Depends(get_db),
 ):
     q = db.query(DBImage)
-    if status:
-        q = q.filter(DBImage.scan_status == status)
+    if filter != "all":
+        q = q.filter(DBImage.scan_status == filter)
+    if search.strip():
+        q = q.filter(DBImage.path.ilike(f"%{search.strip()}%"))
+
+    if include_person_ids.strip():
+        inc_ids = [int(x) for x in include_person_ids.split(",") if x.strip().isdigit()]
+        if inc_ids:
+            if include_mode == "and":
+                # AND: each person must appear — one subquery filter per person
+                for pid in inc_ids:
+                    subq = (
+                        db.query(DBFace.image_id)
+                        .join(DBCluster)
+                        .filter(DBCluster.person_id == pid)
+                        .distinct()
+                        .scalar_subquery()
+                    )
+                    q = q.filter(DBImage.id.in_(subq))
+            else:
+                # OR: any of the persons must appear
+                incl_subq = (
+                    db.query(DBFace.image_id)
+                    .join(DBCluster)
+                    .filter(DBCluster.person_id.in_(inc_ids))
+                    .distinct()
+                    .scalar_subquery()
+                )
+                q = q.filter(DBImage.id.in_(incl_subq))
+
+    if exclude_person_ids.strip():
+        exc_ids = [int(x) for x in exclude_person_ids.split(",") if x.strip().isdigit()]
+        if exc_ids:
+            excl_subq = (
+                db.query(DBFace.image_id)
+                .join(DBCluster)
+                .filter(DBCluster.person_id.in_(exc_ids))
+                .distinct()
+                .scalar_subquery()
+            )
+            q = q.filter(DBImage.id.notin_(excl_subq))
+
     total = q.count()
-    items = q.order_by(DBImage.id).offset(offset).limit(limit).all()
+    if sort == "exif_date_desc":
+        q = q.order_by(nullslast(DBImage.exif_date.desc()), DBImage.id.desc())
+    elif sort == "exif_date_asc":
+        q = q.order_by(nullslast(DBImage.exif_date.asc()), DBImage.id.asc())
+    elif sort == "filename_asc":
+        q = q.order_by(DBImage.path.asc())
+    else:
+        q = q.order_by(DBImage.id.desc())
+    items = q.offset((page - 1) * page_size).limit(page_size).all()
+
+    status_counts = dict(
+        db.query(DBImage.scan_status, func.count(DBImage.id))
+        .group_by(DBImage.scan_status)
+        .all()
+    )
+
+    image_ids = [img.id for img in items]
+    if image_ids:
+        face_counts = dict(
+            db.query(DBFace.image_id, func.count(DBFace.id))
+            .filter(DBFace.image_id.in_(image_ids))
+            .group_by(DBFace.image_id)
+            .all()
+        )
+        first_face_ids = dict(
+            db.query(DBFace.image_id, func.min(DBFace.id))
+            .filter(DBFace.image_id.in_(image_ids))
+            .group_by(DBFace.image_id)
+            .all()
+        )
+    else:
+        face_counts = {}
+        first_face_ids = {}
+
     return {
         "total": total,
+        "page": page,
+        "page_size": page_size,
+        "status_counts": {
+            "done": status_counts.get("done", 0),
+            "no_face": status_counts.get("no_face", 0),
+            "error": status_counts.get("error", 0),
+            "pending": status_counts.get("pending", 0),
+        },
         "items": [
             {
-                "id": i.id,
-                "path": i.path,
-                "scan_status": i.scan_status,
-                "face_count": len(i.faces),
-                "exif_date": i.exif_date.isoformat() if i.exif_date else None,
+                "id": img.id,
+                "path": img.path,
+                "filename": Path(img.path).name,
+                "folder": str(Path(img.path).parent),
+                "scan_status": img.scan_status,
+                "error_msg": img.error_msg,
+                "scanned_at": img.scanned_at.isoformat() if img.scanned_at else None,
+                "exif_date": img.exif_date.isoformat() if img.exif_date else None,
+                "meta_json": img.meta_json,
+                "face_count": face_counts.get(img.id, 0),
+                "first_face_id": first_face_ids.get(img.id),
             }
-            for i in items
+            for img in items
         ],
     }
+
+
+@app.post("/api/images/bulk-delete")
+def bulk_delete_images(body: dict, db: Session = Depends(get_db)):
+    image_ids = body.get("image_ids", [])
+    if not image_ids:
+        return {"ok": True, "count": 0}
+    images = db.query(DBImage).filter(DBImage.id.in_(image_ids)).all()
+    count = len(images)
+    for img in images:
+        db.delete(img)
+    db.commit()
+    return {"ok": True, "count": count}
+
+
+@app.delete("/api/images/{image_id}")
+def delete_image(image_id: int, db: Session = Depends(get_db)):
+    img = db.get(DBImage, image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+    db.delete(img)
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/images/{image_id}/view")
@@ -552,10 +668,28 @@ def split_cluster(
 
 
 @app.get("/api/clusters/{cluster_id}/faces")
-def get_cluster_faces(cluster_id: int, db: Session = Depends(get_db)):
+def get_cluster_faces(
+    cluster_id: int,
+    sort: str = Query(default="id_asc"),  # id_asc / exif_date_asc / exif_date_desc
+    db: Session = Depends(get_db),
+):
     cluster = db.get(DBCluster, cluster_id)
     if not cluster:
         raise HTTPException(404, "Cluster not found")
+
+    q = db.query(DBFace).filter(DBFace.cluster_id == cluster_id)
+    if sort == "exif_date_asc":
+        q = q.join(DBImage, DBFace.image_id == DBImage.id).order_by(
+            nullslast(DBImage.exif_date.asc()), DBFace.id.asc()
+        )
+    elif sort == "exif_date_desc":
+        q = q.join(DBImage, DBFace.image_id == DBImage.id).order_by(
+            nullslast(DBImage.exif_date.desc()), DBFace.id.desc()
+        )
+    else:
+        q = q.order_by(DBFace.id.asc())
+    faces = q.all()
+
     return [
         {
             "id": f.id,
@@ -564,8 +698,111 @@ def get_cluster_faces(cluster_id: int, db: Session = Depends(get_db)):
             "bbox": json.loads(f.bbox_json),
             "det_score": round(f.det_score, 3),
         }
-        for f in cluster.faces
+        for f in faces
     ]
+
+
+@app.get("/api/clusters/{cluster_id}/connections")
+def cluster_connections(cluster_id: int, db: Session = Depends(get_db)):
+    """Co-occurrence list for a single cluster's person: who they appear with and how many shared photos."""
+    from collections import defaultdict
+
+    cluster = db.get(DBCluster, cluster_id)
+    if not cluster or not cluster.person_id:
+        return []
+
+    person_id = cluster.person_id
+
+    rows = (
+        db.query(DBFace.image_id, DBCluster.person_id)
+        .join(DBCluster)
+        .filter(DBCluster.person_id != None, DBCluster.label != -1)
+        .all()
+    )
+
+    image_person_pairs = {(r.image_id, r.person_id) for r in rows}
+    image_to_persons: dict[int, set[int]] = defaultdict(set)
+    for image_id, pid in image_person_pairs:
+        image_to_persons[image_id].add(pid)
+
+    co_counts: dict[int, int] = defaultdict(int)
+    for persons in image_to_persons.values():
+        if person_id in persons:
+            for other_pid in persons:
+                if other_pid != person_id:
+                    co_counts[other_pid] += 1
+
+    result = []
+    for other_pid, count in sorted(co_counts.items(), key=lambda x: -x[1]):
+        person = db.get(DBPerson, other_pid)
+        if not person or not person.name:
+            continue
+        their_cluster = next((c for c in person.clusters if c.label != -1), None)
+        result.append({
+            "person_id": other_pid,
+            "person_name": person.name,
+            "shared_photos": count,
+            "cluster_id": their_cluster.id if their_cluster else None,
+            "thumbnail_face_id": person.thumbnail_face_id,
+        })
+
+    return result
+
+
+# ── Connections (co-occurrence graph) ────────────────────────────────────────
+
+@app.get("/api/connections")
+def get_connections(min_photos: int = Query(default=1, ge=1), db: Session = Depends(get_db)):
+    """Co-occurrence graph: named persons as nodes, shared-photo count as edge weight."""
+    from collections import defaultdict
+    from itertools import combinations
+
+    # All (image_id, person_id) pairs where the person has a name
+    rows = (
+        db.query(DBFace.image_id, DBCluster.person_id)
+        .join(DBCluster)
+        .filter(DBCluster.person_id != None, DBCluster.label != -1)
+        .all()
+    )
+
+    # Deduplicate: one entry per (image, person) regardless of face count
+    image_person_pairs = {(r.image_id, r.person_id) for r in rows}
+
+    image_to_persons: dict[int, set[int]] = defaultdict(set)
+    person_photo_count: dict[int, int] = defaultdict(int)
+    for image_id, person_id in image_person_pairs:
+        image_to_persons[image_id].add(person_id)
+        person_photo_count[person_id] += 1
+
+    # Pairwise co-occurrence counts
+    pair_counts: dict[tuple[int, int], int] = defaultdict(int)
+    for persons in image_to_persons.values():
+        for a, b in combinations(sorted(persons), 2):
+            pair_counts[(a, b)] += 1
+
+    persons = db.query(DBPerson).filter(DBPerson.name != None).all()
+
+    edges = [
+        {"source": a, "target": b, "weight": count}
+        for (a, b), count in pair_counts.items()
+        if count >= min_photos
+    ]
+
+    # Only include persons that actually appear in at least one edge
+    connected_ids = {e["source"] for e in edges} | {e["target"] for e in edges}
+    nodes = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "face_count": sum(len(c.faces) for c in p.clusters),
+            "photo_count": person_photo_count.get(p.id, 0),
+            "thumbnail_face_id": p.thumbnail_face_id,
+        }
+        for p in persons
+        if p.id in connected_ids
+    ]
+
+    return {"nodes": nodes, "edges": edges}
 
 
 # ── Persons ───────────────────────────────────────────────────────────────────
@@ -630,3 +867,23 @@ def face_thumbnail(face_id: int, size: int = 160, db: Session = Depends(get_db))
     thumb = crop_thumbnail(img, np.array(json.loads(face.bbox_json)), size)
     _, buf = cv2.imencode(".jpg", thumb)
     return Response(content=bytes(buf), media_type="image/jpeg")
+
+
+# ── Static frontend (production build) ────────────────────────────────────────
+# Must be registered LAST so /api/* routes always take precedence.
+_bundle_dir = Path(os.environ.get('MNEMOSYNE_BUNDLE_DIR', str(Path(__file__).parent.parent)))
+_dist = _bundle_dir / 'frontend_dist'
+if not _dist.exists():
+    _dist = Path(__file__).parent.parent / 'frontend' / 'dist'
+
+if _dist.exists():
+    _assets = _dist / 'assets'
+    if _assets.exists():
+        app.mount('/assets', StaticFiles(directory=str(_assets)), name='assets')
+
+    @app.get('/{full_path:path}', include_in_schema=False)
+    async def _spa_fallback(full_path: str):
+        candidate = _dist / full_path
+        if candidate.exists() and candidate.is_file():
+            return FileResponse(str(candidate))
+        return FileResponse(str(_dist / 'index.html'))

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import FolderPicker from './FolderPicker'
@@ -78,7 +78,7 @@ export default function ScanTab() {
             <button
               onClick={() => startMut.mutate()}
               disabled={!path.trim() || startMut.isPending}
-              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
+              className="px-5 py-2.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
             >
               {startMut.isPending ? 'Starting…' : 'Start scan'}
             </button>
@@ -95,7 +95,7 @@ export default function ScanTab() {
       {status && status.total > 0 && (
         <section className="space-y-2">
           <div className="flex justify-between text-sm">
-            <span className={isRunning ? 'text-blue-400' : 'text-zinc-400'}>
+            <span className={isRunning ? 'text-brand-400' : 'text-zinc-400'}>
               {isRunning ? 'Scanning…' : 'Scan complete'}
             </span>
             <span className="text-zinc-400 tabular-nums">
@@ -107,7 +107,7 @@ export default function ScanTab() {
           </div>
           <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
             <div
-              className="h-full bg-blue-500 rounded-full transition-all duration-500"
+              className="h-full bg-brand-400 rounded-full transition-all duration-500"
               style={{ width: `${progress}%` }}
             />
           </div>
@@ -190,7 +190,7 @@ function StatCard({
 }) {
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-      <div className={`text-2xl font-bold tabular-nums ${accent ? 'text-blue-400' : 'text-zinc-100'}`}>
+      <div className={`text-2xl font-bold tabular-nums ${accent ? 'text-brand-400' : 'text-zinc-100'}`}>
         {value.toLocaleString()}
       </div>
       <div className="text-xs text-zinc-500 mt-1">{label}</div>
@@ -215,7 +215,7 @@ function NumberInput({
         max={max}
         value={value}
         onChange={e => onChange(parseFloat(e.target.value))}
-        className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-center tabular-nums focus:outline-none focus:border-blue-500 transition-colors"
+        className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-center tabular-nums focus:outline-none focus:border-brand-400 transition-colors"
       />
     </label>
   )

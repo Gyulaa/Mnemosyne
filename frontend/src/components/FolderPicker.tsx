@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { FsItem } from '../types'
@@ -19,7 +19,7 @@ export default function FolderPicker({ value, onChange }: Props) {
           value={value}
           onChange={e => onChange(e.target.value)}
           placeholder="D:\Photos\Family"
-          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-blue-500 transition-colors"
+          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-brand-400 transition-colors"
         />
         <button
           onClick={() => setOpen(true)}
@@ -132,7 +132,7 @@ function FsBrowserModal({
           <button
             onClick={() => path && onSelect(path)}
             disabled={!path}
-            className="flex-shrink-0 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
+            className="flex-shrink-0 px-4 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
           >
             Select folder
           </button>

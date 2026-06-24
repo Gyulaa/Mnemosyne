@@ -35,6 +35,55 @@ export interface FaceInfo {
   det_score: number
 }
 
+export interface GraphNode {
+  id: number
+  name: string
+  face_count: number
+  photo_count: number
+  thumbnail_face_id: number | null
+}
+
+export interface GraphEdge {
+  source: number
+  target: number
+  weight: number
+}
+
+export interface ConnectionsData {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
+export interface ImageItem {
+  id: number
+  path: string
+  filename: string
+  folder: string
+  scan_status: 'pending' | 'done' | 'no_face' | 'error'
+  error_msg: string | null
+  scanned_at: string | null
+  exif_date: string | null
+  meta_json: string | null
+  face_count: number
+  first_face_id: number | null
+}
+
+export interface ImagesPage {
+  total: number
+  page: number
+  page_size: number
+  status_counts: { done: number; no_face: number; error: number; pending: number }
+  items: ImageItem[]
+}
+
+export interface ClusterConnection {
+  person_id: number
+  person_name: string
+  shared_photos: number
+  cluster_id: number | null
+  thumbnail_face_id: number | null
+}
+
 export interface SimilarFaceInfo extends FaceInfo {
   similarity: number
 }

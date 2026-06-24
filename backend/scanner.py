@@ -43,12 +43,32 @@ def _extract_exif_date(path: Path) -> datetime | None:
         pil = Image.open(path)
         exif = pil._getexif()
         if exif:
-            date_str = exif.get(36867) or exif.get(36868)
+            date_str = exif.get(36867) or exif.get(36868)  # DateTimeOriginal / DateTimeDigitized
             if date_str:
                 return datetime.strptime(str(date_str), "%Y:%m:%d %H:%M:%S")
     except Exception:
         pass
     return None
+
+
+def _extract_meta_json(path: Path) -> str | None:
+    """Return a JSON string with width, height, make, model from EXIF."""
+    import json as _json
+    try:
+        from PIL import Image
+        pil = Image.open(path)
+        w, h = pil.size
+        meta: dict = {"width": w, "height": h}
+        try:
+            exif = pil._getexif()
+            if exif:
+                if exif.get(271): meta["make"]  = str(exif[271]).strip()
+                if exif.get(272): meta["model"] = str(exif[272]).strip()
+        except Exception:
+            pass
+        return _json.dumps(meta)
+    except Exception:
+        return None
 
 
 def _run(root_path: str, session_factory, det_size: int):
@@ -110,10 +130,11 @@ def _run(root_path: str, session_factory, det_size: int):
                 faces = app.get(bgr)
 
                 img_rec.scanned_at = datetime.utcnow()
+                img_rec.exif_date  = _extract_exif_date(Path(img_rec.path))
+                img_rec.meta_json  = _extract_meta_json(Path(img_rec.path))
                 if not faces:
                     img_rec.scan_status = "no_face"
                 else:
-                    img_rec.exif_date = _extract_exif_date(Path(img_rec.path))
                     img_rec.scan_status = "done"
                     for face in faces:
                         if face.embedding is None:

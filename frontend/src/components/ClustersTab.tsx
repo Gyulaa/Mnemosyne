@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { Cluster, FaceInfo, SimilarFaceInfo } from '../types'
+import type { Cluster, ClusterConnection, FaceInfo, SimilarFaceInfo } from '../types'
 
-type ModalTab = 'faces' | 'photos' | 'merge'
+type ModalTab = 'faces' | 'photos' | 'merge' | 'connections'
 
 // ── ClustersTab ───────────────────────────────────────────────────────────────
 
@@ -108,7 +108,7 @@ function ClusterCard({ cluster, onClick }: { cluster: Cluster; onClick: () => vo
   return (
     <button
       onClick={onClick}
-      className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden hover:border-zinc-600 hover:shadow-lg transition-all text-left group focus:outline-none focus:border-blue-500"
+      className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden hover:border-zinc-600 hover:shadow-lg transition-all text-left group focus:outline-none focus:border-brand-400"
     >
       <div className="grid grid-cols-2 gap-px bg-zinc-800">
         {([0, 1, 2, 3] as const).map(i => (
@@ -128,7 +128,7 @@ function ClusterCard({ cluster, onClick }: { cluster: Cluster; onClick: () => vo
       </div>
       <div className="px-3 py-2.5">
         {cluster.person_name ? (
-          <div className="text-sm font-semibold text-blue-400 truncate">{cluster.person_name}</div>
+          <div className="text-sm font-semibold text-zinc-100 truncate">{cluster.person_name}</div>
         ) : (
           <div className="text-sm font-medium text-zinc-400 truncate">
             Cluster {String(cluster.label).padStart(3, '0')}
@@ -165,6 +165,9 @@ function ClusterModal({
   const [showSplit, setShowSplit] = useState(false)
   const [splitting, setSplitting] = useState(false)
   const [splitMsg, setSplitMsg] = useState<string | null>(null)
+  const [photoSort, setPhotoSort] = useState<'id_asc' | 'exif_date_asc' | 'exif_date_desc'>(() =>
+    (localStorage.getItem('cluster_photo_sort') as 'id_asc' | 'exif_date_asc' | 'exif_date_desc') ?? 'exif_date_asc'
+  )
 
   function handleViewOriginal(imageId: number) {
     setJumpTo({ imageId })
@@ -198,8 +201,15 @@ function ClusterModal({
   }
 
   const { data: faces = [], isLoading: facesLoading } = useQuery({
-    queryKey: ['cluster-faces', cluster.id],
-    queryFn: () => api.cluster.faces(cluster.id),
+    queryKey: ['cluster-faces', cluster.id, photoSort],
+    queryFn: () => api.cluster.faces(cluster.id, photoSort),
+    staleTime: 60_000,
+  })
+
+  const { data: clusterConns = [], isLoading: connsLoading } = useQuery({
+    queryKey: ['cluster-connections', cluster.id],
+    queryFn: () => api.cluster.connections(cluster.id),
+    enabled: tab === 'connections' && !isNoise && cluster.person_id != null,
     staleTime: 60_000,
   })
 
@@ -281,7 +291,7 @@ function ClusterModal({
                       onChange={e => setPersonName(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && saveName()}
                       placeholder="Add a name…"
-                      className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                      className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400"
                     />
                     <button
                       onClick={saveName}
@@ -289,7 +299,7 @@ function ClusterModal({
                       className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
                         nameUnchanged
                           ? 'bg-zinc-800 text-zinc-500 cursor-default'
-                          : 'bg-blue-600 hover:bg-blue-500 text-white'
+                          : 'bg-brand-500 hover:bg-brand-400 text-white'
                       }`}
                     >
                       {saving ? 'Saving…' : isSaved ? 'Saved ✓' : 'Save'}
@@ -331,6 +341,18 @@ function ClusterModal({
                     : 'Merge into…'}
                 </button>
               ))}
+              {cluster.person_id != null && (
+                <button
+                  onClick={() => { setTab('connections'); setShowSplit(false) }}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                    tab === 'connections' && !showSplit
+                      ? 'bg-zinc-700 text-zinc-100'
+                      : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+                  }`}
+                >
+                  Connections
+                </button>
+              )}
               {cluster.face_count >= 6 && (
                 <button
                   onClick={() => { setShowSplit(s => !s); setSplitMsg(null) }}
@@ -418,12 +440,68 @@ function ClusterModal({
               onFacesChanged={handleFacesChanged}
             />
           ) : tab === 'photos' ? (
-            <PhotoGallery faces={faces} jumpTo={jumpTo} />
+            <PhotoGallery
+              faces={faces}
+              jumpTo={jumpTo}
+              sort={photoSort}
+              onSortChange={s => {
+                setPhotoSort(s)
+                localStorage.setItem('cluster_photo_sort', s)
+              }}
+            />
+          ) : tab === 'connections' ? (
+            connsLoading
+              ? <p className="text-center text-zinc-600 py-10 text-sm">Loading…</p>
+              : <ConnectionsPanel connections={clusterConns} />
           ) : (
             <MergePanel cluster={cluster} otherClusters={otherClusters} onMerged={onClose} />
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── ConnectionsPanel ─────────────────────────────────────────────────────────
+
+function ConnectionsPanel({ connections }: { connections: ClusterConnection[] }) {
+  if (!connections.length) {
+    return (
+      <div className="py-12 text-center space-y-1">
+        <p className="text-zinc-500 text-sm">No shared photos with other named persons yet.</p>
+        <p className="text-zinc-600 text-xs">Name more clusters to see connections appear here.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-1 py-2">
+      <p className="text-xs text-zinc-600 px-2 pb-2">
+        {connections.length} person{connections.length !== 1 ? 's' : ''} appear in shared photos with this person.
+      </p>
+      {connections.map(c => (
+        <div
+          key={c.person_id}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-zinc-800 transition-colors"
+        >
+          <div className="w-8 h-8 rounded-full overflow-hidden bg-zinc-800 shrink-0">
+            {c.thumbnail_face_id != null ? (
+              <img
+                src={api.faceThumbnailUrl(c.thumbnail_face_id, 64)}
+                alt=""
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-xs font-bold text-zinc-400">
+                {c.person_name.charAt(0).toUpperCase()}
+              </div>
+            )}
+          </div>
+          <span className="flex-1 text-sm text-zinc-200 font-medium">{c.person_name}</span>
+          <span className="tabular-nums text-sm text-zinc-300 font-semibold">{c.shared_photos}</span>
+          <span className="text-xs text-zinc-600">shared photo{c.shared_photos !== 1 ? 's' : ''}</span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -478,14 +556,15 @@ function FaceGrid({
 
   return (
     <>
-      {/* Sticky selection toolbar */}
+      {/* Selection toolbar — sticky at top of the modal scroll area.
+          -top-4 counteracts the container's pt-4 so no gap appears when sticky triggers. */}
       {selected.size > 0 && (
-        <div className="sticky top-0 z-10 -mx-4 -mt-4 px-4 pt-3 pb-2 mb-3 bg-zinc-900 border-b border-zinc-800/60 flex items-center gap-3">
-          <span className="text-xs text-zinc-400 font-medium">{selected.size} selected</span>
+        <div className="sticky -top-4 z-10 -mx-4 -mt-4 px-4 pt-3 pb-2.5 mb-3 bg-zinc-900 border-b border-zinc-800 flex items-center gap-3">
+          <span className="text-xs text-zinc-300 font-semibold tabular-nums">{selected.size} selected</span>
           <button
             onClick={() => setAssigning(true)}
             disabled={busy}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
+            className="px-3 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
           >
             Assign to…
           </button>
@@ -498,7 +577,7 @@ function FaceGrid({
           </button>
           <button
             onClick={() => setSelected(new Set())}
-            className="ml-auto text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+            className="ml-auto text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
           >
             Deselect all
           </button>
@@ -513,7 +592,7 @@ function FaceGrid({
             <div
               key={f.id}
               className={`relative aspect-square rounded-lg overflow-hidden bg-zinc-800 group cursor-pointer ${
-                isSel ? 'ring-2 ring-blue-500' : ''
+                isSel ? 'ring-2 ring-brand-400' : ''
               }`}
               onClick={() => setEnlarged(f)}
             >
@@ -528,7 +607,7 @@ function FaceGrid({
                 onClick={e => toggleSelect(e, f.id)}
                 className={`absolute top-1 left-1 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer ${
                   isSel
-                    ? 'bg-blue-500 border-blue-400 opacity-100'
+                    ? 'bg-brand-400 border-brand-400 opacity-100'
                     : 'bg-black/40 border-white/60 opacity-0 group-hover:opacity-100'
                 }`}
               >
@@ -642,24 +721,34 @@ function NoiseFaceGrid({
 
   return (
     <>
-      {/* Toolbar — sticky within the modal scroll area */}
-      <div className="sticky top-0 z-10 -mx-4 -mt-4 px-4 pt-3 pb-2 mb-3 bg-zinc-900 border-b border-zinc-800/60 flex items-center gap-3">
+      {/* Toolbar — sticky at top of the modal scroll area.
+          -top-4 counteracts the container's pt-4 so no transparent gap appears when sticky triggers. */}
+      <div className="sticky -top-4 z-10 -mx-4 -mt-4 px-4 pt-3 pb-2.5 mb-3 bg-zinc-900 border-b border-zinc-800 flex items-center gap-3">
         <button
           onClick={toggleAll}
           className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
         >
           {allSelected ? 'Deselect all' : 'Select all'}
         </button>
-        <span className="text-xs text-zinc-700">
+        <span className="text-xs text-zinc-600 tabular-nums">
           {selected.size > 0 ? `${selected.size} selected` : `${faces.length} faces`}
         </span>
         {selected.size > 0 && (
-          <button
-            onClick={() => setAssigning(true)}
-            className="ml-auto px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            Assign {selected.size} selected →
-          </button>
+          <>
+            <div className="w-px h-4 bg-zinc-700 shrink-0" />
+            <button
+              onClick={() => setAssigning(true)}
+              className="px-3 py-1.5 bg-brand-500 hover:bg-brand-400 text-white text-xs font-medium rounded-lg transition-colors"
+            >
+              Assign {selected.size} →
+            </button>
+            <button
+              onClick={() => setSelected(new Set())}
+              className="ml-auto text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
+            >
+              Deselect all
+            </button>
+          </>
         )}
       </div>
 
@@ -672,7 +761,7 @@ function NoiseFaceGrid({
               key={f.id}
               onClick={() => toggle(f.id)}
               className={`relative aspect-square rounded-lg overflow-hidden bg-zinc-800 cursor-pointer select-none ${
-                isSelected ? 'ring-2 ring-blue-500' : 'hover:ring-1 hover:ring-zinc-600'
+                isSelected ? 'ring-2 ring-brand-400' : 'hover:ring-1 hover:ring-zinc-600'
               }`}
             >
               <img
@@ -685,7 +774,7 @@ function NoiseFaceGrid({
               <div
                 className={`absolute top-1 right-1 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
                   isSelected
-                    ? 'bg-blue-500 border-blue-400'
+                    ? 'bg-brand-400 border-brand-400'
                     : 'bg-black/40 border-white/50'
                 }`}
               >
@@ -845,12 +934,12 @@ function AssignFacesOverlay({
                 onChange={e => setNewName(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && createAndAssign()}
                 placeholder="Name (optional)…"
-                className="flex-1 bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+                className="flex-1 bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400"
               />
               <button
                 onClick={createAndAssign}
                 disabled={busy}
-                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+                className="px-4 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
               >
                 {busy ? '…' : 'Create'}
               </button>
@@ -868,7 +957,7 @@ function AssignFacesOverlay({
                 value={clusterSearch}
                 onChange={e => setClusterSearch(e.target.value)}
                 placeholder="Search by name…"
-                className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+                className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400"
               />
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
                 {visibleClusters.map(c => (
@@ -876,7 +965,7 @@ function AssignFacesOverlay({
                     key={c.id}
                     onClick={() => assignToCluster(c.id, c.person_name)}
                     disabled={busy}
-                    className="bg-zinc-800 border border-zinc-700 rounded-xl overflow-hidden hover:border-blue-500 transition-all text-left disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="bg-zinc-800 border border-zinc-700 rounded-xl overflow-hidden hover:border-brand-400 transition-all text-left disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-400"
                   >
                     <div className="grid grid-cols-2 gap-px bg-zinc-700">
                       {Array.from({ length: 4 }).map((_, i) => {
@@ -897,7 +986,7 @@ function AssignFacesOverlay({
                     </div>
                     <div className="px-2 py-1.5">
                       {c.person_name ? (
-                        <div className="text-xs font-semibold text-blue-400 truncate">
+                        <div className="text-xs font-semibold text-zinc-100 truncate">
                           {c.person_name}
                         </div>
                       ) : (
@@ -986,7 +1075,7 @@ function SuggestionsPanel({
                   key={f.id}
                   onClick={() => toggle(f.id)}
                   className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer select-none transition-all ${
-                    isSel ? 'ring-2 ring-blue-500' : 'opacity-45 hover:opacity-70'
+                    isSel ? 'ring-2 ring-brand-400' : 'opacity-45 hover:opacity-70'
                   }`}
                 >
                   <img
@@ -999,7 +1088,7 @@ function SuggestionsPanel({
                     {Math.round(f.similarity * 100)}%
                   </div>
                   {isSel && (
-                    <div className="absolute top-1 right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
+                    <div className="absolute top-1 right-1 w-4 h-4 bg-brand-400 rounded-full flex items-center justify-center">
                       <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                       </svg>
@@ -1014,7 +1103,7 @@ function SuggestionsPanel({
             <button
               onClick={handleAdd}
               disabled={selected.size === 0 || busy}
-              className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+              className="px-5 py-2 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
             >
               {busy ? '…' : `Add ${selected.size} face${selected.size !== 1 ? 's' : ''}`}
             </button>
@@ -1039,9 +1128,13 @@ function SuggestionsPanel({
 function PhotoGallery({
   faces,
   jumpTo,
+  sort,
+  onSortChange,
 }: {
   faces: FaceInfo[]
   jumpTo?: { imageId: number } | null
+  sort?: string
+  onSortChange?: (s: 'id_asc' | 'exif_date_asc' | 'exif_date_desc') => void
 }) {
   const uniqueImages = [...new Map(faces.map(f => [f.image_id, f])).values()]
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
@@ -1074,12 +1167,34 @@ function PhotoGallery({
 
   return (
     <>
+      {onSortChange && (
+        <div className="flex items-center justify-end gap-2 pb-2">
+          <span className="text-xs text-zinc-600">Sort:</span>
+          {([
+            ['exif_date_asc', 'Oldest first'],
+            ['exif_date_desc', 'Newest first'],
+            ['id_asc', 'Scanned order'],
+          ] as const).map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => onSortChange(val)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                sort === val
+                  ? 'bg-zinc-700 text-zinc-100'
+                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
         {uniqueImages.map((f, idx) => (
           <button
             key={f.image_id}
             onClick={() => setLightboxIdx(idx)}
-            className="aspect-square rounded-lg overflow-hidden bg-zinc-800 group focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="aspect-square rounded-lg overflow-hidden bg-zinc-800 group focus:outline-none focus:ring-2 focus:ring-brand-400"
           >
             <img
               src={api.imageViewUrl(f.image_id, 400)}
@@ -1166,6 +1281,7 @@ function MergePanel({
   const queryClient = useQueryClient()
   const [target, setTarget] = useState<Cluster | null>(null)
   const [merging, setMerging] = useState(false)
+  const [search, setSearch] = useState('')
 
   async function doMerge() {
     if (!target || merging) return
@@ -1221,15 +1337,41 @@ function MergePanel({
     )
   }
 
+  const q = search.trim().toLowerCase()
+  const filtered = q
+    ? otherClusters.filter(c =>
+        c.person_name?.toLowerCase().includes(q) ||
+        String(c.label).padStart(3, '0').includes(q)
+      )
+    : otherClusters
+
   return (
     <div className="space-y-3">
-      <p className="text-sm text-zinc-500">Select a cluster to merge this one into:</p>
+      <div className="flex items-center gap-3">
+        <p className="text-sm text-zinc-500 shrink-0">Merge into:</p>
+        <input
+          type="search"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search by name…"
+          autoFocus
+          className="flex-1 max-w-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+        />
+        {q && (
+          <span className="text-xs text-zinc-600 shrink-0">
+            {filtered.length} result{filtered.length !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+      {filtered.length === 0 && (
+        <p className="text-sm text-zinc-600 py-4">No clusters match "{search}"</p>
+      )}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
-        {otherClusters.map(c => (
+        {filtered.map(c => (
           <button
             key={c.id}
             onClick={() => setTarget(c)}
-            className="bg-zinc-800 border border-zinc-700 rounded-xl overflow-hidden hover:border-blue-500 transition-all text-left group focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="bg-zinc-800 border border-zinc-700 rounded-xl overflow-hidden hover:border-brand-400 transition-all text-left group focus:outline-none focus:ring-2 focus:ring-brand-400"
           >
             <div className="grid grid-cols-2 gap-px bg-zinc-700">
               {Array.from({ length: 4 }).map((_, i) => {
@@ -1250,7 +1392,7 @@ function MergePanel({
             </div>
             <div className="px-2.5 py-2">
               {c.person_name ? (
-                <div className="text-xs font-semibold text-blue-400 truncate">{c.person_name}</div>
+                <div className="text-xs font-semibold text-zinc-100 truncate">{c.person_name}</div>
               ) : (
                 <div className="text-xs font-medium text-zinc-400 truncate">
                   Cluster {String(c.label).padStart(3, '0')}

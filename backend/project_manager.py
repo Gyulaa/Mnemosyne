@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 from datetime import datetime
@@ -9,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 from .database import configure_engine, init_db_schema
 
-ROOT_DIR = Path(__file__).parent.parent
+ROOT_DIR = Path(os.environ.get('MNEMOSYNE_APP_DIR') or str(Path(__file__).parent.parent))
 PROJECTS_DIR = ROOT_DIR / "projects"
 CONFIG_FILE = ROOT_DIR / "config.json"
 LEGACY_DB = ROOT_DIR / "photo_organizer.db"

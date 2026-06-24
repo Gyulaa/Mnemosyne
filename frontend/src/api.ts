@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, FsListing } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing } from './types'
 
 const BASE = '/api'
 
@@ -38,7 +38,7 @@ export const api = {
         { eps, min_samples: minSamples, min_det_score: minDetScore },
       ),
     list:  () => fetchJson<Cluster[]>(`${BASE}/clusters`),
-    faces: (id: number) => fetchJson<FaceInfo[]>(`${BASE}/clusters/${id}/faces`),
+    faces: (id: number, sort = 'id_asc') => fetchJson<FaceInfo[]>(`${BASE}/clusters/${id}/faces?sort=${sort}`),
     rename: (id: number, name: string) =>
       patch<{ ok: boolean; person_id: number | null; person_name: string | null }>(
         `${BASE}/clusters/${id}`,
@@ -63,6 +63,8 @@ export const api = {
       post<{ ok: boolean; sub_clusters: number; kept_in_original: number; noise_moved: number; new_clusters: { cluster_id: number; face_count: number }[]; message?: string }>(
         `${BASE}/clusters/${id}/split?eps=${eps}&min_samples=${minSamples}`,
       ),
+    connections: (id: number) =>
+      fetchJson<ClusterConnection[]>(`${BASE}/clusters/${id}/connections`),
   },
   face: {
     assign: (faceId: number, clusterId: number) =>
@@ -86,6 +88,24 @@ export const api = {
     rename:   (id: string, name: string) => patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { name }),
     delete:   (id: string) =>
       fetchJson<{ ok: boolean }>(`${BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
+  connections: {
+    get: (minPhotos = 1) =>
+      fetchJson<ConnectionsData>(`${BASE}/connections?min_photos=${minPhotos}`),
+  },
+  images: {
+    list: (page: number, pageSize: number, filter: string, search: string, sort = 'id_desc', includePersonIds: number[] = [], excludePersonIds: number[] = [], includeMode: 'or' | 'and' = 'or') => {
+      const p = new URLSearchParams({
+        page: String(page), page_size: String(pageSize), filter, search, sort, include_mode: includeMode,
+      })
+      if (includePersonIds.length) p.set('include_person_ids', includePersonIds.join(','))
+      if (excludePersonIds.length) p.set('exclude_person_ids', excludePersonIds.join(','))
+      return fetchJson<ImagesPage>(`${BASE}/images?${p}`)
+    },
+    delete: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/images/${id}`, { method: 'DELETE' }),
+    bulkDelete: (ids: number[]) =>
+      post<{ ok: boolean; count: number }>(`${BASE}/images/bulk-delete`, { image_ids: ids }),
   },
   stats: () => fetchJson<Stats>(`${BASE}/stats`),
   fs: {

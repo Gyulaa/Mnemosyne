@@ -18,6 +18,7 @@ class Image(Base):
     scan_status = Column(String, default="pending", index=True)  # pending/done/no_face/error
     error_msg = Column(String, nullable=True)
     scanned_at = Column(DateTime, nullable=True)
+    meta_json = Column(String, nullable=True)   # JSON: {width, height, make, model}
     faces = relationship("Face", back_populates="image", cascade="all, delete-orphan")
 
 
@@ -78,6 +79,7 @@ def init_db_schema(engine):
     with engine.connect() as conn:
         for stmt in [
             "ALTER TABLE faces ADD COLUMN manually_assigned BOOLEAN NOT NULL DEFAULT 0",
+            "ALTER TABLE images ADD COLUMN meta_json TEXT",
         ]:
             try:
                 conn.execute(text(stmt))

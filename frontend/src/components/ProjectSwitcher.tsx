@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 
@@ -35,8 +35,8 @@ export default function ProjectSwitcher() {
     mutationFn: (id: string) => api.project.activate(id),
     onSuccess: () => {
       setOpen(false)
-      // Invalidate everything — new project has different data
-      qc.invalidateQueries()
+      // Clear ALL cached data — switching collection is a completely fresh slate
+      qc.clear()
     },
   })
 
@@ -46,7 +46,7 @@ export default function ProjectSwitcher() {
       setCreating(false)
       setNewName('')
       setOpen(false)
-      qc.invalidateQueries()
+      qc.clear()
     },
   })
 
@@ -90,7 +90,7 @@ export default function ProjectSwitcher() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
             d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
         </svg>
-        <span className="max-w-32 truncate">{active?.name ?? 'Projects'}</span>
+        <span className="max-w-32 truncate">{active?.name ?? 'Collections'}</span>
         <svg className="w-3 h-3 text-zinc-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
         </svg>
@@ -101,7 +101,7 @@ export default function ProjectSwitcher() {
           {/* Project list */}
           <div className="p-1.5 max-h-72 overflow-y-auto">
             {projects.length === 0 && (
-              <p className="px-3 py-2 text-xs text-zinc-500">No projects yet</p>
+              <p className="px-3 py-2 text-xs text-zinc-500">No collections yet</p>
             )}
             {projects.map(p => (
               <div key={p.id}>
@@ -111,12 +111,12 @@ export default function ProjectSwitcher() {
                       autoFocus
                       value={renameVal}
                       onChange={e => setRenameVal(e.target.value)}
-                      className="flex-1 bg-zinc-800 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 focus:outline-none focus:border-blue-500"
+                      className="flex-1 bg-zinc-800 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 focus:outline-none focus:border-brand-400"
                     />
                     <button
                       type="submit"
                       disabled={!renameVal.trim() || renameMut.isPending}
-                      className="px-2 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs rounded"
+                      className="px-2 py-1 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-xs rounded"
                     >
                       OK
                     </button>
@@ -130,18 +130,18 @@ export default function ProjectSwitcher() {
                   </form>
                 ) : (
                   <div className={`group flex items-center gap-1 px-2 py-1.5 rounded-lg ${
-                    p.is_active ? 'bg-blue-600/15' : 'hover:bg-zinc-800'
+                    p.is_active ? 'bg-brand-400/15' : 'hover:bg-zinc-800'
                   }`}>
                     <button
                       className="flex-1 flex items-center gap-2 text-left text-sm min-w-0"
                       onClick={() => !p.is_active && switchMut.mutate(p.id)}
                       disabled={p.is_active || switchMut.isPending}
                     >
-                      <span className={`truncate ${p.is_active ? 'text-blue-300 font-medium' : 'text-zinc-300'}`}>
+                      <span className={`truncate ${p.is_active ? 'text-brand-300 font-medium' : 'text-zinc-300'}`}>
                         {p.name}
                       </span>
                       {p.is_active && (
-                        <span className="shrink-0 text-xs text-blue-500 font-medium">active</span>
+                        <span className="shrink-0 text-xs text-brand-400 font-medium">active</span>
                       )}
                     </button>
                     <div className="hidden group-hover:flex items-center gap-0.5">
@@ -158,7 +158,7 @@ export default function ProjectSwitcher() {
                       {!p.is_active && (
                         <button
                           onClick={() => {
-                            if (confirm(`Delete project "${p.name}"? This cannot be undone.`))
+                            if (confirm(`Delete collection "${p.name}"? This cannot be undone.`))
                               deleteMut.mutate(p.id)
                           }}
                           title="Delete"
@@ -185,14 +185,14 @@ export default function ProjectSwitcher() {
                   type="text"
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
-                  placeholder="Project name…"
+                  placeholder="Collection name…"
                   autoFocus
-                  className="flex-1 bg-zinc-800 border border-zinc-600 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+                  className="flex-1 bg-zinc-800 border border-zinc-600 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400"
                 />
                 <button
                   type="submit"
                   disabled={!newName.trim() || createMut.isPending}
-                  className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs rounded-lg transition-colors"
+                  className="px-2.5 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-xs rounded-lg transition-colors"
                 >
                   {createMut.isPending ? '…' : 'Create'}
                 </button>
@@ -205,7 +205,7 @@ export default function ProjectSwitcher() {
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
-                New project
+                New collection
               </button>
             )}
           </div>
