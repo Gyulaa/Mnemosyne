@@ -59,6 +59,10 @@ export const api = {
       fetchJson<SimilarFaceInfo[]>(
         `${BASE}/clusters/${id}/similar-noise?limit=${limit}&threshold=${threshold}`,
       ),
+    split: (id: number, eps: number, minSamples = 2) =>
+      post<{ ok: boolean; sub_clusters: number; kept_in_original: number; noise_moved: number; new_clusters: { cluster_id: number; face_count: number }[]; message?: string }>(
+        `${BASE}/clusters/${id}/split?eps=${eps}&min_samples=${minSamples}`,
+      ),
   },
   face: {
     assign: (faceId: number, clusterId: number) =>
@@ -67,6 +71,11 @@ export const api = {
       post<{ ok: boolean; count: number }>(
         `${BASE}/faces/batch-assign`,
         { face_ids: faceIds, cluster_id: clusterId },
+      ),
+    batchUnclassify: (faceIds: number[]) =>
+      post<{ ok: boolean; count: number }>(
+        `${BASE}/faces/batch-unclassify`,
+        { face_ids: faceIds },
       ),
   },
   project: {

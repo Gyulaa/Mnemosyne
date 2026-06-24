@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import type { Cluster, FaceInfo, SimilarFaceInfo } from '../types'
@@ -160,6 +160,42 @@ function ClusterModal({
   const [saving, setSaving] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [jumpTo, setJumpTo] = useState<{ imageId: number } | null>(null)
+  const [splitEps, setSplitEps] = useState(0.35)
+  const [showSplit, setShowSplit] = useState(false)
+  const [splitting, setSplitting] = useState(false)
+  const [splitMsg, setSplitMsg] = useState<string | null>(null)
+
+  function handleViewOriginal(imageId: number) {
+    setJumpTo({ imageId })
+    setTab('photos')
+  }
+
+  function handleFacesChanged() {
+    queryClient.invalidateQueries({ queryKey: ['cluster-faces', cluster.id] })
+    queryClient.invalidateQueries({ queryKey: ['clusters'] })
+  }
+
+  async function doSplit() {
+    if (splitting) return
+    setSplitting(true)
+    setSplitMsg(null)
+    try {
+      const res = await api.cluster.split(cluster.id, splitEps)
+      if (!res.ok) {
+        setSplitMsg(res.message ?? 'Could not split')
+      } else {
+        setSplitMsg(
+          `Split into ${res.sub_clusters} sub-cluster${res.sub_clusters !== 1 ? 's' : ''}.` +
+          (res.noise_moved > 0 ? ` ${res.noise_moved} face${res.noise_moved !== 1 ? 's' : ''} moved to unclassified.` : ''),
+        )
+        queryClient.invalidateQueries({ queryKey: ['clusters'] })
+        queryClient.invalidateQueries({ queryKey: ['cluster-faces', cluster.id] })
+      }
+    } finally {
+      setSplitting(false)
+    }
+  }
 
   const { data: faces = [], isLoading: facesLoading } = useQuery({
     queryKey: ['cluster-faces', cluster.id],
@@ -277,13 +313,13 @@ function ClusterModal({
           </div>
 
           {!isNoise && (
-            <div className="flex gap-1">
+            <div className="flex items-center gap-1 flex-wrap">
               {(['faces', 'photos', 'merge'] as const).map(t => (
                 <button
                   key={t}
-                  onClick={() => setTab(t)}
+                  onClick={() => { setTab(t); setShowSplit(false) }}
                   className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                    tab === t
+                    tab === t && !showSplit
                       ? 'bg-zinc-700 text-zinc-100'
                       : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
                   }`}
@@ -295,6 +331,21 @@ function ClusterModal({
                     : 'Merge into…'}
                 </button>
               ))}
+              {cluster.face_count >= 6 && (
+                <button
+                  onClick={() => { setShowSplit(s => !s); setSplitMsg(null) }}
+                  className={`ml-auto px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                    showSplit
+                      ? 'bg-violet-700/60 text-violet-200'
+                      : 'text-zinc-500 hover:text-violet-300 hover:bg-zinc-800'
+                  }`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h8M8 12h4m-4 5h8M4 4h16a1 1 0 011 1v14a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1z" />
+                  </svg>
+                  Auto-split
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -309,10 +360,65 @@ function ClusterModal({
               allClusters={allClusters}
               noiseClusterId={cluster.id}
             />
+          ) : showSplit ? (
+            <div className="space-y-4 py-4 max-w-md mx-auto">
+              <p className="text-sm text-zinc-400">
+                Az algoritmus megpróbálja a clustert al-csoportokra bontani egy szűkebb
+                eps értékkel. A legnagyobb al-csoport az eredeti clusterben marad, a többiek
+                új, névtelen clusterekként jelennek meg.
+              </p>
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-zinc-500 w-8 shrink-0">eps</label>
+                <input
+                  type="range"
+                  min={0.15}
+                  max={0.55}
+                  step={0.05}
+                  value={splitEps}
+                  onChange={e => setSplitEps(Number(e.target.value))}
+                  className="flex-1 accent-violet-500"
+                />
+                <span className="text-sm text-zinc-300 tabular-nums w-10 text-right">{splitEps.toFixed(2)}</span>
+              </div>
+              <p className="text-xs text-zinc-600">
+                Alacsonyabb eps → szigorúbb szétválasztás. Ha nem sikerül, próbálj alacsonyabb értékkel.
+              </p>
+              {splitMsg && (
+                <p className={`text-sm px-3 py-2 rounded-lg ${
+                  splitMsg.startsWith('Could not') || splitMsg.startsWith('Not enough')
+                    ? 'bg-red-900/40 text-red-300'
+                    : 'bg-green-900/40 text-green-300'
+                }`}>
+                  {splitMsg}
+                </p>
+              )}
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={doSplit}
+                  disabled={splitting}
+                  className="px-5 py-2 bg-violet-700 hover:bg-violet-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  {splitting ? 'Splitting…' : 'Split cluster'}
+                </button>
+                {splitMsg && splitMsg.startsWith('Split into') && (
+                  <button
+                    onClick={onClose}
+                    className="px-5 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Done — close
+                  </button>
+                )}
+              </div>
+            </div>
           ) : tab === 'faces' ? (
-            <FaceGrid faces={faces} />
+            <FaceGrid
+              faces={faces}
+              allClusters={otherClusters}
+              onViewOriginal={handleViewOriginal}
+              onFacesChanged={handleFacesChanged}
+            />
           ) : tab === 'photos' ? (
-            <PhotoGallery faces={faces} />
+            <PhotoGallery faces={faces} jumpTo={jumpTo} />
           ) : (
             <MergePanel cluster={cluster} otherClusters={otherClusters} onMerged={onClose} />
           )}
@@ -324,28 +430,120 @@ function ClusterModal({
 
 // ── FaceGrid ──────────────────────────────────────────────────────────────────
 
-function FaceGrid({ faces }: { faces: FaceInfo[] }) {
+function FaceGrid({
+  faces,
+  allClusters,
+  onViewOriginal,
+  onFacesChanged,
+}: {
+  faces: FaceInfo[]
+  allClusters: Cluster[]
+  onViewOriginal?: (imageId: number) => void
+  onFacesChanged?: () => void
+}) {
   const [enlarged, setEnlarged] = useState<FaceInfo | null>(null)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [assigning, setAssigning] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  function toggleSelect(e: React.MouseEvent, id: number) {
+    e.stopPropagation()
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function unclassifySelected() {
+    if (busy || selected.size === 0) return
+    setBusy(true)
+    try {
+      await api.face.batchUnclassify([...selected])
+      setSelected(new Set())
+      onFacesChanged?.()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function handleAssigned() {
+    setAssigning(false)
+    setSelected(new Set())
+    onFacesChanged?.()
+  }
+
+  const selectedFaces = faces.filter(f => selected.has(f.id))
 
   return (
     <>
-      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
-        {faces.map(f => (
+      {/* Sticky selection toolbar */}
+      {selected.size > 0 && (
+        <div className="sticky top-0 z-10 -mx-4 -mt-4 px-4 pt-3 pb-2 mb-3 bg-zinc-900 border-b border-zinc-800/60 flex items-center gap-3">
+          <span className="text-xs text-zinc-400 font-medium">{selected.size} selected</span>
           <button
-            key={f.id}
-            onClick={() => setEnlarged(f)}
-            className="aspect-square rounded-lg overflow-hidden bg-zinc-800 group focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onClick={() => setAssigning(true)}
+            disabled={busy}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
           >
-            <img
-              src={api.faceThumbnailUrl(f.id)}
-              alt=""
-              loading="lazy"
-              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-200"
-            />
+            Assign to…
           </button>
-        ))}
+          <button
+            onClick={unclassifySelected}
+            disabled={busy}
+            className="px-3 py-1.5 bg-zinc-700 hover:bg-amber-800/70 disabled:opacity-50 text-zinc-300 hover:text-amber-200 text-xs font-medium rounded-lg transition-colors"
+          >
+            Unclassify
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="ml-auto text-xs text-zinc-600 hover:text-zinc-400 transition-colors"
+          >
+            Deselect all
+          </button>
+        </div>
+      )}
+
+      {/* Face grid */}
+      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
+        {faces.map(f => {
+          const isSel = selected.has(f.id)
+          return (
+            <div
+              key={f.id}
+              className={`relative aspect-square rounded-lg overflow-hidden bg-zinc-800 group cursor-pointer ${
+                isSel ? 'ring-2 ring-blue-500' : ''
+              }`}
+              onClick={() => setEnlarged(f)}
+            >
+              <img
+                src={api.faceThumbnailUrl(f.id)}
+                alt=""
+                loading="lazy"
+                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-200"
+              />
+              {/* Checkbox — visible on hover or when selected */}
+              <div
+                onClick={e => toggleSelect(e, f.id)}
+                className={`absolute top-1 left-1 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer ${
+                  isSel
+                    ? 'bg-blue-500 border-blue-400 opacity-100'
+                    : 'bg-black/40 border-white/60 opacity-0 group-hover:opacity-100'
+                }`}
+              >
+                {isSel && (
+                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
+      {/* Enlarged face view */}
       {enlarged && (
         <div
           className="fixed inset-0 bg-black/85 flex items-center justify-center z-60 p-4"
@@ -363,8 +561,33 @@ function FaceGrid({ faces }: { faces: FaceInfo[] }) {
             <p className="text-xs text-zinc-600 text-center">
               confidence {enlarged.det_score.toFixed(3)}
             </p>
+            {onViewOriginal && (
+              <button
+                onClick={() => {
+                  setEnlarged(null)
+                  onViewOriginal(enlarged.image_id)
+                }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 rounded-lg text-sm text-zinc-300 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                View original photo
+              </button>
+            )}
           </div>
         </div>
+      )}
+
+      {/* Assign overlay (reuses existing component) */}
+      {assigning && selectedFaces.length > 0 && (
+        <AssignFacesOverlay
+          faces={selectedFaces}
+          allClusters={allClusters}
+          onClose={() => setAssigning(false)}
+          onAssigned={handleAssigned}
+        />
       )}
     </>
   )
@@ -813,21 +1036,49 @@ function SuggestionsPanel({
 
 // ── PhotoGallery ──────────────────────────────────────────────────────────────
 
-function PhotoGallery({ faces }: { faces: FaceInfo[] }) {
-  const [lightbox, setLightbox] = useState<number | null>(null)
+function PhotoGallery({
+  faces,
+  jumpTo,
+}: {
+  faces: FaceInfo[]
+  jumpTo?: { imageId: number } | null
+}) {
   const uniqueImages = [...new Map(faces.map(f => [f.image_id, f])).values()]
+  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+
+  // Jump to a specific image when requested from FaceGrid
+  useEffect(() => {
+    if (jumpTo != null) {
+      const idx = uniqueImages.findIndex(f => f.image_id === jumpTo.imageId)
+      if (idx >= 0) setLightboxIdx(idx)
+    }
+  }, [jumpTo])
+
+  // Keyboard navigation
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (lightboxIdx == null) return
+      if (e.key === 'ArrowLeft')  setLightboxIdx(i => (i != null && i > 0 ? i - 1 : i))
+      if (e.key === 'ArrowRight') setLightboxIdx(i => (i != null && i < uniqueImages.length - 1 ? i + 1 : i))
+      if (e.key === 'Escape')     setLightboxIdx(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [lightboxIdx, uniqueImages.length])
 
   if (!uniqueImages.length) {
     return <p className="text-center text-zinc-600 py-10 text-sm">No photos found.</p>
   }
 
+  const currentImage = lightboxIdx != null ? uniqueImages[lightboxIdx] : null
+
   return (
     <>
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-        {uniqueImages.map(f => (
+        {uniqueImages.map((f, idx) => (
           <button
             key={f.image_id}
-            onClick={() => setLightbox(f.image_id)}
+            onClick={() => setLightboxIdx(idx)}
             className="aspect-square rounded-lg overflow-hidden bg-zinc-800 group focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <img
@@ -840,17 +1091,61 @@ function PhotoGallery({ faces }: { faces: FaceInfo[] }) {
         ))}
       </div>
 
-      {lightbox != null && (
+      {currentImage != null && lightboxIdx != null && (
         <div
-          className="fixed inset-0 bg-black/90 flex items-center justify-center z-60 p-4"
-          onClick={() => setLightbox(null)}
+          className="fixed inset-0 bg-black/92 flex items-center justify-center z-60"
+          onClick={() => setLightboxIdx(null)}
         >
+          {/* Prev arrow */}
+          {lightboxIdx > 0 && (
+            <button
+              onClick={e => { e.stopPropagation(); setLightboxIdx(i => (i != null ? i - 1 : i)) }}
+              className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-black/60 hover:bg-black/85 text-white transition-colors"
+              aria-label="Previous"
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+          )}
+
+          {/* Image */}
           <img
-            src={api.imageViewUrl(lightbox, 1600)}
+            src={api.imageViewUrl(currentImage.image_id, 1600)}
             alt=""
-            className="max-w-full max-h-full rounded-xl shadow-2xl object-contain"
+            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            style={{ maxHeight: 'calc(100vh - 80px)', maxWidth: 'calc(100vw - 120px)' }}
             onClick={e => e.stopPropagation()}
           />
+
+          {/* Next arrow */}
+          {lightboxIdx < uniqueImages.length - 1 && (
+            <button
+              onClick={e => { e.stopPropagation(); setLightboxIdx(i => (i != null ? i + 1 : i)) }}
+              className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-black/60 hover:bg-black/85 text-white transition-colors"
+              aria-label="Next"
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
+
+          {/* Counter + close */}
+          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-4">
+            <span className="text-sm text-zinc-400 tabular-nums">
+              {lightboxIdx + 1} / {uniqueImages.length}
+            </span>
+          </div>
+          <button
+            onClick={() => setLightboxIdx(null)}
+            className="absolute top-4 right-4 p-2 rounded-full bg-black/60 hover:bg-black/85 text-zinc-300 hover:text-white transition-colors"
+            aria-label="Close"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       )}
     </>

@@ -7,9 +7,9 @@ const LAST_PATH_KEY = 'organizer_scan_path'
 
 export default function ScanTab() {
   const [path, setPath] = useState(() => localStorage.getItem(LAST_PATH_KEY) ?? '')
-  const [eps, setEps] = useState(0.4)
+  const [eps, setEps] = useState(0.5)
   const [minSamples, setMinSamples] = useState(2)
-  const [minDetScore, setMinDetScore] = useState(0.0)
+  const [minDetScore, setMinDetScore] = useState(0.65)
   const [clusterResult, setClusterResult] = useState<{
     clusters: number; noise: number
   } | null>(null)

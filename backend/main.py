@@ -446,6 +446,111 @@ def batch_assign_faces(req: BatchFaceAssignRequest, db: Session = Depends(get_db
     return {"ok": True, "count": len(req.face_ids)}
 
 
+@app.post("/api/faces/batch-unclassify")
+def batch_unclassify_faces(body: dict, db: Session = Depends(get_db)):
+    """Move faces back to the noise cluster and clear their manual-assignment flag."""
+    face_ids = body.get("face_ids", [])
+    if not face_ids:
+        raise HTTPException(400, "face_ids cannot be empty")
+    noise = db.query(DBCluster).filter(DBCluster.label == -1).first()
+    if not noise:
+        noise = DBCluster(label=-1)
+        db.add(noise)
+        db.flush()
+    db.execute(
+        sql_update(DBFace)
+        .where(DBFace.id.in_(face_ids))
+        .values(cluster_id=noise.id, manually_assigned=False)
+    )
+    db.commit()
+    return {"ok": True, "count": len(face_ids)}
+
+
+@app.post("/api/clusters/{cluster_id}/split")
+def split_cluster(
+    cluster_id: int,
+    eps: float = Query(default=0.35, ge=0.1, le=0.9),
+    min_samples: int = Query(default=2, ge=1),
+    db: Session = Depends(get_db),
+):
+    """Re-cluster just the faces in this cluster with a tighter eps to find sub-groups."""
+    from collections import Counter
+    from sklearn.cluster import DBSCAN as SKLearnDBSCAN
+
+    cluster = db.get(DBCluster, cluster_id)
+    if not cluster:
+        raise HTTPException(404, "Cluster not found")
+    if cluster.label == -1:
+        raise HTTPException(400, "Cannot split the noise cluster")
+
+    face_data = []
+    for f in cluster.faces:
+        if f.embedding:
+            emb = np.frombuffer(f.embedding, dtype=np.float32).copy()
+            norm = np.linalg.norm(emb)
+            if norm > 0:
+                face_data.append((f.id, emb / norm))
+
+    if len(face_data) < 4:
+        return {"ok": False, "message": "Not enough faces to split", "sub_clusters": 0}
+
+    face_ids_arr = [fd[0] for fd in face_data]
+    embeddings = np.array([fd[1] for fd in face_data], dtype=np.float32)
+
+    labels = SKLearnDBSCAN(eps=eps, min_samples=min_samples, metric="cosine").fit_predict(embeddings)
+
+    unique_non_noise = [l for l in set(labels) if l != -1]
+    if len(unique_non_noise) <= 1:
+        return {"ok": False, "message": "Could not split at this eps — try a lower value", "sub_clusters": len(unique_non_noise)}
+
+    label_counts = Counter(labels)
+    sorted_labels = sorted(unique_non_noise, key=lambda l: -label_counts[l])
+
+    # Noise sub-group → move to main noise cluster
+    noise_face_ids = [face_ids_arr[i] for i, l in enumerate(labels) if l == -1]
+    if noise_face_ids:
+        noise_cluster = db.query(DBCluster).filter(DBCluster.label == -1).first()
+        if not noise_cluster:
+            noise_cluster = DBCluster(label=-1)
+            db.add(noise_cluster)
+            db.flush()
+        db.execute(
+            sql_update(DBFace)
+            .where(DBFace.id.in_(noise_face_ids))
+            .values(cluster_id=noise_cluster.id, manually_assigned=False)
+        )
+
+    # Largest sub-group stays in the original cluster
+    keep_ids = [face_ids_arr[i] for i, l in enumerate(labels) if l == sorted_labels[0]]
+    if keep_ids:
+        db.execute(
+            sql_update(DBFace).where(DBFace.id.in_(keep_ids)).values(cluster_id=cluster_id)
+        )
+
+    # Remaining sub-groups → new clusters
+    max_label = db.query(func.max(DBCluster.label)).scalar() or -1
+    new_clusters_info = []
+    for sub_label in sorted_labels[1:]:
+        sub_ids = [face_ids_arr[i] for i, l in enumerate(labels) if l == sub_label]
+        max_label = int(max_label) + 1
+        new_c = DBCluster(label=max_label)
+        db.add(new_c)
+        db.flush()
+        db.execute(
+            sql_update(DBFace).where(DBFace.id.in_(sub_ids)).values(cluster_id=new_c.id, manually_assigned=False)
+        )
+        new_clusters_info.append({"cluster_id": new_c.id, "face_count": len(sub_ids)})
+
+    db.commit()
+    return {
+        "ok": True,
+        "sub_clusters": len(sorted_labels),
+        "kept_in_original": len(keep_ids),
+        "noise_moved": len(noise_face_ids),
+        "new_clusters": new_clusters_info,
+    }
+
+
 @app.get("/api/clusters/{cluster_id}/faces")
 def get_cluster_faces(cluster_id: int, db: Session = Depends(get_db)):
     cluster = db.get(DBCluster, cluster_id)
