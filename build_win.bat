@@ -19,9 +19,9 @@ cd ..
 echo  OK: frontend\dist\ elkeszult
 echo.
 
-:: 2. Python deps
+:: 2. Python deps (venv-bol)
 echo [2/3] Python fuggosegek telepitese...
-pip install aiofiles pyinstaller --quiet
+.venv\Scripts\pip.exe install aiofiles pyinstaller --quiet
 if errorlevel 1 (
     echo.
     echo  HIBA: pip install meghiusult!
@@ -30,9 +30,9 @@ if errorlevel 1 (
 echo  OK: aiofiles, pyinstaller
 echo.
 
-:: 3. PyInstaller
+:: 3. PyInstaller (venv-bol)
 echo [3/3] PyInstaller csomagolas...
-pyinstaller mnemosyne.spec --clean --noconfirm
+.venv\Scripts\pyinstaller.exe mnemosyne.spec --clean --noconfirm
 if errorlevel 1 (
     echo.
     echo  HIBA: PyInstaller meghiusult!

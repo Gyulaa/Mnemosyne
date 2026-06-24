@@ -30,6 +30,9 @@ os.environ.setdefault('MNEMOSYNE_BUNDLE_DIR', str(BUNDLE_DIR))
 if str(BUNDLE_DIR) not in sys.path:
     sys.path.insert(0, str(BUNDLE_DIR))
 
+import uvicorn  # noqa: E402 — must be after sys.path setup
+from backend.main import app  # noqa: E402
+
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
 
@@ -47,13 +50,10 @@ def _open_browser(port: int) -> None:
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    import uvicorn
-    from backend.main import app  # import after path/env setup
-
     port = _free_port()
     threading.Thread(target=_open_browser, args=(port,), daemon=True).start()
 
-    print(f'\n  Mnemosyne → http://localhost:{port}')
-    print('  Bezáráshoz nyomd Ctrl+C (vagy zárd be ezt az ablakot)\n')
+    print(f'\n  Mnemosyne -> http://localhost:{port}')
+    print('  Bezarashoz nyomd Ctrl+C (vagy zard be ezt az ablakot)\n')
 
     uvicorn.run(app, host='127.0.0.1', port=port, log_level='warning')
