@@ -35,6 +35,17 @@ export interface FaceInfo {
   det_score: number
 }
 
+export interface SimilarFaceInfo extends FaceInfo {
+  similarity: number
+}
+
+export interface Project {
+  id: string
+  name: string
+  created: string
+  is_active: boolean
+}
+
 export interface FsItem {
   name: string
   path: string

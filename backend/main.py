@@ -12,7 +12,7 @@ from sqlalchemy import update as sql_update, func
 from sqlalchemy.orm import Session
 from starlette.responses import Response, FileResponse
 
-from .database import init_db, get_db, SessionLocal
+from .project_manager import project_manager
 from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson
 from . import scanner as scanner_mod
 from . import clusterer
@@ -34,9 +34,66 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def startup():
-    init_db()
+def get_db():
+    yield from project_manager.get_db()
+
+
+# ── Projects ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/projects")
+def list_projects():
+    return project_manager.list_projects()
+
+
+@app.get("/api/projects/active")
+def active_project():
+    projects = project_manager.list_projects()
+    active = next((p for p in projects if p["is_active"]), None)
+    if not active:
+        raise HTTPException(404, "No active project")
+    return active
+
+
+@app.post("/api/projects")
+def create_project(body: dict):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Project name cannot be empty")
+    if scanner_mod.get_status()["running"]:
+        raise HTTPException(409, "Stop the running scan before creating a new project")
+    return project_manager.create_project(name)
+
+
+@app.post("/api/projects/{project_id}/activate")
+def activate_project(project_id: str):
+    if scanner_mod.get_status()["running"]:
+        raise HTTPException(409, "Stop the running scan before switching projects")
+    try:
+        return project_manager.switch_project(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
+
+
+@app.patch("/api/projects/{project_id}")
+def rename_project(project_id: str, body: dict):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Project name cannot be empty")
+    try:
+        return project_manager.rename_project(project_id, name)
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
+
+
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: str):
+    try:
+        project_manager.delete_project(project_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
+    return {"ok": True}
 
 
 # ── Scan ──────────────────────────────────────────────────────────────────────
@@ -45,7 +102,7 @@ def startup():
 def start_scan(req: ScanStartRequest):
     if not Path(req.path).is_dir():
         raise HTTPException(400, f"Directory not found: {req.path}")
-    ok, msg = scanner_mod.start_scan(req.path, SessionLocal)
+    ok, msg = scanner_mod.start_scan(req.path, project_manager.session_factory)
     if not ok:
         raise HTTPException(409, msg)
     return {"status": "started", "path": req.path}
@@ -301,6 +358,64 @@ def create_cluster(req: CreateClusterRequest, db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/clusters/{cluster_id}/similar-noise")
+def similar_noise_faces(
+    cluster_id: int,
+    limit: int = Query(default=20, le=50),
+    threshold: float = Query(default=0.5, ge=0.0, le=1.0),
+    db: Session = Depends(get_db),
+):
+    """Return noise faces sorted by cosine similarity to this cluster's centroid."""
+    cluster = db.get(DBCluster, cluster_id)
+    if not cluster:
+        raise HTTPException(404, "Cluster not found")
+
+    embeddings = []
+    for face in cluster.faces:
+        if face.embedding:
+            emb = np.frombuffer(face.embedding, dtype=np.float32).copy()
+            norm = np.linalg.norm(emb)
+            if norm > 0:
+                embeddings.append(emb / norm)
+
+    if not embeddings:
+        return []
+
+    centroid = np.mean(embeddings, axis=0)
+    norm = np.linalg.norm(centroid)
+    if norm > 0:
+        centroid /= norm
+
+    noise = db.query(DBCluster).filter(DBCluster.label == -1).first()
+    if not noise or not noise.faces:
+        return []
+
+    candidates = []
+    for face in noise.faces:
+        if face.embedding:
+            emb = np.frombuffer(face.embedding, dtype=np.float32).copy()
+            norm = np.linalg.norm(emb)
+            if norm > 0:
+                emb /= norm
+                dist = float(1.0 - np.dot(centroid, emb))
+                if dist <= threshold:
+                    candidates.append((dist, face))
+
+    candidates.sort(key=lambda x: x[0])
+
+    return [
+        {
+            "id": f.id,
+            "image_id": f.image_id,
+            "image_path": f.image.path,
+            "bbox": json.loads(f.bbox_json),
+            "det_score": round(f.det_score, 3),
+            "similarity": round(1.0 - dist, 3),
+        }
+        for dist, f in candidates[:limit]
+    ]
+
+
 @app.patch("/api/faces/{face_id}")
 def assign_face(face_id: int, req: FaceAssignRequest, db: Session = Depends(get_db)):
     face = db.get(DBFace, face_id)
@@ -365,7 +480,7 @@ def list_persons(db: Session = Depends(get_db)):
     ]
 
 
-# ── Faces / media ─────────────────────────────────────────────────────────────
+# ── Filesystem browser ────────────────────────────────────────────────────────
 
 @app.get("/api/fs/list")
 def fs_list(path: str = ""):
@@ -396,6 +511,8 @@ def fs_list(path: str = ""):
 
     return {"path": str(p), "parent": parent, "items": items}
 
+
+# ── Face thumbnails ────────────────────────────────────────────────────────────
 
 @app.get("/api/faces/{face_id}/thumbnail")
 def face_thumbnail(face_id: int, size: int = 160, db: Session = Depends(get_db)):

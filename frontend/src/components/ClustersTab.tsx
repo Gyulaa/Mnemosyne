@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { Cluster, FaceInfo } from '../types'
+import type { Cluster, FaceInfo, SimilarFaceInfo } from '../types'
 
 type ModalTab = 'faces' | 'photos' | 'merge'
 
@@ -491,6 +491,12 @@ function NoiseFaceGrid({
 
 // ── AssignFacesOverlay ────────────────────────────────────────────────────────
 
+type Suggestions = {
+  clusterId: number
+  clusterName: string | null
+  faces: SimilarFaceInfo[]
+}
+
 function AssignFacesOverlay({
   faces,
   allClusters,
@@ -505,6 +511,7 @@ function AssignFacesOverlay({
   const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(false)
   const [clusterSearch, setClusterSearch] = useState('')
+  const [suggestions, setSuggestions] = useState<Suggestions | null>(null)
 
   const faceIds = faces.map(f => f.id)
 
@@ -515,26 +522,52 @@ function AssignFacesOverlay({
       )
     : allClusters
 
+  async function finishWithSuggestions(clusterId: number, clusterName: string | null) {
+    try {
+      const similar = await api.cluster.similarNoise(clusterId)
+      if (similar.length > 0) {
+        setSuggestions({ clusterId, clusterName, faces: similar })
+      } else {
+        onAssigned()
+      }
+    } catch {
+      onAssigned()
+    }
+  }
+
   async function createAndAssign() {
     if (busy) return
     setBusy(true)
     try {
-      await api.cluster.create(faceIds, newName.trim() || undefined)
-      onAssigned()
+      const result = await api.cluster.create(faceIds, newName.trim() || undefined)
+      await finishWithSuggestions(result.cluster_id, result.person_name)
     } finally {
       setBusy(false)
     }
   }
 
-  async function assignToCluster(clusterId: number) {
+  async function assignToCluster(clusterId: number, clusterName: string | null) {
     if (busy) return
     setBusy(true)
     try {
       await api.face.batchAssign(faceIds, clusterId)
-      onAssigned()
+      await finishWithSuggestions(clusterId, clusterName)
     } finally {
       setBusy(false)
     }
+  }
+
+  if (suggestions) {
+    return (
+      <SuggestionsPanel
+        suggestions={suggestions}
+        onAdd={async (moreIds) => {
+          await api.face.batchAssign(moreIds, suggestions.clusterId)
+          onAssigned()
+        }}
+        onSkip={onAssigned}
+      />
+    )
   }
 
   return (
@@ -618,7 +651,7 @@ function AssignFacesOverlay({
                 {visibleClusters.map(c => (
                   <button
                     key={c.id}
-                    onClick={() => assignToCluster(c.id)}
+                    onClick={() => assignToCluster(c.id, c.person_name)}
                     disabled={busy}
                     className="bg-zinc-800 border border-zinc-700 rounded-xl overflow-hidden hover:border-blue-500 transition-all text-left disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
@@ -656,6 +689,122 @@ function AssignFacesOverlay({
               </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── SuggestionsPanel ──────────────────────────────────────────────────────────
+
+function SuggestionsPanel({
+  suggestions,
+  onAdd,
+  onSkip,
+}: {
+  suggestions: Suggestions
+  onAdd: (faceIds: number[]) => Promise<void>
+  onSkip: () => void
+}) {
+  const [selected, setSelected] = useState<Set<number>>(
+    new Set(suggestions.faces.map(f => f.id)),
+  )
+  const [busy, setBusy] = useState(false)
+
+  function toggle(id: number) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function handleAdd() {
+    if (selected.size === 0 || busy) return
+    setBusy(true)
+    try {
+      await onAdd([...selected])
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const clusterLabel = suggestions.clusterName ?? 'this cluster'
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/85 flex items-center justify-center z-60 p-4"
+      onClick={onSkip}
+    >
+      <div
+        className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 border-b border-zinc-800 flex items-center gap-3">
+          <div className="w-2 h-2 rounded-full bg-amber-400 shrink-0 animate-pulse" />
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold text-zinc-100">
+              {suggestions.faces.length} similar face{suggestions.faces.length !== 1 ? 's' : ''} found
+            </h3>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              These unclassified faces look like{' '}
+              <span className="text-zinc-300">{clusterLabel}</span>. Add them too?
+            </p>
+          </div>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-5 sm:grid-cols-7 md:grid-cols-9 gap-2">
+            {suggestions.faces.map(f => {
+              const isSel = selected.has(f.id)
+              return (
+                <div
+                  key={f.id}
+                  onClick={() => toggle(f.id)}
+                  className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer select-none transition-all ${
+                    isSel ? 'ring-2 ring-blue-500' : 'opacity-45 hover:opacity-70'
+                  }`}
+                >
+                  <img
+                    src={api.faceThumbnailUrl(f.id)}
+                    alt=""
+                    loading="lazy"
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute bottom-0 inset-x-0 text-center text-xs text-zinc-200 bg-black/55 py-px">
+                    {Math.round(f.similarity * 100)}%
+                  </div>
+                  {isSel && (
+                    <div className="absolute top-1 right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
+                      <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              onClick={handleAdd}
+              disabled={selected.size === 0 || busy}
+              className="px-5 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {busy ? '…' : `Add ${selected.size} face${selected.size !== 1 ? 's' : ''}`}
+            </button>
+            <button
+              onClick={onSkip}
+              className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              Skip
+            </button>
+            <span className="ml-auto text-xs text-zinc-600">
+              Click faces to toggle selection
+            </span>
+          </div>
         </div>
       </div>
     </div>

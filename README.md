@@ -84,14 +84,17 @@ Ezután nyisd meg: **http://localhost:5173**
 
 > A forrás fotóidat az alkalmazás **soha nem módosítja** — csak olvassa őket.
 
-## Adatbázis
+## Projektek és adatbázis
 
-Az összes adat (embeddingek, clusterek, nevek) a projekt gyökerében lévő
-`photo_organizer.db` SQLite fájlban tárolódik. Ez **nincs** a git repositoryban —
-minden gép a saját szkennelését végzi.
+Minden munkafolyamathoz külön projekt hozható létre. Az alkalmazás fejlécében lévő
+mappa-ikonra kattintva lehet projektet váltani, újat létrehozni vagy töröln.
 
-A forrás képek elérési útjai is az adatbázisban tárolódnak, ezért ha a fotóidat
+Minden projekt egy önálló könyvtárban él (`projects/<id>/`), saját SQLite
+adatbázissal. Az adatbázis fájlok (`*.db`) **nincsenek** a git repositoryban —
+a forrás képek elérési útjai adatbázisban tárolódnak, ezért ha a fotókat
 áthelyezed, újra kell szkennelni.
+
+Az aktív projektet a `config.json` menti el — ez is git-ignored (gépspecifikus).
 
 ## Projekt struktúra
 
@@ -114,5 +117,9 @@ Image-Organizer/
 │           ├── ClustersTab.tsx
 │           └── FolderPicker.tsx
 ├── requirements.txt
-└── photo_organizer.db   # ← gitignore-ban van, automatikusan jön létre
+├── config.json          # ← gitignore-ban (aktív projekt neve)
+└── projects/            # ← gitignore-ban (adatbázisok, user-adat)
+    └── <project-id>/
+        ├── project.json
+        └── photo_organizer.db
 ```

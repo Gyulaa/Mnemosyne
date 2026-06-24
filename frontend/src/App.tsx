@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import ScanTab from './components/ScanTab'
 import ClustersTab from './components/ClustersTab'
+import ProjectSwitcher from './components/ProjectSwitcher'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 5_000 } },
@@ -36,6 +37,9 @@ export default function App() {
                 </button>
               ))}
             </nav>
+            <div className="ml-auto">
+              <ProjectSwitcher />
+            </div>
           </div>
         </header>
 

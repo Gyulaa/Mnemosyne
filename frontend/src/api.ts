@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, FsListing } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, FsListing } from './types'
 
 const BASE = '/api'
 
@@ -18,6 +18,13 @@ const post = <T>(url: string, body?: unknown) =>
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
 
+const patch = <T>(url: string, body?: unknown) =>
+  fetchJson<T>(url, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+
 export const api = {
   scan: {
     start: (path: string) => post(`${BASE}/scan/start`, { path }),
@@ -33,13 +40,9 @@ export const api = {
     list:  () => fetchJson<Cluster[]>(`${BASE}/clusters`),
     faces: (id: number) => fetchJson<FaceInfo[]>(`${BASE}/clusters/${id}/faces`),
     rename: (id: number, name: string) =>
-      fetchJson<{ ok: boolean; person_id: number | null; person_name: string | null }>(
+      patch<{ ok: boolean; person_id: number | null; person_name: string | null }>(
         `${BASE}/clusters/${id}`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ person_name: name }),
-        },
+        { person_name: name },
       ),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/clusters/${id}`, { method: 'DELETE' }),
@@ -52,19 +55,28 @@ export const api = {
       post<{ ok: boolean; target_cluster_id: number }>(
         `${BASE}/clusters/${sourceId}/merge-into/${targetId}`,
       ),
+    similarNoise: (id: number, limit = 20, threshold = 0.5) =>
+      fetchJson<SimilarFaceInfo[]>(
+        `${BASE}/clusters/${id}/similar-noise?limit=${limit}&threshold=${threshold}`,
+      ),
   },
   face: {
     assign: (faceId: number, clusterId: number) =>
-      fetchJson<{ ok: boolean }>(`${BASE}/faces/${faceId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cluster_id: clusterId }),
-      }),
+      patch<{ ok: boolean }>(`${BASE}/faces/${faceId}`, { cluster_id: clusterId }),
     batchAssign: (faceIds: number[], clusterId: number) =>
       post<{ ok: boolean; count: number }>(
         `${BASE}/faces/batch-assign`,
         { face_ids: faceIds, cluster_id: clusterId },
       ),
+  },
+  project: {
+    list:     () => fetchJson<Project[]>(`${BASE}/projects`),
+    active:   () => fetchJson<Project>(`${BASE}/projects/active`),
+    create:   (name: string) => post<Project>(`${BASE}/projects`, { name }),
+    activate: (id: string) => post<Project>(`${BASE}/projects/${encodeURIComponent(id)}/activate`),
+    rename:   (id: string, name: string) => patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { name }),
+    delete:   (id: string) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
   stats: () => fetchJson<Stats>(`${BASE}/stats`),
   fs: {
