@@ -9,6 +9,7 @@ type ModalTab = 'faces' | 'photos' | 'merge'
 
 export default function ClustersTab() {
   const [selected, setSelected] = useState<Cluster | null>(null)
+  const [search, setSearch] = useState('')
 
   const { data: clusters = [], isLoading, isError } = useQuery({
     queryKey: ['clusters'],
@@ -20,6 +21,10 @@ export default function ClustersTab() {
     .sort((a, b) => b.face_count - a.face_count)
   const noiseCluster = clusters.find(c => c.label === -1)
   const allNamed = clusters.filter(c => c.label !== -1)
+
+  const filteredNamed = search.trim()
+    ? named.filter(c => c.person_name?.toLowerCase().includes(search.toLowerCase()))
+    : named
 
   if (isLoading) {
     return <div className="text-zinc-600 text-sm py-20 text-center">Loading clusters…</div>
@@ -60,17 +65,28 @@ export default function ClustersTab() {
         </div>
       )}
 
-      {/* Summary */}
-      <div className="flex items-center gap-4 text-sm text-zinc-500">
-        <span>{named.length} person clusters</span>
+      {/* Summary + search */}
+      <div className="flex items-center gap-3">
+        <span className="text-sm text-zinc-500 whitespace-nowrap">{named.length} clusters</span>
+        <input
+          type="search"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search by name…"
+          className="flex-1 max-w-xs bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 transition-colors"
+        />
       </div>
 
       {/* Cluster grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-        {named.map(c => (
-          <ClusterCard key={c.id} cluster={c} onClick={() => setSelected(c)} />
-        ))}
-      </div>
+      {filteredNamed.length === 0 && search.trim() ? (
+        <p className="text-sm text-zinc-600 py-4">No clusters match "{search}"</p>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+          {filteredNamed.map(c => (
+            <ClusterCard key={c.id} cluster={c} onClick={() => setSelected(c)} />
+          ))}
+        </div>
+      )}
 
       {/* Modal */}
       {selected && (
@@ -403,8 +419,8 @@ function NoiseFaceGrid({
 
   return (
     <>
-      {/* Toolbar */}
-      <div className="flex items-center gap-3 mb-3">
+      {/* Toolbar — sticky within the modal scroll area */}
+      <div className="sticky top-0 z-10 -mx-4 -mt-4 px-4 pt-3 pb-2 mb-3 bg-zinc-900 border-b border-zinc-800/60 flex items-center gap-3">
         <button
           onClick={toggleAll}
           className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
@@ -488,8 +504,16 @@ function AssignFacesOverlay({
 }) {
   const [newName, setNewName] = useState('')
   const [busy, setBusy] = useState(false)
+  const [clusterSearch, setClusterSearch] = useState('')
 
   const faceIds = faces.map(f => f.id)
+
+  const visibleClusters = clusterSearch.trim()
+    ? allClusters.filter(c =>
+        c.person_name?.toLowerCase().includes(clusterSearch.toLowerCase()) ||
+        `cluster ${c.label}`.includes(clusterSearch.toLowerCase())
+      )
+    : allClusters
 
   async function createAndAssign() {
     if (busy) return
@@ -583,8 +607,15 @@ function AssignFacesOverlay({
               <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
                 Or assign to existing cluster
               </p>
+              <input
+                type="search"
+                value={clusterSearch}
+                onChange={e => setClusterSearch(e.target.value)}
+                placeholder="Search by name…"
+                className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+              />
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-                {allClusters.map(c => (
+                {visibleClusters.map(c => (
                   <button
                     key={c.id}
                     onClick={() => assignToCluster(c.id)}
