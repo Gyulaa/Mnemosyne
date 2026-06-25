@@ -52,26 +52,36 @@ function buildRelationMaps(relations: Relation[], visibleIds: Set<number>): Rela
 }
 
 // ── Proband context extraction ─────────────────────────────────────────────────
+// lateralDepth: how many generations DOWN to follow from each ancestor
+// (0 = off, 1 = aunts/uncles, 2 = aunts/uncles + cousins, ...)
 function extractProbandContext(
   probandId: number,
   allPersons: PersonFull[],
   allRelations: Relation[],
   ancestorDepth: number,
   descendantDepth: number,
+  lateralDepth: number,
 ): Set<number> {
   const allIds = new Set(allPersons.map(p => p.id))
   const maps = buildRelationMaps(allRelations, allIds)
   const visible = new Set<number>([probandId])
 
+  // BFS up: collect direct ancestors, track them for lateral expansion
+  const ancestorIds = new Set<number>()
   const ancQueue: Array<[number, number]> = [[probandId, 0]]
   while (ancQueue.length) {
     const [id, depth] = ancQueue.shift()!
     if (depth >= ancestorDepth) continue
     for (const pid of maps.parentsOf.get(id) ?? []) {
-      if (!visible.has(pid)) { visible.add(pid); ancQueue.push([pid, depth + 1]) }
+      if (!visible.has(pid)) {
+        visible.add(pid)
+        ancestorIds.add(pid)
+        ancQueue.push([pid, depth + 1])
+      }
     }
   }
 
+  // BFS down: direct descendants
   const descQueue: Array<[number, number]> = [[probandId, 0]]
   while (descQueue.length) {
     const [id, depth] = descQueue.shift()!
@@ -85,6 +95,26 @@ function extractProbandContext(
   for (const pid of maps.parentsOf.get(probandId) ?? []) {
     for (const sibId of maps.childrenOf.get(pid) ?? []) {
       if (!visible.has(sibId)) visible.add(sibId)
+    }
+  }
+
+  // Lateral: from each ancestor, BFS down lateralDepth levels
+  // This adds aunts/uncles (depth 1), cousins (depth 2), etc.
+  if (lateralDepth > 0) {
+    for (const ancId of ancestorIds) {
+      const latQ: Array<[number, number]> = [[ancId, 0]]
+      const latSeen = new Set<number>([ancId])
+      while (latQ.length) {
+        const [id, depth] = latQ.shift()!
+        if (depth >= lateralDepth) continue
+        for (const cid of maps.childrenOf.get(id) ?? []) {
+          if (!latSeen.has(cid)) {
+            latSeen.add(cid)
+            if (!visible.has(cid)) visible.add(cid)
+            latQ.push([cid, depth + 1])
+          }
+        }
+      }
     }
   }
 
@@ -185,8 +215,9 @@ function assignGenerations(
   return genMap
 }
 
-// ── Descendant layout (Reingold-Tilford) ───────────────────────────────────────
-// Returns x positions for persons at gen > probandGen (raw, not normalized).
+// ── Descendant layout (Reingold-Tilford, cluster-aware) ───────────────────────
+// Each person + their same-generation spouses form one "cluster". Width is
+// computed per cluster so spouses are never interleaved between siblings.
 function layoutDescendants(
   probandId: number,
   visibleIds: Set<number>,
@@ -196,48 +227,93 @@ function layoutDescendants(
   const probandGen = genMap.get(probandId) ?? 0
   const isDesc = (id: number) => visibleIds.has(id) && (genMap.get(id) ?? 0) > probandGen
 
+  // Assign each descendant to a cluster (person + their same-gen spouses).
+  // The smallest ID in the group becomes the primary (cluster representative).
+  const primaryOf = new Map<number, number>()
+  const clusterSpouses = new Map<number, number[]>()
+
+  const descendants = [...visibleIds]
+    .filter(isDesc)
+    .sort((a, b) => ((genMap.get(a) ?? 0) - (genMap.get(b) ?? 0)) || (a - b))
+
+  for (const id of descendants) {
+    if (primaryOf.has(id)) continue
+    const myGen = genMap.get(id) ?? 0
+    const spHere = (maps.spousesOf.get(id) ?? [])
+      .filter(s => isDesc(s) && !primaryOf.has(s) && (genMap.get(s) ?? 0) === myGen)
+      .sort((a, b) => a - b)
+    primaryOf.set(id, id)
+    clusterSpouses.set(id, spHere)
+    for (const s of spHere) primaryOf.set(s, id)
+  }
+
+  const getChildClusters = (primary: number): number[] => {
+    const members = [primary, ...(clusterSpouses.get(primary) ?? [])]
+    const seen = new Set<number>()
+    for (const m of members) {
+      for (const cid of (maps.childrenOf.get(m) ?? []).filter(isDesc)) {
+        seen.add(primaryOf.get(cid) ?? cid)
+      }
+    }
+    return [...seen]
+  }
+
+  // Compute width bottom-up: cluster width = max(personal slots, children total)
   const widthMap = new Map<number, number>()
   const proc1 = new Set<number>()
 
-  function computeWidth(id: number): number {
-    if (proc1.has(id)) return widthMap.get(id) ?? (NW + HG)
-    proc1.add(id)
-    const children = (maps.childrenOf.get(id) ?? []).filter(isDesc)
-    if (!children.length) { widthMap.set(id, NW + HG); return NW + HG }
-    const total = children.reduce((s, cid) => s + computeWidth(cid), 0)
-    const w = Math.max(NW + HG, total)
-    widthMap.set(id, w); return w
+  function computeWidth(primary: number): number {
+    if (proc1.has(primary)) return widthMap.get(primary) ?? (NW + HG)
+    proc1.add(primary)
+    const step = NW + HG
+    const personalW = (1 + (clusterSpouses.get(primary) ?? []).length) * step
+    const childCs = getChildClusters(primary)
+    if (!childCs.length) { widthMap.set(primary, personalW); return personalW }
+    const childTotal = childCs.reduce((s, c) => s + computeWidth(c), 0)
+    const w = Math.max(personalW, childTotal)
+    widthMap.set(primary, w); return w
   }
 
+  // Assign x positions top-down: couple centered above their children
   const xMap = new Map<number, number>()
   const proc2 = new Set<number>()
 
-  function assignX(id: number, left: number) {
-    if (!isDesc(id) || proc2.has(id)) return
-    proc2.add(id)
-    const w = widthMap.get(id) ?? (NW + HG)
-    xMap.set(id, left + w / 2)
-    const children = (maps.childrenOf.get(id) ?? []).filter(isDesc)
+  function assignX(primary: number, left: number) {
+    if (proc2.has(primary)) return
+    proc2.add(primary)
+    const w = widthMap.get(primary) ?? (NW + HG)
+    const center = left + w / 2
+    const spouses = clusterSpouses.get(primary) ?? []
+    const n = 1 + spouses.length
+    const step = NW + HG
+    // Span of cards without trailing gap: n*step - HG
+    const clusterLeft = center - (n * step - HG) / 2
+    xMap.set(primary, clusterLeft + NW / 2)
+    spouses.forEach((sid, i) => xMap.set(sid, clusterLeft + (i + 1) * step + NW / 2))
+    // Place child clusters left-to-right
     let cursor = left
-    for (const cid of children) {
-      if (!proc2.has(cid)) { assignX(cid, cursor); cursor += widthMap.get(cid) ?? (NW + HG) }
+    for (const c of getChildClusters(primary)) {
+      if (!proc2.has(c)) { assignX(c, cursor); cursor += widthMap.get(c) ?? step }
     }
   }
 
-  // Gather proband's gen+1 children (including via spouses)
-  const spouses0 = (maps.spousesOf.get(probandId) ?? []).filter(
-    sid => visibleIds.has(sid) && (genMap.get(sid) ?? 0) === probandGen,
-  )
-  const allChildren = new Set((maps.childrenOf.get(probandId) ?? []).filter(isDesc))
-  for (const sid of spouses0) {
-    for (const cid of maps.childrenOf.get(sid) ?? []) { if (isDesc(cid)) allChildren.add(cid) }
+  // Root clusters: direct descendants of proband (and proband's gen-0 spouses)
+  const rootClusters = new Set<number>()
+  for (const cid of (maps.childrenOf.get(probandId) ?? []).filter(isDesc)) {
+    rootClusters.add(primaryOf.get(cid) ?? cid)
+  }
+  for (const sid of (maps.spousesOf.get(probandId) ?? []).filter(
+    s => visibleIds.has(s) && (genMap.get(s) ?? 0) === probandGen,
+  )) {
+    for (const cid of (maps.childrenOf.get(sid) ?? []).filter(isDesc)) {
+      rootClusters.add(primaryOf.get(cid) ?? cid)
+    }
   }
 
-  for (const cid of allChildren) computeWidth(cid)
-
+  for (const p of rootClusters) computeWidth(p)
   let cursor = 0
-  for (const cid of allChildren) {
-    if (!proc2.has(cid)) { assignX(cid, cursor); cursor += widthMap.get(cid) ?? (NW + HG) }
+  for (const p of rootClusters) {
+    if (!proc2.has(p)) { assignX(p, cursor); cursor += widthMap.get(p) ?? (NW + HG) }
   }
 
   return xMap
@@ -357,9 +433,10 @@ function buildProbandLayout(
   allRelations: Relation[],
   ancestorDepth: number,
   descendantDepth: number,
+  lateralDepth: number,
   collapsedIds: Set<number>,
 ): LayoutNode[] {
-  const rawVisible = extractProbandContext(probandId, allPersons, allRelations, ancestorDepth, descendantDepth)
+  const rawVisible = extractProbandContext(probandId, allPersons, allRelations, ancestorDepth, descendantDepth, lateralDepth)
   const rawMaps    = buildRelationMaps(allRelations, rawVisible)
   const visibleIds = applyCollapse(rawVisible, collapsedIds, rawMaps.childrenOf)
   const maps       = buildRelationMaps(allRelations, visibleIds)
@@ -394,21 +471,73 @@ function buildProbandLayout(
   for (const [id, x] of ancXMap)  combinedX.set(id, x)
   for (const [id, x] of gen0XMap) combinedX.set(id, x)
 
-  // Place any still-unpositioned visible persons adjacent to a placed spouse
-  let pass = true
-  while (pass) {
-    pass = false
+  // Unified fallback — three anchors tried in priority order, loop to convergence.
+  // All three share the same "go left / go right" primitive so lateral family
+  // clusters accumulate outward from center without overlapping Ahnentafel persons.
+  let passN = true
+  while (passN) {
+    passN = false
     for (const id of visibleIds) {
       if (combinedX.has(id)) continue
+      const myGen = genMap.get(id) ?? 0
+
+      const leftExtreme = () => {
+        let v = Infinity
+        for (const [oid, ox] of combinedX) { if ((genMap.get(oid) ?? 0) === myGen) v = Math.min(v, ox) }
+        combinedX.set(id, (v < Infinity ? v : 0) - (NW + HG))
+      }
+      const rightExtreme = () => {
+        let v = -Infinity
+        for (const [oid, ox] of combinedX) { if ((genMap.get(oid) ?? 0) === myGen) v = Math.max(v, ox) }
+        combinedX.set(id, (v > -Infinity ? v : 0) + (NW + HG))
+      }
+      const goSide = (anchorX: number) => { if (anchorX <= 0) leftExtreme(); else rightExtreme() }
+
+      // A: spouse anchor — follow spouse's side (left→further left, right→further right)
+      let placed = false
       for (const sid of maps.spousesOf.get(id) ?? []) {
-        if (combinedX.has(sid)) {
-          combinedX.set(id, combinedX.get(sid)! + NW + HG)
-          pass = true; break
+        if (combinedX.has(sid) && (genMap.get(sid) ?? 0) === myGen) {
+          goSide(combinedX.get(sid)!)
+          placed = true; passN = true; break
         }
+      }
+      if (placed) continue
+
+      // B: sibling anchor — direction from actual siblings only (no siblings' spouses,
+      // which would skew the center when both parents are Ahnentafel persons)
+      const myParents = maps.parentsOf.get(id) ?? []
+      const sibXs: number[] = []
+      for (const pid of myParents) {
+        for (const sibId of maps.childrenOf.get(pid) ?? []) {
+          if (sibId === id || !combinedX.has(sibId)) continue
+          if ((genMap.get(sibId) ?? 0) !== myGen) continue
+          sibXs.push(combinedX.get(sibId)!)
+        }
+      }
+      if (sibXs.length > 0) {
+        goSide(sibXs.reduce((a, b) => a + b, 0) / sibXs.length)
+        passN = true; continue
+      }
+
+      // C: parent anchor — lateral relatives whose siblings aren't visible yet
+      // (e.g. children of a lateral at two generations removed from Ahnentafel)
+      const posParentXs = myParents
+        .filter(pid => combinedX.has(pid))
+        .map(pid => combinedX.get(pid)!)
+      if (posParentXs.length > 0) {
+        goSide(posParentXs.reduce((a, b) => a + b, 0) / posParentXs.length)
+        passN = true
       }
     }
   }
-  for (const id of visibleIds) { if (!combinedX.has(id)) combinedX.set(id, 0) }
+  // Final fallback: truly orphaned persons with no anchor — place rightmost in gen
+  for (const id of visibleIds) {
+    if (combinedX.has(id)) continue
+    const g = genMap.get(id) ?? 0
+    let rightmost = -Infinity
+    for (const [oid, ox] of combinedX) { if ((genMap.get(oid) ?? 0) === g) rightmost = Math.max(rightmost, ox) }
+    combinedX.set(id, rightmost > -Infinity ? rightmost + NW + HG : 0)
+  }
 
   // Normalize: proband at x = 0
   const probandFinalX = combinedX.get(probandId) ?? 0
@@ -583,6 +712,7 @@ export default function TreeView({
   const [probandId,       setProbandId]       = useState<number | null>(null)
   const [ancestorDepth,   setAncestorDepth]   = useState(3)
   const [descendantDepth, setDescendantDepth] = useState(3)
+  const [lateralDepth,    setLateralDepth]    = useState(1)
   const [collapsedIds,    setCollapsedIds]    = useState<Set<number>>(new Set())
 
   // Auto-set proband when selection changes
@@ -610,9 +740,9 @@ export default function TreeView({
     if (!effectiveProbandId || !persons.length) return []
     return buildProbandLayout(
       effectiveProbandId, persons, relations,
-      ancestorDepth, descendantDepth, collapsedIds,
+      ancestorDepth, descendantDepth, lateralDepth, collapsedIds,
     )
-  }, [effectiveProbandId, persons, relations, ancestorDepth, descendantDepth, collapsedIds])
+  }, [effectiveProbandId, persons, relations, ancestorDepth, descendantDepth, lateralDepth, collapsedIds])
 
   const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
 
@@ -714,6 +844,14 @@ export default function TreeView({
               <button onClick={() => setDescendantDepth(d => Math.min(6, d + 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
             </div>
+            <div className="flex items-center gap-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7" title="Lateral relatives: aunts/uncles, cousins">
+              <span className="text-[10px] text-zinc-500">Oldal</span>
+              <button onClick={() => setLateralDepth(d => Math.max(0, d - 1))}
+                className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
+              <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{lateralDepth}</span>
+              <button onClick={() => setLateralDepth(d => Math.min(3, d + 1))}
+                className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
+            </div>
           </div>
           {/* Bottom-left: legend */}
           <div className="absolute bottom-3 left-3 z-10 flex items-center gap-4 text-[10px] text-zinc-600">
@@ -725,7 +863,7 @@ export default function TreeView({
               <svg width="22" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#7c3aed" strokeWidth="2" strokeDasharray="5 3"/></svg>
               spouse
             </span>
-            <span>Drag · scroll = zoom</span>
+            <span>Drag · scroll · Shift+click=fókusz</span>
           </div>
         </>
       )}
@@ -771,7 +909,15 @@ export default function TreeView({
               left: node.x - minX - NW / 2,
               top:  node.y - minY - NH / 2,
               width: NW, height: NH,
-            }} onClick={() => { if (!isDragging.current) onSelect(node.id) }}>
+            }} onClick={e => {
+              if (isDragging.current) return
+              if (e.shiftKey || e.ctrlKey) {
+                // Shift/Ctrl+click: set as focus without opening the detail panel
+                setProbandId(node.id)
+              } else {
+                onSelect(node.id)
+              }
+            }}>
               <PersonCard
                 person={node.person}
                 selected={node.id === selectedId}
