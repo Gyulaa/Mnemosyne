@@ -33,6 +33,14 @@ export interface FaceInfo {
   image_path: string
   bbox: number[]
   det_score: number
+  exif_date?: string | null
+}
+
+export interface ImagePerson {
+  person_id: number
+  person_name: string | null
+  face_id: number
+  cluster_id: number
 }
 
 export interface GraphNode {
@@ -41,12 +49,14 @@ export interface GraphNode {
   face_count: number
   photo_count: number
   thumbnail_face_id: number | null
+  cluster_id: number | null
 }
 
 export interface GraphEdge {
   source: number
   target: number
   weight: number
+  intimacy_score: number
 }
 
 export interface ConnectionsData {
@@ -80,6 +90,7 @@ export interface ClusterConnection {
   person_id: number
   person_name: string
   shared_photos: number
+  intimacy_score: number
   cluster_id: number | null
   thumbnail_face_id: number | null
 }
@@ -107,6 +118,13 @@ export interface FsListing {
   items: FsItem[]
 }
 
+export interface LinkedCluster {
+  id: number
+  label: number
+  face_count: number
+  preview_face_ids?: number[]
+}
+
 export interface PersonFull {
   id: number
   name: string | null
@@ -115,6 +133,7 @@ export interface PersonFull {
   notes: string | null
   thumbnail_face_id: number | null
   face_count: number
+  clusters: LinkedCluster[]
 }
 
 export interface Relation {

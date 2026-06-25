@@ -1,16 +1,49 @@
-# Photo Organizer
+# Mnemosyne
 
-Arcfelismerésen alapuló fotórendező alkalmazás. Beolvassa a képtáradat, automatikusan
-detektálja és klaszterezi az arcokat, te pedig neveket rendelhetsz a személyekhez —
-az elnevezési munkád megmarad az újraklaszterezések között.
+Arcfelismerésen alapuló, személyes fotórendező alkalmazás. Beolvassa a képtáradat,
+automatikusan detektálja és klaszterezi az arcokat, te pedig neveket rendelhetsz a
+személyekhez — az összes adat megmarad az újraklaszterezések között.
 
 ## Funkciók
 
+### Scan
 - Arcdetektálás és ArcFace embedding (insightface `buffalo_l` modell)
 - DBSCAN klaszterezés, centroid-alapú személyfelismeréssel
-- Manuális szerkesztés: átnevezés, összevonás, törlés, ismeretlen arcok hozzárendelése
 - HEIC/HEIF támogatás (iPhone fotók)
 - Folytatható szkennelés — megszakítás után onnan folytatja, ahol abbahagyta
+- EXIF metaadat kiolvasás (dátum, kamera, felbontás)
+
+### Clusters
+- Clusterek elnevezése, összevonása, törlése
+- Ismeretlen arcok hozzárendelése meglévő vagy új clusterhez (hasonlósági javaslatok alapján)
+- Cluster összekötése genealógiában szereplő személlyel
+- A 4 legfrissebb fotó előnézete minden clusternél (EXIF dátum szerint)
+- Fotók és arcok időrendben, legújabb elöl
+
+### Connections
+- Személyek közötti kapcsolatok erőssége két metrikával:
+  - **Közös fotók**: hány képen szerepel egyszerre a két személy
+  - **Súlyozott**: kis csoportos képek erősebb jelet adnak (`Σ 1/n`)
+- Force-directed gráf nézet (interaktív: zoom, pan, drag)
+- Rangsor nézet: a legerősebb kapcsolatok listája sorrendben
+- Szűrés személyekre, minimális közös fotó küszöb állítható
+- Gráf csomópontokra és rangsor sorokra kattintva az adott cluster oldalára navigál
+- Kapcsolat vonalra kattintva az Images fülön megnyílik a két személy közös fotóinak szűrése
+
+### Images
+- Képek böngészése lista és rács nézetben
+- Szűrés státusz, személyek és fájlnév alapján
+- AND/OR szűrési mód több személyre
+- Előnézeti modalban az arcok alatt kattintható személycipők → az adott cluster oldalára navigál
+- Képek törlése az adatbázisból (a forrásfájl érintetlen marad)
+
+### Genealogy
+- Interaktív családfa szerkesztő
+- Személyek hozzáadása, szerkesztése, törlése
+- Kapcsolatok: szülő–gyerek, házastárs, testvér
+- Sugiyama-algoritmus alapú elrendezés (vonalkeresztezések minimalizálása)
+- Zoom, pan, „Reset view" gomb
+- Cluster hozzárendelés a személyekhez (1 személy = 1 cluster)
 
 ## Előfeltételek
 
@@ -18,7 +51,6 @@ az elnevezési munkád megmarad az újraklaszterezések között.
 |--------|-----------------|
 | Python | 3.11+ |
 | Node.js | 18+ |
-| Git | bármely |
 
 > **Windows:** az `insightface` fordításához szükség lehet a
 > [Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
@@ -34,14 +66,12 @@ cd Image-Organizer
 ### 1. Python backend
 
 ```bash
-# Virtuális környezet létrehozása
 python -m venv .venv
 
 # Aktiválás
 .venv\Scripts\activate          # Windows
 source .venv/bin/activate       # macOS / Linux
 
-# Függőségek telepítése
 pip install -r requirements.txt
 ```
 
@@ -54,8 +84,6 @@ cd ..
 ```
 
 ## Indítás
-
-Minden használat előtt két terminált kell nyitni a projekt gyökerében.
 
 **Terminal 1 — backend:**
 ```bash
@@ -76,50 +104,54 @@ Ezután nyisd meg: **http://localhost:5173**
 ## Első futtatás
 
 1. A **Scan** fülön válaszd ki a fotókat tartalmazó mappát
-2. Kattints a **Start scan** gombra
-3. Az első szkenneléskor az insightface letölti a `buffalo_l` modellt (~300 MB, egyszeri)
-4. Szkennelés után a **Run clustering** gombbal klaszterezhetsz
-5. A **Clusters** fülön elnevezheted a személyeket, összevonhatsz clustereket,
-   és az ismeretlen arcokat hozzárendelheted meglévő vagy új clusterekhez
+2. Kattints a **Start scan** gombra — az első futáskor az insightface letölti a `buffalo_l` modellt (~300 MB, egyszeri)
+3. Szkennelés után kattints a **Run clustering** gombra
+4. A **Clusters** fülön nevezd el a személyeket
+5. A **Genealogy** fülön építsd fel a családfát, és kösd össze a személyeket a clusterekkel
 
 > A forrás fotóidat az alkalmazás **soha nem módosítja** — csak olvassa őket.
 
 ## Projektek és adatbázis
 
 Minden munkafolyamathoz külön projekt hozható létre. Az alkalmazás fejlécében lévő
-mappa-ikonra kattintva lehet projektet váltani, újat létrehozni vagy töröln.
+projektváltóval lehet projektet váltani, újat létrehozni vagy törölni.
 
-Minden projekt egy önálló könyvtárban él (`projects/<id>/`), saját SQLite
-adatbázissal. Az adatbázis fájlok (`*.db`) **nincsenek** a git repositoryban —
-a forrás képek elérési útjai adatbázisban tárolódnak, ezért ha a fotókat
-áthelyezed, újra kell szkennelni.
+Minden projekt egy önálló könyvtárban él (`projects/<id>/`), saját SQLite adatbázissal.
+A sémaverzió az adatbázisban tárolódik (`schema_version` tábla), ezért jövőbeli frissítések
+automatikusan migrálják a meglévő adatokat.
 
-Az aktív projektet a `config.json` menti el — ez is git-ignored (gépspecifikus).
+Az adatbázis fájlok (`*.db`) és a `config.json` **nincsenek** a git repositoryban.
 
 ## Projekt struktúra
 
 ```
 Image-Organizer/
 ├── backend/
-│   ├── main.py          # FastAPI app, REST API végpontok
-│   ├── scanner.py       # Háttérben futó, folytatható fájlszkenner
-│   ├── clusterer.py     # DBSCAN + centroid-alapú klaszterezés
-│   ├── database.py      # SQLAlchemy modellek, SQLite
-│   ├── image_utils.py   # Képbetöltés, HEIC-konverzió, thumbnail-vágás
-│   └── schemas.py       # Pydantic request/response modellek
+│   ├── main.py              # FastAPI app, REST API végpontok
+│   ├── scanner.py           # Háttérben futó, folytatható fájlszkenner
+│   ├── clusterer.py         # DBSCAN + centroid-alapú klaszterezés
+│   ├── database.py          # SQLAlchemy modellek, SQLite, séma-migráció
+│   ├── project_manager.py   # Multi-projekt kezelés
+│   ├── image_utils.py       # Képbetöltés, HEIC-konverzió, thumbnail-vágás
+│   └── schemas.py           # Pydantic request/response modellek
 ├── frontend/
 │   └── src/
-│       ├── App.tsx
-│       ├── api.ts        # Összes API-hívás egy helyen
-│       ├── types.ts
+│       ├── App.tsx           # Tab-navigáció, cross-tab navigációs logika
+│       ├── api.ts            # Összes API-hívás egy helyen
+│       ├── types.ts          # TypeScript interfészek
 │       └── components/
 │           ├── ScanTab.tsx
 │           ├── ClustersTab.tsx
-│           └── FolderPicker.tsx
+│           ├── ConnectionsTab.tsx
+│           ├── ImagesTab.tsx
+│           ├── FamilyTreeTab.tsx
+│           ├── TreeView.tsx
+│           ├── PersonPanel.tsx
+│           └── ProjectSwitcher.tsx
 ├── requirements.txt
-├── config.json          # ← gitignore-ban (aktív projekt neve)
-└── projects/            # ← gitignore-ban (adatbázisok, user-adat)
+├── config.json              # ← gitignore-ban (aktív projekt neve)
+└── projects/                # ← gitignore-ban (adatbázisok, user-adat)
     └── <project-id>/
         ├── project.json
-        └── photo_organizer.db
+        └── mnemosyne.db
 ```

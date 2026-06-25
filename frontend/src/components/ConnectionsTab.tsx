@@ -86,13 +86,17 @@ function ForceGraph({
   edges,
   width,
   height,
+  scoring,
   onEdgeClick,
+  onNodeClick,
 }: {
   nodes: GraphNode[]
   edges: GraphEdge[]
   width: number
   height: number
+  scoring: 'count' | 'weighted'
   onEdgeClick?: (personIds: number[]) => void
+  onNodeClick?: (clusterId: number) => void
 }) {
   const svgRef = useRef<SVGSVGElement>(null)
   const nodesRef = useRef<SimNode[]>([])
@@ -101,9 +105,10 @@ function ForceGraph({
   const [hoveredNode, setHoveredNode] = useState<number | null>(null)
   const [edgeTip, setEdgeTip] = useState<{
     x: number; y: number
-    sourceId: number; targetId: number; weight: number
+    sourceId: number; targetId: number; weight: number; intimacy_score: number
   } | null>(null)
   const rafRef = useRef<number | null>(null)
+  const nodeDownPos = useRef<{ id: number; x: number; y: number } | null>(null)
 
   // Pan/zoom state — use refs so wheel handler (non-React event listener) always sees fresh values
   const panRef = useRef({ x: 0, y: 0 })
@@ -196,8 +201,24 @@ function ForceGraph({
     e.stopPropagation()
     ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
     setDragId(id)
+    nodeDownPos.current = { id, x: e.clientX, y: e.clientY }
     const node = nodesRef.current.find(n => n.id === id)
     if (node) { node.pinned = true; node.vx = 0; node.vy = 0 }
+  }
+
+  function onNodeUp(e: React.PointerEvent, id: number) {
+    const node = nodesRef.current.find(n => n.id === id)
+    if (node) node.pinned = false
+    if (nodeDownPos.current && nodeDownPos.current.id === id && onNodeClick) {
+      const dx = e.clientX - nodeDownPos.current.x
+      const dy = e.clientY - nodeDownPos.current.y
+      if (Math.sqrt(dx * dx + dy * dy) < 8) {
+        const graphNode = nodes.find(n => n.id === id)
+        if (graphNode?.cluster_id != null) onNodeClick(graphNode.cluster_id)
+      }
+    }
+    nodeDownPos.current = null
+    setDragId(null)
   }
 
   function onSVGDown(e: React.PointerEvent) {
@@ -291,7 +312,8 @@ function ForceGraph({
             const a = displayMap.get(e.source), b = displayMap.get(e.target)
             if (!a || !b) return null
             const active = hoveredNode === e.source || hoveredNode === e.target
-            const w = Math.log(e.weight + 1) * 2.2
+            const edgeVal = scoring === 'weighted' ? e.intimacy_score * 2 : e.weight
+            const w = Math.log(edgeVal + 1) * 2.2
             return (
               <g key={`${e.source}-${e.target}`}>
                 <line
@@ -310,7 +332,8 @@ function ForceGraph({
                   onClick={onEdgeClick ? () => onEdgeClick([e.source, e.target]) : undefined}
                   onMouseEnter={ev => setEdgeTip({
                     x: ev.clientX, y: ev.clientY,
-                    sourceId: e.source, targetId: e.target, weight: e.weight,
+                    sourceId: e.source, targetId: e.target,
+                    weight: e.weight, intimacy_score: e.intimacy_score,
                   })}
                   onMouseLeave={() => setEdgeTip(null)}
                 />
@@ -331,11 +354,12 @@ function ForceGraph({
                 key={n.id}
                 data-node={n.id}
                 style={{
-                  cursor: dragId != null ? 'grabbing' : 'grab',
+                  cursor: dragId != null ? 'grabbing' : (onNodeClick && n.cluster_id != null ? 'pointer' : 'grab'),
                   opacity: dimmed ? 0.18 : 1,
                   transition: 'opacity 0.15s',
                 }}
                 onPointerDown={e => onNodeDown(e, n.id)}
+                onPointerUp={e => onNodeUp(e, n.id)}
                 onMouseEnter={() => setHoveredNode(n.id)}
                 onMouseLeave={() => setHoveredNode(null)}
               >
@@ -402,13 +426,129 @@ function ForceGraph({
             <span className="font-semibold text-zinc-200">{nameMap.get(edgeTip.sourceId)}</span>
             <span className="text-zinc-500 mx-1.5">↔</span>
             <span className="font-semibold text-zinc-200">{nameMap.get(edgeTip.targetId)}</span>
-            <span className="text-zinc-500 ml-2 tabular-nums">{edgeTip.weight} shared photo{edgeTip.weight !== 1 ? 's' : ''}</span>
+          </div>
+          <div className="flex gap-3 tabular-nums">
+            <span className={scoring === 'count' ? 'text-zinc-300 font-semibold' : 'text-zinc-500'}>
+              {edgeTip.weight} shared
+            </span>
+            <span className={scoring === 'weighted' ? 'text-zinc-300 font-semibold' : 'text-zinc-500'}>
+              {edgeTip.intimacy_score.toFixed(2)} weighted
+            </span>
           </div>
           {onEdgeClick && (
-            <div className="text-zinc-600 text-[10px]">Click to view shared photos →</div>
+            <div className="text-zinc-600 text-[10px]">Click to see shared photos →</div>
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// ── ConnectionRankList ─────────────────────────────────────────────────────────
+
+function ConnectionRankList({
+  edges,
+  nodes,
+  scoring,
+  onEdgeClick,
+  onNodeClick,
+}: {
+  edges: GraphEdge[]
+  nodes: GraphNode[]
+  scoring: 'count' | 'weighted'
+  onEdgeClick?: (personIds: number[]) => void
+  onNodeClick?: (clusterId: number) => void
+}) {
+  const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
+
+  const sorted = useMemo(() => {
+    return [...edges].sort((a, b) =>
+      scoring === 'weighted'
+        ? b.intimacy_score - a.intimacy_score
+        : b.weight - a.weight
+    )
+  }, [edges, scoring])
+
+  const maxVal = sorted.length > 0
+    ? (scoring === 'weighted' ? sorted[0].intimacy_score : sorted[0].weight)
+    : 1
+
+  return (
+    <div className="h-full overflow-y-auto px-4 py-3">
+      <div className="space-y-1">
+        {sorted.map((edge, i) => {
+          const a = nodeMap.get(edge.source)
+          const b = nodeMap.get(edge.target)
+          if (!a || !b) return null
+          const val = scoring === 'weighted' ? edge.intimacy_score : edge.weight
+          const barPct = Math.round((val / maxVal) * 100)
+          const canNavA = onNodeClick && a.cluster_id != null
+          const canNavB = onNodeClick && b.cluster_id != null
+
+          return (
+            <div
+              key={`${edge.source}-${edge.target}`}
+              className="relative flex items-center gap-3 px-3 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors overflow-hidden"
+            >
+              {/* Bar background */}
+              <div
+                className="absolute inset-y-0 left-0 bg-zinc-800/60 pointer-events-none transition-all"
+                style={{ width: `${barPct}%` }}
+              />
+
+              {/* Rank */}
+              <span className="relative w-6 text-right text-xs text-zinc-600 tabular-nums shrink-0 font-medium">
+                {i + 1}
+              </span>
+
+              {/* Person A */}
+              <button
+                onClick={canNavA ? () => onNodeClick!(a.cluster_id!) : undefined}
+                className={`relative flex items-center gap-1.5 min-w-0 ${canNavA ? 'cursor-pointer hover:text-zinc-100' : 'cursor-default'} text-zinc-300 transition-colors`}
+                style={{ flex: '1 1 0' }}
+              >
+                {a.thumbnail_face_id ? (
+                  <img src={api.faceThumbnailUrl(a.thumbnail_face_id, 40)} className="w-7 h-7 rounded-full object-cover shrink-0" alt="" />
+                ) : (
+                  <div className="w-7 h-7 rounded-full bg-zinc-700 flex items-center justify-center text-xs text-zinc-400 shrink-0">
+                    {a.name.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+                <span className="text-sm font-medium truncate">{a.name}</span>
+              </button>
+
+              {/* Score + photos link */}
+              <button
+                onClick={onEdgeClick ? () => onEdgeClick([edge.source, edge.target]) : undefined}
+                className={`relative flex flex-col items-center shrink-0 gap-0 px-2 ${onEdgeClick ? 'cursor-pointer hover:text-zinc-100' : 'cursor-default'} transition-colors`}
+              >
+                <span className="text-sm font-semibold text-zinc-200 tabular-nums leading-tight">
+                  {scoring === 'weighted' ? edge.intimacy_score.toFixed(2) : edge.weight}
+                </span>
+                <span className="text-[10px] text-zinc-600 leading-tight whitespace-nowrap">
+                  {scoring === 'weighted' ? `${edge.weight} photos · weighted` : 'shared'}
+                </span>
+              </button>
+
+              {/* Person B */}
+              <button
+                onClick={canNavB ? () => onNodeClick!(b.cluster_id!) : undefined}
+                className={`relative flex items-center gap-1.5 min-w-0 justify-end ${canNavB ? 'cursor-pointer hover:text-zinc-100' : 'cursor-default'} text-zinc-300 transition-colors`}
+                style={{ flex: '1 1 0' }}
+              >
+                <span className="text-sm font-medium truncate">{b.name}</span>
+                {b.thumbnail_face_id ? (
+                  <img src={api.faceThumbnailUrl(b.thumbnail_face_id, 40)} className="w-7 h-7 rounded-full object-cover shrink-0" alt="" />
+                ) : (
+                  <div className="w-7 h-7 rounded-full bg-zinc-700 flex items-center justify-center text-xs text-zinc-400 shrink-0">
+                    {b.name.slice(0, 1).toUpperCase()}
+                  </div>
+                )}
+              </button>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -417,8 +557,10 @@ function ForceGraph({
 
 export default function ConnectionsTab({
   onEdgeClick,
+  onNodeClick,
 }: {
   onEdgeClick?: (personIds: number[]) => void
+  onNodeClick?: (clusterId: number) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -426,6 +568,9 @@ export default function ConnectionsTab({
   const [draft, setDraft] = useState(2)            // live slider value → UI only
   const [hiddenPersons, setHiddenPersons] = useState<Set<number>>(new Set())
   const [showFilter, setShowFilter] = useState(false)
+  const [scoring, setScoring] = useState<'count' | 'weighted'>('count')
+  const [showTooltip, setShowTooltip] = useState(false)
+  const [viewMode, setViewMode] = useState<'graph' | 'list'>('graph')
 
   useEffect(() => {
     const el = containerRef.current
@@ -513,6 +658,41 @@ export default function ConnectionsTab({
             <span className="text-xs text-zinc-600 tabular-nums">
               {visibleNodes.length}/{data.nodes.length} · {visibleEdges.length} connection{visibleEdges.length !== 1 ? 's' : ''}
             </span>
+            <div className="flex items-center gap-1.5">
+              <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
+                {(['count', 'weighted'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    onClick={() => setScoring(mode)}
+                    className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                      scoring === mode
+                        ? 'bg-zinc-600 text-zinc-100'
+                        : 'text-zinc-500 hover:text-zinc-300'
+                    }`}
+                  >
+                    {mode === 'count' ? 'Shared photos' : 'Weighted'}
+                  </button>
+                ))}
+              </div>
+              <div className="relative">
+                <button
+                  onMouseEnter={() => setShowTooltip(true)}
+                  onMouseLeave={() => setShowTooltip(false)}
+                  className="w-5 h-5 rounded-full bg-zinc-700 hover:bg-zinc-600 text-zinc-400 hover:text-zinc-200 text-[11px] font-bold flex items-center justify-center transition-colors"
+                >ℹ</button>
+                {showTooltip && (
+                  <div className="absolute right-0 top-7 w-64 bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl p-3 z-50 text-xs text-zinc-300 leading-relaxed">
+                    <p className="font-semibold text-zinc-200 mb-1">Shared photos vs. Weighted</p>
+                    <p className="text-zinc-400 mb-2">
+                      <span className="text-zinc-300">Shared photos:</span> how many photos both persons appear in together.
+                    </p>
+                    <p className="text-zinc-400">
+                      <span className="text-zinc-300">Weighted:</span> 2–3 people in a photo → strong signal. 20 people in a group photo → weak signal. Adds 1/(number of people) per photo.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
             <button
               onClick={() => setShowFilter(s => !s)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
@@ -532,6 +712,33 @@ export default function ConnectionsTab({
                 </span>
               )}
             </button>
+            {/* View mode toggle */}
+            <div className="flex bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setViewMode('graph')}
+                title="Graph view"
+                className={`p-1.5 transition-colors ${viewMode === 'graph' ? 'bg-zinc-600 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <circle cx="5" cy="12" r="2.2" />
+                  <circle cx="19" cy="5" r="2.2" />
+                  <circle cx="19" cy="19" r="2.2" />
+                  <circle cx="12" cy="12" r="2.2" />
+                  <line x1="7" y1="12" x2="10" y2="12" />
+                  <line x1="14" y1="12" x2="17.1" y2="6.5" />
+                  <line x1="14" y1="12" x2="17.1" y2="17.5" />
+                </svg>
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                title="Ranking"
+                className={`p-1.5 transition-colors ${viewMode === 'list' ? 'bg-zinc-600 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                </svg>
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -614,21 +821,35 @@ export default function ConnectionsTab({
           </div>
         )}
 
-        {!isLoading && data && visibleNodes.length > 0 && size.width > 0 && (
+        {!isLoading && data && visibleNodes.length > 0 && viewMode === 'graph' && size.width > 0 && (
           <ForceGraph
             key={graphKey}
             nodes={visibleNodes}
             edges={visibleEdges}
             width={size.width}
             height={size.height}
+            scoring={scoring}
             onEdgeClick={onEdgeClick}
+            onNodeClick={onNodeClick}
+          />
+        )}
+
+        {!isLoading && data && visibleNodes.length > 0 && viewMode === 'list' && (
+          <ConnectionRankList
+            edges={visibleEdges}
+            nodes={visibleNodes}
+            scoring={scoring}
+            onEdgeClick={onEdgeClick}
+            onNodeClick={onNodeClick}
           />
         )}
       </div>
 
-      <p className="text-xs text-zinc-700 text-center shrink-0">
-        Scroll to zoom · Drag background to pan · Drag nodes to rearrange · Hover to highlight
-      </p>
+      {viewMode === 'graph' && (
+        <p className="text-xs text-zinc-700 text-center shrink-0">
+          Scroll to zoom · Drag background to pan · Drag nodes to rearrange · Hover to highlight
+        </p>
+      )}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster } from './types'
 
 const BASE = '/api'
 
@@ -55,6 +55,12 @@ export const api = {
       post<{ ok: boolean; target_cluster_id: number }>(
         `${BASE}/clusters/${sourceId}/merge-into/${targetId}`,
       ),
+    linkPerson: (clusterId: number, personId: number | null) =>
+      post<{ ok: boolean; person_id: number | null; person_name: string | null }>(
+        `${BASE}/clusters/${clusterId}/link-person`,
+        { person_id: personId },
+      ),
+    unlinked: () => fetchJson<LinkedCluster[]>(`${BASE}/clusters/unnamed`),
     similarNoise: (id: number, limit = 20, threshold = 0.5) =>
       fetchJson<SimilarFaceInfo[]>(
         `${BASE}/clusters/${id}/similar-noise?limit=${limit}&threshold=${threshold}`,
@@ -106,6 +112,8 @@ export const api = {
       fetchJson<{ ok: boolean }>(`${BASE}/images/${id}`, { method: 'DELETE' }),
     bulkDelete: (ids: number[]) =>
       post<{ ok: boolean; count: number }>(`${BASE}/images/bulk-delete`, { image_ids: ids }),
+    persons: (id: number) =>
+      fetchJson<ImagePerson[]>(`${BASE}/images/${id}/persons`),
   },
   stats: () => fetchJson<Stats>(`${BASE}/stats`),
   fs: {

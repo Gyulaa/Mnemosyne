@@ -24,10 +24,16 @@ const TAB_LABELS: Record<Tab, string> = {
 export default function App() {
   const [tab, setTab] = useState<Tab>('scan')
   const [imageNavFilter, setImageNavFilter] = useState<{ personIds: number[]; key: number } | null>(null)
+  const [clusterNavTarget, setClusterNavTarget] = useState<{ clusterId: number; key: number } | null>(null)
 
   function navToImages(personIds: number[]) {
     setTab('images')
     setImageNavFilter({ personIds, key: Date.now() })
+  }
+
+  function navToCluster(clusterId: number) {
+    setTab('clusters')
+    setClusterNavTarget({ clusterId, key: Date.now() })
   }
 
   return (
@@ -75,9 +81,9 @@ export default function App() {
           ) : (
             <div className={tab === 'connections' ? 'px-4 py-4' : 'max-w-6xl mx-auto px-6 py-8'}>
               {tab === 'scan'        ? <ScanTab /> :
-               tab === 'clusters'   ? <ClustersTab /> :
-               tab === 'images'     ? <ImagesTab navFilter={imageNavFilter} /> :
-               <ConnectionsTab onEdgeClick={navToImages} />}
+               tab === 'clusters'   ? <ClustersTab navTarget={clusterNavTarget} onNavToCluster={navToCluster} /> :
+               tab === 'images'     ? <ImagesTab navFilter={imageNavFilter} onNavToCluster={navToCluster} /> :
+               <ConnectionsTab onEdgeClick={navToImages} onNodeClick={navToCluster} />}
             </div>
           )}
         </main>

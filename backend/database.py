@@ -95,3 +95,13 @@ def init_db_schema(engine):
                 conn.commit()
             except Exception:
                 pass  # column already exists
+
+        # Schema version tracking — used for future migrations.
+        # Current version: 1 (baseline with all columns above).
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+        ))
+        row = conn.execute(text("SELECT version FROM schema_version")).fetchone()
+        if row is None:
+            conn.execute(text("INSERT INTO schema_version VALUES (1)"))
+        conn.commit()

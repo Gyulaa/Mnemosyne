@@ -1,7 +1,7 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { Cluster, ImageItem } from '../types'
+import type { Cluster, ImageItem, ImagePerson } from '../types'
 
 type FilterType = 'all' | 'done' | 'no_face' | 'error' | 'pending'
 type SortOrder = 'id_desc' | 'exif_date_desc' | 'exif_date_asc' | 'filename_asc'
@@ -26,8 +26,10 @@ function parseMeta(metaJson: string | null): { width?: number; height?: number; 
 
 export default function ImagesTab({
   navFilter,
+  onNavToCluster,
 }: {
   navFilter?: { personIds: number[]; key: number } | null
+  onNavToCluster?: (clusterId: number) => void
 }) {
   const qc = useQueryClient()
   const [filter, setFilter] = useState<FilterType>('all')
@@ -35,7 +37,7 @@ export default function ImagesTab({
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
-  const [previewImg, setPreviewImg] = useState<ImageItem | null>(null)
+  const [previewIdx, setPreviewIdx] = useState<number | null>(null)
   const [includePersonIds, setIncludePersonIds] = useState<Set<number>>(new Set())
   const [excludePersonIds, setExcludePersonIds] = useState<Set<number>>(new Set())
   const [includeMode, setIncludeMode] = useState<'or' | 'and'>('or')
@@ -390,14 +392,14 @@ export default function ImagesTab({
             </div>
           ) : (
             <div className="divide-y divide-zinc-800/70">
-              {pageItems.map(img => (
+              {pageItems.map((img, i) => (
                 <ImageRow
                   key={img.id}
                   img={img}
                   selected={selected.has(img.id)}
                   onToggle={() => toggleItem(img.id)}
                   onDelete={() => deleteSingle(img.id)}
-                  onPreview={() => setPreviewImg(img)}
+                  onPreview={() => setPreviewIdx(i)}
                 />
               ))}
             </div>
@@ -413,14 +415,14 @@ export default function ImagesTab({
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
-            {pageItems.map(img => (
+            {pageItems.map((img, i) => (
               <ImageCard
                 key={img.id}
                 img={img}
                 selected={selected.has(img.id)}
                 onToggle={() => toggleItem(img.id)}
                 onDelete={() => deleteSingle(img.id)}
-                onPreview={() => setPreviewImg(img)}
+                onPreview={() => setPreviewIdx(i)}
               />
             ))}
           </div>
@@ -468,8 +470,14 @@ export default function ImagesTab({
         </div>
       )}
 
-      {previewImg && (
-        <ImagePreviewModal img={previewImg} onClose={() => setPreviewImg(null)} />
+      {previewIdx !== null && (
+        <ImagePreviewModal
+          images={pageItems}
+          idx={previewIdx}
+          onChange={setPreviewIdx}
+          onClose={() => setPreviewIdx(null)}
+          onNavToCluster={onNavToCluster}
+        />
       )}
     </div>
   )
@@ -561,83 +569,127 @@ function ImageCard({
 
 // ── ImagePreviewModal ─────────────────────────────────────────────────────────
 
-function ImagePreviewModal({ img, onClose }: { img: ImageItem; onClose: () => void }) {
+function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster }: {
+  images: ImageItem[]
+  idx: number
+  onChange: (i: number) => void
+  onClose: () => void
+  onNavToCluster?: (clusterId: number) => void
+}) {
+  const img = images[idx]
+
   useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'ArrowLeft')  onChange(Math.max(0, idx - 1))
+      if (e.key === 'ArrowRight') onChange(Math.min(images.length - 1, idx + 1))
+    }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [idx, images.length, onClose, onChange])
+
+  const { data: persons = [] } = useQuery<ImagePerson[]>({
+    queryKey: ['image-persons', img.id],
+    queryFn: () => api.images.persons(img.id),
+    staleTime: 120_000,
+    enabled: img.face_count > 0,
+  })
 
   const meta = STATUS_META[img.scan_status]
   const exifMeta = parseMeta(img.meta_json)
 
   return (
     <div
-      className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
       onClick={onClose}
     >
+      {/* Nav arrows */}
+      <button onClick={e => { e.stopPropagation(); onChange(idx - 1) }} disabled={idx === 0}
+        className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-zinc-800/80 hover:bg-zinc-700 disabled:opacity-20 flex items-center justify-center text-zinc-200 text-2xl transition-colors z-10">‹</button>
+      <button onClick={e => { e.stopPropagation(); onChange(idx + 1) }} disabled={idx === images.length - 1}
+        className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-zinc-800/80 hover:bg-zinc-700 disabled:opacity-20 flex items-center justify-center text-zinc-200 text-2xl transition-colors z-10">›</button>
+
       <div
-        className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden max-w-3xl w-full shadow-2xl flex flex-col"
-        style={{ maxHeight: '92vh' }}
+        className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col mx-16"
+        style={{ maxHeight: '92vh', width: 'min(860px, calc(100vw - 120px))' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Image */}
-        <div className="bg-zinc-950 flex items-center justify-center overflow-hidden" style={{ maxHeight: '72vh' }}>
+        <div className="bg-zinc-950 flex items-center justify-center overflow-hidden relative" style={{ maxHeight: '68vh', minHeight: 200 }}>
           <img
-            src={api.imageViewUrl(img.id, 1200)}
+            key={img.id}
+            src={api.imageViewUrl(img.id, 1400)}
             alt={img.filename}
             className="max-w-full max-h-full object-contain"
-            style={{ maxHeight: '72vh' }}
+            style={{ maxHeight: '68vh' }}
           />
+          {/* Counter */}
+          <div className="absolute bottom-2 right-2 bg-black/60 rounded-lg px-2 py-0.5 text-xs text-zinc-400 tabular-nums">
+            {idx + 1} / {images.length}
+          </div>
         </div>
 
         {/* Metadata */}
-        <div className="px-5 py-4 flex items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold text-zinc-100 truncate" title={img.filename}>{img.filename}</p>
-            <p className="text-xs text-zinc-500 truncate mt-0.5" title={img.path}>{img.path}</p>
-            {img.error_msg && (
-              <p className="text-xs text-red-400 mt-1">{img.error_msg}</p>
-            )}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-xs text-zinc-500">
+        <div className="px-5 py-4 flex items-start justify-between gap-4 overflow-y-auto">
+          <div className="min-w-0 flex-1 space-y-2">
+            <div>
+              <p className="font-semibold text-zinc-100 truncate" title={img.filename}>{img.filename}</p>
+              <p className="text-xs text-zinc-500 truncate mt-0.5" title={img.path}>{img.path}</p>
+              {img.error_msg && <p className="text-xs text-red-400 mt-1">{img.error_msg}</p>}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
               {img.exif_date && (
-                <span className="flex items-center gap-1">
-                  <svg className="w-3 h-3 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <span className="flex items-center gap-1 text-zinc-300 font-medium">
+                  <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
-                  {new Date(img.exif_date).toLocaleString()}
+                  {new Date(img.exif_date).toLocaleString('hu-HU')}
                 </span>
               )}
               {(exifMeta.make || exifMeta.model) && (
-                <span className="flex items-center gap-1">
-                  <svg className="w-3 h-3 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                  {[exifMeta.make, exifMeta.model].filter(Boolean).join(' ')}
-                </span>
+                <span>{[exifMeta.make, exifMeta.model].filter(Boolean).join(' ')}</span>
               )}
               {exifMeta.width && exifMeta.height && (
                 <span>{exifMeta.width} × {exifMeta.height}</span>
               )}
-              {img.face_count > 0 && (
-                <span>{img.face_count} face{img.face_count !== 1 ? 's' : ''} detected</span>
-              )}
-              {img.scanned_at && !img.exif_date && (
-                <span>Scanned {new Date(img.scanned_at).toLocaleDateString()}</span>
-              )}
             </div>
+
+            {/* Persons in image */}
+            {persons.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-zinc-600">Persons:</span>
+                {persons.map(p => {
+                  const canNav = onNavToCluster && p.cluster_id != null
+                  return canNav ? (
+                    <button key={p.person_id}
+                      onClick={() => { onNavToCluster!(p.cluster_id!); onClose() }}
+                      className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 rounded-full text-xs text-zinc-300 transition-colors cursor-pointer">
+                      <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
+                        className="w-4 h-4 rounded-full object-cover shrink-0" />
+                      {p.person_name ?? '(unnamed)'}
+                    </button>
+                  ) : (
+                    <span key={p.person_id}
+                      className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded-full text-xs text-zinc-300">
+                      <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
+                        className="w-4 h-4 rounded-full object-cover shrink-0" />
+                      {p.person_name ?? '(unnamed)'}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-3 shrink-0">
+
+          <div className="flex items-start gap-2 shrink-0">
             {meta && (
               <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium border ${meta.cls}`}>
                 {meta.label}
               </span>
             )}
-            <button
-              onClick={onClose}
-              className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
-            >
+            <button onClick={onClose}
+              className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>

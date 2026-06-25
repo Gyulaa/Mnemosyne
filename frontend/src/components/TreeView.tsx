@@ -3,376 +3,441 @@ import type { PersonFull, Relation } from '../types'
 import { api } from '../api'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+const NW = 148
+const NH = 64
+const HG = 30
+const VG = 96
+const PAD = 72
 
-const NW = 148   // node width
-const NH = 64    // node height
-const HG = 30    // horizontal gap between nodes
-const VG = 96    // vertical gap between generations
-const PAD = 72   // canvas padding
-const PH_SIZE = 40  // phantom node circle diameter
-
-// ── Layout types ──────────────────────────────────────────────────────────────
-
+// ── Types ─────────────────────────────────────────────────────────────────────
 interface LayoutNode {
   id: number
-  person: PersonFull | null  // null = phantom "?" node
-  isPhantom: boolean
+  person: PersonFull
   gen: number
   x: number
   y: number
-  phantomChildIds?: number[]
 }
 
-function clamp(v: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, v))
+interface RelationMaps {
+  childrenOf: Map<number, number[]>
+  parentsOf:  Map<number, number[]>
+  spousesOf:  Map<number, number[]>
 }
 
-// ── Connected components ──────────────────────────────────────────────────────
+type EdgeType = 'spouse' | 'couple-stem' | 'couple-bar' | 'child-drop' | 'child-single'
+interface EdgeSpec { key: string; type: EdgeType; x1: number; y1: number; x2: number; y2: number }
 
-function connectedComponents(persons: PersonFull[], relations: Relation[]): PersonFull[][] {
-  const adj = new Map<number, Set<number>>()
-  const byId = new Map(persons.map(p => [p.id, p]))
-  for (const p of persons) adj.set(p.id, new Set())
-  for (const r of relations) {
-    adj.get(r.person_a_id)?.add(r.person_b_id)
-    adj.get(r.person_b_id)?.add(r.person_a_id)
-  }
-  const visited = new Set<number>()
-  const components: PersonFull[][] = []
-  for (const p of persons) {
-    if (visited.has(p.id)) continue
-    const comp: PersonFull[] = []
-    const q = [p.id]
-    while (q.length) {
-      const id = q.shift()!
-      if (visited.has(id)) continue
-      visited.add(id)
-      const person = byId.get(id)
-      if (person) comp.push(person)
-      for (const nid of adj.get(id) ?? []) {
-        if (!visited.has(nid)) q.push(nid)
-      }
-    }
-    if (comp.length) components.push(comp)
-  }
-  return components
-}
+function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
 
-// ── Layout ────────────────────────────────────────────────────────────────────
-
-function layoutComponent(persons: PersonFull[], relations: Relation[]): LayoutNode[] {
-  if (!persons.length) return []
-
+// ── Relation maps ─────────────────────────────────────────────────────────────
+function buildRelationMaps(relations: Relation[], visibleIds: Set<number>): RelationMaps {
   const childrenOf = new Map<number, number[]>()
   const parentsOf  = new Map<number, number[]>()
   const spousesOf  = new Map<number, number[]>()
-  for (const p of persons) {
-    childrenOf.set(p.id, [])
-    parentsOf.set(p.id, [])
-    spousesOf.set(p.id, [])
-  }
   for (const r of relations) {
+    if (!visibleIds.has(r.person_a_id) || !visibleIds.has(r.person_b_id)) continue
     if (r.type === 'parent') {
-      childrenOf.get(r.person_a_id)?.push(r.person_b_id)
-      parentsOf.get(r.person_b_id)?.push(r.person_a_id)
+      if (!childrenOf.has(r.person_a_id)) childrenOf.set(r.person_a_id, [])
+      childrenOf.get(r.person_a_id)!.push(r.person_b_id)
+      if (!parentsOf.has(r.person_b_id)) parentsOf.set(r.person_b_id, [])
+      parentsOf.get(r.person_b_id)!.push(r.person_a_id)
     } else if (r.type === 'spouse') {
-      spousesOf.get(r.person_a_id)?.push(r.person_b_id)
-      spousesOf.get(r.person_b_id)?.push(r.person_a_id)
+      if (!spousesOf.has(r.person_a_id)) spousesOf.set(r.person_a_id, [])
+      spousesOf.get(r.person_a_id)!.push(r.person_b_id)
+      if (!spousesOf.has(r.person_b_id)) spousesOf.set(r.person_b_id, [])
+      spousesOf.get(r.person_b_id)!.push(r.person_a_id)
+    }
+  }
+  return { childrenOf, parentsOf, spousesOf }
+}
+
+// ── Proband context extraction ─────────────────────────────────────────────────
+function extractProbandContext(
+  probandId: number,
+  allPersons: PersonFull[],
+  allRelations: Relation[],
+  ancestorDepth: number,
+  descendantDepth: number,
+): Set<number> {
+  const allIds = new Set(allPersons.map(p => p.id))
+  const maps = buildRelationMaps(allRelations, allIds)
+  const visible = new Set<number>([probandId])
+
+  const ancQueue: Array<[number, number]> = [[probandId, 0]]
+  while (ancQueue.length) {
+    const [id, depth] = ancQueue.shift()!
+    if (depth >= ancestorDepth) continue
+    for (const pid of maps.parentsOf.get(id) ?? []) {
+      if (!visible.has(pid)) { visible.add(pid); ancQueue.push([pid, depth + 1]) }
     }
   }
 
-  // BFS generation assignment from roots
-  const gen = new Map<number, number>()
-  const queue: number[] = []
-  for (const p of persons) {
-    if ((parentsOf.get(p.id) ?? []).length === 0) { gen.set(p.id, 0); queue.push(p.id) }
+  const descQueue: Array<[number, number]> = [[probandId, 0]]
+  while (descQueue.length) {
+    const [id, depth] = descQueue.shift()!
+    if (depth >= descendantDepth) continue
+    for (const cid of maps.childrenOf.get(id) ?? []) {
+      if (!visible.has(cid)) { visible.add(cid); descQueue.push([cid, depth + 1]) }
+    }
   }
-  for (const p of persons) {
-    if (!gen.has(p.id)) { gen.set(p.id, 0); queue.push(p.id) }
+
+  // Include proband's siblings
+  for (const pid of maps.parentsOf.get(probandId) ?? []) {
+    for (const sibId of maps.childrenOf.get(pid) ?? []) {
+      if (!visible.has(sibId)) visible.add(sibId)
+    }
   }
-  const bfsVisited = new Set<number>()
+
+  // Add spouses of all visible persons (fixpoint)
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const id of [...visible]) {
+      for (const sid of maps.spousesOf.get(id) ?? []) {
+        if (!visible.has(sid)) { visible.add(sid); changed = true }
+      }
+    }
+  }
+
+  return visible
+}
+
+// ── Collapse helpers ───────────────────────────────────────────────────────────
+function applyCollapse(
+  visibleIds: Set<number>,
+  collapsedIds: Set<number>,
+  childrenOf: Map<number, number[]>,
+): Set<number> {
+  const hidden = new Set<number>()
+  const queue = [...collapsedIds].filter(id => visibleIds.has(id))
   while (queue.length) {
     const id = queue.shift()!
-    if (bfsVisited.has(id)) continue
-    bfsVisited.add(id)
-    const g = gen.get(id)!
     for (const cid of childrenOf.get(id) ?? []) {
-      if (!gen.has(cid)) { gen.set(cid, g + 1); queue.push(cid) }
+      if (!hidden.has(cid)) { hidden.add(cid); queue.push(cid) }
     }
-    for (const sid of spousesOf.get(id) ?? []) {
-      if (!gen.has(sid)) { gen.set(sid, g); queue.push(sid) }
+  }
+  return new Set([...visibleIds].filter(id => !hidden.has(id)))
+}
+
+function countSubtreeDescendants(rootId: number, childrenOf: Map<number, number[]>): number {
+  let count = 0
+  const queue = [...(childrenOf.get(rootId) ?? [])]
+  const seen = new Set<number>()
+  while (queue.length) {
+    const id = queue.shift()!
+    if (seen.has(id)) continue
+    seen.add(id); count++
+    for (const cid of childrenOf.get(id) ?? []) queue.push(cid)
+  }
+  return count
+}
+
+// ── Generation assignment ──────────────────────────────────────────────────────
+function assignGenerations(
+  probandId: number,
+  visibleIds: Set<number>,
+  maps: RelationMaps,
+): Map<number, number> {
+  const genMap = new Map<number, number>()
+  genMap.set(probandId, 0)
+  const queue: number[] = [probandId]
+  const visited = new Set<number>([probandId])
+
+  while (queue.length) {
+    const id = queue.shift()!
+    const g = genMap.get(id)!
+    for (const pid of maps.parentsOf.get(id) ?? []) {
+      if (!visibleIds.has(pid) || visited.has(pid)) continue
+      visited.add(pid); genMap.set(pid, g - 1); queue.push(pid)
+    }
+    for (const cid of maps.childrenOf.get(id) ?? []) {
+      if (!visibleIds.has(cid) || visited.has(cid)) continue
+      visited.add(cid); genMap.set(cid, g + 1); queue.push(cid)
+    }
+    for (const sid of maps.spousesOf.get(id) ?? []) {
+      if (!visibleIds.has(sid) || visited.has(sid)) continue
+      visited.add(sid); genMap.set(sid, g); queue.push(sid)
     }
   }
 
-  // Iterative fixup: spouses same gen; children strictly below parents
+  for (const id of visibleIds) { if (!genMap.has(id)) genMap.set(id, 0) }
+
   let changed = true
-  for (let iter = 0; iter < 40 && changed; iter++) {
+  for (let i = 0; i < 10 && changed; i++) {
     changed = false
-    for (const r of relations) {
-      if (r.type !== 'spouse') continue
-      const ga = gen.get(r.person_a_id) ?? 0
-      const gb = gen.get(r.person_b_id) ?? 0
-      if (ga !== gb) {
-        const ng = Math.max(ga, gb)
-        gen.set(r.person_a_id, ng); gen.set(r.person_b_id, ng)
-        changed = true
+    for (const id of visibleIds) {
+      for (const sid of maps.spousesOf.get(id) ?? []) {
+        if (!visibleIds.has(sid)) continue
+        const ga = genMap.get(id) ?? 0, gb = genMap.get(sid) ?? 0
+        if (ga !== gb) {
+          const g = Math.abs(ga) <= Math.abs(gb) ? ga : gb
+          genMap.set(id, g); genMap.set(sid, g); changed = true
+        }
+      }
+      for (const cid of maps.childrenOf.get(id) ?? []) {
+        if (!visibleIds.has(cid)) continue
+        const gp = genMap.get(id) ?? 0, gc = genMap.get(cid) ?? 0
+        if (gc <= gp) { genMap.set(cid, gp + 1); changed = true }
       }
     }
-    for (const r of relations) {
-      if (r.type !== 'parent') continue
-      const gp = gen.get(r.person_a_id) ?? 0
-      const gc = gen.get(r.person_b_id) ?? 0
-      if (gc <= gp) { gen.set(r.person_b_id, gp + 1); changed = true }
+  }
+
+  return genMap
+}
+
+// ── Descendant layout (Reingold-Tilford) ───────────────────────────────────────
+// Returns x positions for persons at gen > probandGen (raw, not normalized).
+function layoutDescendants(
+  probandId: number,
+  visibleIds: Set<number>,
+  maps: RelationMaps,
+  genMap: Map<number, number>,
+): Map<number, number> {
+  const probandGen = genMap.get(probandId) ?? 0
+  const isDesc = (id: number) => visibleIds.has(id) && (genMap.get(id) ?? 0) > probandGen
+
+  const widthMap = new Map<number, number>()
+  const proc1 = new Set<number>()
+
+  function computeWidth(id: number): number {
+    if (proc1.has(id)) return widthMap.get(id) ?? (NW + HG)
+    proc1.add(id)
+    const children = (maps.childrenOf.get(id) ?? []).filter(isDesc)
+    if (!children.length) { widthMap.set(id, NW + HG); return NW + HG }
+    const total = children.reduce((s, cid) => s + computeWidth(cid), 0)
+    const w = Math.max(NW + HG, total)
+    widthMap.set(id, w); return w
+  }
+
+  const xMap = new Map<number, number>()
+  const proc2 = new Set<number>()
+
+  function assignX(id: number, left: number) {
+    if (!isDesc(id) || proc2.has(id)) return
+    proc2.add(id)
+    const w = widthMap.get(id) ?? (NW + HG)
+    xMap.set(id, left + w / 2)
+    const children = (maps.childrenOf.get(id) ?? []).filter(isDesc)
+    let cursor = left
+    for (const cid of children) {
+      if (!proc2.has(cid)) { assignX(cid, cursor); cursor += widthMap.get(cid) ?? (NW + HG) }
     }
   }
 
-  // ── Phantom parents for explicit siblings with no shared parent ──
-  const personIds = new Set(persons.map(p => p.id))
-  const sibRels = relations.filter(r => r.type === 'sibling')
-  const sibAdj = new Map<number, Set<number>>()
-  for (const p of persons) sibAdj.set(p.id, new Set())
-  for (const r of sibRels) {
-    if (personIds.has(r.person_a_id) && personIds.has(r.person_b_id)) {
-      sibAdj.get(r.person_a_id)?.add(r.person_b_id)
-      sibAdj.get(r.person_b_id)?.add(r.person_a_id)
-    }
-  }
-  const sibVisited = new Set<number>()
-  const sibGroups: number[][] = []
-  for (const p of persons) {
-    if (sibVisited.has(p.id) || (sibAdj.get(p.id)?.size ?? 0) === 0) continue
-    const group: number[] = []
-    const q2 = [p.id]
-    while (q2.length) {
-      const id = q2.shift()!
-      if (sibVisited.has(id)) continue
-      sibVisited.add(id); group.push(id)
-      for (const nid of sibAdj.get(id) ?? []) { if (!sibVisited.has(nid)) q2.push(nid) }
-    }
-    if (group.length >= 2) sibGroups.push(group)
-  }
-  let phantomCounter = -1
-  const phantomEntries: Array<{ id: number; gen: number; childIds: number[] }> = []
-  for (const group of sibGroups) {
-    const noneHaveParents = group.every(id => (parentsOf.get(id) ?? []).length === 0)
-    if (!noneHaveParents) continue
-    const phantomId = phantomCounter--
-    const phantomGen = Math.min(...group.map(id => gen.get(id) ?? 0)) - 1
-    gen.set(phantomId, phantomGen)
-    childrenOf.set(phantomId, [...group])
-    for (const id of group) parentsOf.get(id)?.push(phantomId)
-    phantomEntries.push({ id: phantomId, gen: phantomGen, childIds: [...group] })
+  // Gather proband's gen+1 children (including via spouses)
+  const spouses0 = (maps.spousesOf.get(probandId) ?? []).filter(
+    sid => visibleIds.has(sid) && (genMap.get(sid) ?? 0) === probandGen,
+  )
+  const allChildren = new Set((maps.childrenOf.get(probandId) ?? []).filter(isDesc))
+  for (const sid of spouses0) {
+    for (const cid of maps.childrenOf.get(sid) ?? []) { if (isDesc(cid)) allChildren.add(cid) }
   }
 
-  // ── Group by generation, assign x positions ──
-  const byGen = new Map<number, number[]>()
-  for (const [id, g] of gen) {
-    if (!byGen.has(g)) byGen.set(g, [])
-    byGen.get(g)!.push(id)
+  for (const cid of allChildren) computeWidth(cid)
+
+  let cursor = 0
+  for (const cid of allChildren) {
+    if (!proc2.has(cid)) { assignX(cid, cursor); cursor += widthMap.get(cid) ?? (NW + HG) }
   }
 
-  const xOf = new Map<number, number>()
-  const gens = [...byGen.keys()].sort((a, b) => a - b)
+  return xMap
+}
 
-  for (const g of gens) {
-    const ids = byGen.get(g)!
-    const realIds = ids.filter(id => id > 0)
-    const phantomIds = ids.filter(id => id < 0)
+// ── Ancestor layout (Ahnentafel pedigree slots) ────────────────────────────────
+function layoutAncestors(
+  probandId: number,
+  visibleIds: Set<number>,
+  maps: RelationMaps,
+  genMap: Map<number, number>,
+  centerX: number,
+): Map<number, number> {
+  const xMap = new Map<number, number>()
+  const probandGen = genMap.get(probandId) ?? 0
+  const ahnIndex = new Map<number, number>([[probandId, 1]])
+  const queue = [probandId]
+  const visited = new Set<number>([probandId])
 
-    const scoreId = (id: number) => {
-      const pxs = (parentsOf.get(id) ?? []).filter(pid => pid > 0 && xOf.has(pid)).map(pid => xOf.get(pid)!)
-      return pxs.length ? pxs.reduce((a, b) => a + b, 0) / pxs.length : 0
+  while (queue.length) {
+    const id = queue.shift()!
+    const idx = ahnIndex.get(id)!
+    const parents = (maps.parentsOf.get(id) ?? [])
+      .filter(pid => visibleIds.has(pid) && (genMap.get(pid) ?? 0) < probandGen)
+      .sort((a, b) => a - b)
+    if (parents[0] && !visited.has(parents[0])) {
+      visited.add(parents[0]); ahnIndex.set(parents[0], idx * 2); queue.push(parents[0])
     }
-
-    const realIdSet = new Set(realIds)
-    const spouseAdjGen = new Map<number, number[]>()
-    for (const id of realIds) spouseAdjGen.set(id, [])
-    for (const id of realIds) {
-      for (const sid of spousesOf.get(id) ?? []) {
-        if (realIdSet.has(sid)) spouseAdjGen.get(id)!.push(sid)
-      }
+    if (parents[1] && !visited.has(parents[1])) {
+      visited.add(parents[1]); ahnIndex.set(parents[1], idx * 2 + 1); queue.push(parents[1])
     }
+  }
 
-    // Cluster by connected spouse-graph component
-    const spouseClusterVis = new Set<number>()
-    const spouseClusters: number[][] = []
-    for (const id of realIds) {
-      if (spouseClusterVis.has(id)) continue
-      const cluster: number[] = []
-      const cq = [id]
-      while (cq.length) {
-        const cur = cq.shift()!
-        if (spouseClusterVis.has(cur)) continue
-        spouseClusterVis.add(cur); cluster.push(cur)
-        for (const nid of spouseAdjGen.get(cur) ?? []) { if (!spouseClusterVis.has(nid)) cq.push(nid) }
-      }
-      spouseClusters.push(cluster)
-    }
+  const genGroups = new Map<number, Array<{ id: number; ahn: number }>>()
+  for (const [id, ahn] of ahnIndex) {
+    const g = genMap.get(id) ?? 0
+    if (g >= probandGen) continue
+    if (!genGroups.has(g)) genGroups.set(g, [])
+    genGroups.get(g)!.push({ id, ahn })
+  }
 
-    spouseClusters.sort((a, b) => {
-      const avg = (c: number[]) => c.reduce((s, id) => s + scoreId(id), 0) / c.length
-      return avg(a) - avg(b)
-    })
-
-    // Within each cluster: order as a chain leaf-to-leaf.
-    // After marriage-filtering each cluster is guaranteed to be a simple path.
-    const ordered: number[] = []
-    for (const cluster of spouseClusters) {
-      if (cluster.length === 1) { ordered.push(cluster[0]); continue }
-      const clusterSet = new Set(cluster)
-      const neighbors = (id: number) => (spouseAdjGen.get(id) ?? []).filter(s => clusterSet.has(s))
-      const leaves = cluster.filter(id => neighbors(id).length === 1)
-      const startNode = (leaves.length > 0 ? leaves : cluster)
-        .reduce((best, id) => scoreId(id) < scoreId(best) ? id : best)
-      const path: number[] = []
-      const pathSeen = new Set<number>()
-      let cur: number | undefined = startNode
-      while (cur !== undefined) {
-        path.push(cur); pathSeen.add(cur)
-        cur = neighbors(cur).find(s => !pathSeen.has(s))
-      }
-      for (const id of cluster) { if (!pathSeen.has(id)) path.push(id) }
-      ordered.push(...path)
-    }
-
-    for (const pid of phantomIds) ordered.push(pid)
-
+  for (const persons of genGroups.values()) {
+    persons.sort((a, b) => a.ahn - b.ahn)
     const step = NW + HG
-    const totalW = ordered.length * step - HG
-    ordered.forEach((id, i) => xOf.set(id, i * step - totalW / 2 + NW / 2))
+    const totalW = persons.length * step - HG
+    persons.forEach(({ id }, i) => xMap.set(id, centerX + i * step - totalW / 2 + NW / 2))
   }
 
-  // Reposition phantom nodes to average x of their children
-  for (const { id, childIds } of phantomEntries) {
-    const childXs = childIds.filter(cid => xOf.has(cid)).map(cid => xOf.get(cid)!)
-    if (childXs.length) xOf.set(id, childXs.reduce((a, b) => a + b, 0) / childXs.length)
-  }
-
-  const realNodes: LayoutNode[] = persons.map(p => ({
-    id: p.id, person: p, isPhantom: false,
-    gen: gen.get(p.id) ?? 0,
-    x: xOf.get(p.id) ?? 0,
-    y: (gen.get(p.id) ?? 0) * (NH + VG),
-  }))
-
-  const phantomNodes: LayoutNode[] = phantomEntries.map(({ id, gen: g, childIds }) => ({
-    id, person: null, isPhantom: true,
-    gen: g, x: xOf.get(id) ?? 0, y: g * (NH + VG),
-    phantomChildIds: childIds,
-  }))
-
-  return [...realNodes, ...phantomNodes]
+  return xMap
 }
 
-const COMPONENT_GAP = 100
+// ── Gen-0 row layout ───────────────────────────────────────────────────────────
+function layoutGen0Row(
+  probandId: number,
+  probandX: number,
+  visibleIds: Set<number>,
+  maps: RelationMaps,
+  genMap: Map<number, number>,
+): Map<number, number> {
+  const xMap = new Map<number, number>()
+  const probandGen = genMap.get(probandId) ?? 0
+  const step = NW + HG
 
-function buildLayout(persons: PersonFull[], relations: Relation[]): LayoutNode[] {
-  if (!persons.length) return []
-  const components = connectedComponents(persons, relations)
-
-  if (components.length === 1) return layoutComponent(persons, relations)
-
-  components.sort((a, b) => b.length - a.length)
-  const allNodes: LayoutNode[] = []
-  let xCursor = 0
-
-  for (const comp of components) {
-    const compIds = new Set(comp.map(p => p.id))
-    const compRels = relations.filter(r => compIds.has(r.person_a_id) && compIds.has(r.person_b_id))
-    const nodes = layoutComponent(comp, compRels)
-    if (!nodes.length) continue
-
-    const xs = nodes.map(n => n.x)
-    const minNx = Math.min(...xs) - NW / 2
-    const maxNx = Math.max(...xs) + NW / 2
-    const shift = xCursor - minNx
-    allNodes.push(...nodes.map(n => ({ ...n, x: n.x + shift })))
-    xCursor += (maxNx - minNx) + COMPONENT_GAP
-  }
-
-  const totalW = xCursor - COMPONENT_GAP
-  const cx = totalW / 2
-  return allNodes.map(n => ({ ...n, x: n.x - cx }))
-}
-
-// ── Relation filtering for multiple marriages ─────────────────────────────────
-
-// For each person with 2+ spouses, keep only the "active" spouse in the layout.
-// Also removes parent-child edges belonging to inactive couples so those children
-// disappear cleanly instead of floating as orphan roots.
-function filterRelationsForLayout(
-  relations: Relation[],
-  activeMarriages: Map<number, number>,
-): Relation[] {
-  // Build full spousesOf map
-  const spousesOf = new Map<number, number[]>()
-  for (const r of relations) {
-    if (r.type !== 'spouse') continue
-    if (!spousesOf.has(r.person_a_id)) spousesOf.set(r.person_a_id, [])
-    if (!spousesOf.has(r.person_b_id)) spousesOf.set(r.person_b_id, [])
-    spousesOf.get(r.person_a_id)!.push(r.person_b_id)
-    spousesOf.get(r.person_b_id)!.push(r.person_a_id)
-  }
-
-  // Build set of hidden spouse pairs (sorted key)
-  const hiddenPairs = new Set<string>()
-  for (const [pid, spouses] of spousesOf) {
-    if (spouses.length <= 1) continue
-    const active = activeMarriages.get(pid) ?? spouses[0]
-    for (const sid of spouses) {
-      if (sid !== active) hiddenPairs.add([pid, sid].sort().join('-'))
-    }
-  }
-
-  if (!hiddenPairs.size) return relations
-
-  // Build parent list per child (to detect which parent-edges belong to hidden couples)
-  const childParents = new Map<number, number[]>()
-  for (const r of relations) {
-    if (r.type !== 'parent') continue
-    if (!childParents.has(r.person_b_id)) childParents.set(r.person_b_id, [])
-    childParents.get(r.person_b_id)!.push(r.person_a_id)
-  }
-
-  return relations.filter(r => {
-    if (r.type === 'spouse') {
-      return !hiddenPairs.has([r.person_a_id, r.person_b_id].sort().join('-'))
-    }
-    if (r.type === 'parent') {
-      // Hide parent→child edge if this parent's co-parent forms a hidden couple with them
-      const parentId = r.person_a_id
-      const childId  = r.person_b_id
-      for (const otherParent of childParents.get(childId) ?? []) {
-        if (otherParent === parentId) continue
-        if (hiddenPairs.has([parentId, otherParent].sort().join('-'))) return false
+  const probandSpouses = (maps.spousesOf.get(probandId) ?? []).filter(
+    sid => visibleIds.has(sid) && (genMap.get(sid) ?? 0) === probandGen,
+  )
+  const probandParents = maps.parentsOf.get(probandId) ?? []
+  const siblings = new Set<number>()
+  for (const pid of probandParents) {
+    for (const sibId of maps.childrenOf.get(pid) ?? []) {
+      if (sibId !== probandId && visibleIds.has(sibId) && (genMap.get(sibId) ?? 0) === probandGen) {
+        siblings.add(sibId)
       }
     }
-    return true
-  })
+  }
+
+  xMap.set(probandId, probandX)
+  probandSpouses.forEach((sid, i) => xMap.set(sid, probandX + (i + 1) * step))
+
+  const nucleusLeft  = probandX - NW / 2
+  const nucleusRight = probandX + probandSpouses.length * step + NW / 2
+
+  const sibArr = [...siblings]
+  const leftSibs  = sibArr.slice(0, Math.floor(sibArr.length / 2))
+  const rightSibs = sibArr.slice(Math.floor(sibArr.length / 2))
+
+  let leftCursor = nucleusLeft - HG
+  for (let i = leftSibs.length - 1; i >= 0; i--) {
+    const sid = leftSibs[i]
+    const sibSpouses = (maps.spousesOf.get(sid) ?? []).filter(
+      s => visibleIds.has(s) && (genMap.get(s) ?? 0) === probandGen && s !== probandId,
+    )
+    const totalW = (1 + sibSpouses.length) * step - HG
+    const sibX = leftCursor - totalW + NW / 2
+    xMap.set(sid, sibX)
+    sibSpouses.forEach((s, j) => xMap.set(s, sibX + (j + 1) * step))
+    leftCursor -= totalW + HG
+  }
+
+  let rightCursor = nucleusRight + HG
+  for (const sid of rightSibs) {
+    const sibSpouses = (maps.spousesOf.get(sid) ?? []).filter(
+      s => visibleIds.has(s) && (genMap.get(s) ?? 0) === probandGen && s !== probandId,
+    )
+    xMap.set(sid, rightCursor + NW / 2)
+    sibSpouses.forEach((s, j) => xMap.set(s, rightCursor + NW / 2 + (j + 1) * step))
+    rightCursor += (1 + sibSpouses.length) * step + HG
+  }
+
+  return xMap
 }
 
-// ── Edge drawing ──────────────────────────────────────────────────────────────
+// ── Full proband layout ────────────────────────────────────────────────────────
+function buildProbandLayout(
+  probandId: number,
+  allPersons: PersonFull[],
+  allRelations: Relation[],
+  ancestorDepth: number,
+  descendantDepth: number,
+  collapsedIds: Set<number>,
+): LayoutNode[] {
+  const rawVisible = extractProbandContext(probandId, allPersons, allRelations, ancestorDepth, descendantDepth)
+  const rawMaps    = buildRelationMaps(allRelations, rawVisible)
+  const visibleIds = applyCollapse(rawVisible, collapsedIds, rawMaps.childrenOf)
+  const maps       = buildRelationMaps(allRelations, visibleIds)
+  const genMap     = assignGenerations(probandId, visibleIds, maps)
+  const probandGen = genMap.get(probandId) ?? 0
 
-type EdgeType = 'spouse' | 'couple-stem' | 'couple-bar' | 'child-drop' | 'child-single'
+  // Descendant positions
+  const descXMap = layoutDescendants(probandId, visibleIds, maps, genMap)
 
-interface EdgeSpec {
-  key: string; type: EdgeType
-  x1: number; y1: number; x2: number; y2: number
+  // Proband's ideal X = center of its gen+1 children
+  const spouses0 = (maps.spousesOf.get(probandId) ?? []).filter(
+    sid => visibleIds.has(sid) && (genMap.get(sid) ?? 0) === probandGen,
+  )
+  const childrenGen1 = new Set((maps.childrenOf.get(probandId) ?? []).filter(
+    cid => visibleIds.has(cid) && (genMap.get(cid) ?? 0) === probandGen + 1,
+  ))
+  for (const sid of spouses0) {
+    for (const cid of maps.childrenOf.get(sid) ?? []) {
+      if (visibleIds.has(cid) && (genMap.get(cid) ?? 0) === probandGen + 1) childrenGen1.add(cid)
+    }
+  }
+  const probandIdealX = childrenGen1.size > 0
+    ? [...childrenGen1].reduce((s, cid) => s + (descXMap.get(cid) ?? 0), 0) / childrenGen1.size
+    : 0
+
+  const ancXMap  = layoutAncestors(probandId, visibleIds, maps, genMap, probandIdealX)
+  const gen0XMap = layoutGen0Row(probandId, probandIdealX, visibleIds, maps, genMap)
+
+  // Merge: gen0 overrides others for gen-0 positions
+  const combinedX = new Map<number, number>()
+  for (const [id, x] of descXMap) combinedX.set(id, x)
+  for (const [id, x] of ancXMap)  combinedX.set(id, x)
+  for (const [id, x] of gen0XMap) combinedX.set(id, x)
+
+  // Place any still-unpositioned visible persons adjacent to a placed spouse
+  let pass = true
+  while (pass) {
+    pass = false
+    for (const id of visibleIds) {
+      if (combinedX.has(id)) continue
+      for (const sid of maps.spousesOf.get(id) ?? []) {
+        if (combinedX.has(sid)) {
+          combinedX.set(id, combinedX.get(sid)! + NW + HG)
+          pass = true; break
+        }
+      }
+    }
+  }
+  for (const id of visibleIds) { if (!combinedX.has(id)) combinedX.set(id, 0) }
+
+  // Normalize: proband at x = 0
+  const probandFinalX = combinedX.get(probandId) ?? 0
+  for (const [id, x] of combinedX) combinedX.set(id, x - probandFinalX)
+
+  const byId = new Map(allPersons.map(p => [p.id, p]))
+  const nodes: LayoutNode[] = []
+  for (const id of visibleIds) {
+    const person = byId.get(id)
+    if (!person) continue
+    const gen = genMap.get(id) ?? 0
+    nodes.push({ id, person, gen, x: combinedX.get(id) ?? 0, y: gen * (NH + VG) })
+  }
+  return nodes
 }
 
+// ── Edge drawing ───────────────────────────────────────────────────────────────
 function buildEdges(nodes: LayoutNode[], relations: Relation[], minX: number, minY: number): EdgeSpec[] {
   const nodeMap = new Map(nodes.map(n => [n.id, n]))
   const edges: EdgeSpec[] = []
 
-  // ── 1. Spouse lines ──
+  // Spouse lines
   const drawnSpouses = new Set<string>()
   for (const r of relations) {
     if (r.type !== 'spouse') continue
     const key = [r.person_a_id, r.person_b_id].sort().join('-')
     if (drawnSpouses.has(key)) continue
     drawnSpouses.add(key)
-    const an = nodeMap.get(r.person_a_id)
-    const bn = nodeMap.get(r.person_b_id)
+    const an = nodeMap.get(r.person_a_id), bn = nodeMap.get(r.person_b_id)
     if (!an || !bn) continue
     const leftN  = an.x <= bn.x ? an : bn
     const rightN = an.x <= bn.x ? bn : an
@@ -382,7 +447,7 @@ function buildEdges(nodes: LayoutNode[], relations: Relation[], minX: number, mi
     if (x1 < x2) edges.push({ key: `sp-${key}`, type: 'spouse', x1, y1: y, x2, y2: y })
   }
 
-  // ── 2. Couple-based parent → child edges ──
+  // Parent-child edges grouped by couple
   const spouseSet = new Set<string>()
   for (const r of relations) {
     if (r.type === 'spouse') spouseSet.add([r.person_a_id, r.person_b_id].sort().join('-'))
@@ -394,13 +459,6 @@ function buildEdges(nodes: LayoutNode[], relations: Relation[], minX: number, mi
     if (!childParents.has(r.person_b_id)) childParents.set(r.person_b_id, [])
     childParents.get(r.person_b_id)!.push(r.person_a_id)
   }
-  for (const node of nodes) {
-    if (!node.isPhantom || !node.phantomChildIds?.length) continue
-    for (const cid of node.phantomChildIds) {
-      if (!childParents.has(cid)) childParents.set(cid, [])
-      childParents.get(cid)!.push(node.id)
-    }
-  }
 
   const coupleMap = new Map<string, { parentIds: number[]; childIds: number[] }>()
   for (const [childId, parents] of childParents) {
@@ -409,7 +467,7 @@ function buildEdges(nodes: LayoutNode[], relations: Relation[], minX: number, mi
     coupleMap.get(key)!.childIds.push(childId)
   }
 
-  for (const [, { parentIds, childIds }] of coupleMap) {
+  for (const { parentIds, childIds } of coupleMap.values()) {
     const parentNodes = parentIds.map(id => nodeMap.get(id)).filter(Boolean) as LayoutNode[]
     const childNodes  = childIds.map(id => nodeMap.get(id)).filter(Boolean) as LayoutNode[]
     if (!parentNodes.length || !childNodes.length) continue
@@ -419,51 +477,38 @@ function buildEdges(nodes: LayoutNode[], relations: Relation[], minX: number, mi
     if (parentNodes.length === 1) {
       const pn = parentNodes[0]
       junctionX = pn.x - minX
-      junctionY = pn.y + (pn.isPhantom ? PH_SIZE / 2 : NH / 2) - minY
+      junctionY = pn.y + NH / 2 - minY
     } else {
-      const sorted = [...parentNodes].sort((a, b) => a.x - b.x)
-      const leftP  = sorted[0]
-      const rightP = sorted[sorted.length - 1]
+      const sorted   = [...parentNodes].sort((a, b) => a.x - b.x)
+      const leftP    = sorted[0], rightP = sorted[sorted.length - 1]
       const spouseKey = [leftP.id, rightP.id].sort().join('-')
-      const areSpouses = spouseSet.has(spouseKey)
-
-      if (areSpouses) {
-        const innerLeft  = leftP.x  + NW / 2 - minX
-        const innerRight = rightP.x - NW / 2 - minX
-        junctionX = (innerLeft + innerRight) / 2
-        junctionY = parentNodes[0].y - minY  // spouse line is at card centre
+      if (spouseSet.has(spouseKey)) {
+        junctionX = (leftP.x + NW / 2 - minX + (rightP.x - NW / 2 - minX)) / 2
+        junctionY = parentNodes[0].y - minY
       } else {
         junctionX = parentNodes.reduce((s, p) => s + p.x, 0) / parentNodes.length - minX
         junctionY = Math.max(...parentNodes.map(p => p.y)) + NH / 2 - minY
       }
     }
 
-    const childTops  = childNodes.map(n => n.y - NH / 2 - minY)
-    const firstChildY = Math.min(...childTops)
-    const cardBottomY = Math.max(...parentNodes.map(p => p.y)) + NH / 2 - minY
-    const barY = cardBottomY + (firstChildY - cardBottomY) * 0.5
-    const parentKey = parentIds.join(',')
+    const firstChildY  = Math.min(...childNodes.map(n => n.y - NH / 2 - minY))
+    const cardBottomY  = Math.max(...parentNodes.map(p => p.y)) + NH / 2 - minY
+    const barY         = cardBottomY + (firstChildY - cardBottomY) * 0.5
+    const parentKey    = parentIds.join(',')
 
     if (childNodes.length === 1) {
       const cn = childNodes[0]
-      edges.push({
-        key: `cs-${parentKey}-${cn.id}`, type: 'child-single',
-        x1: junctionX, y1: junctionY,
-        x2: cn.x - minX, y2: cn.y - NH / 2 - minY,
-      })
+      edges.push({ key: `cs-${parentKey}-${cn.id}`, type: 'child-single',
+        x1: junctionX, y1: junctionY, x2: cn.x - minX, y2: cn.y - NH / 2 - minY })
     } else {
-      edges.push({ key: `stem-${parentKey}`, type: 'couple-stem', x1: junctionX, y1: junctionY, x2: junctionX, y2: barY })
-
-      const minCX = Math.min(...childNodes.map(n => n.x - minX))
-      const maxCX = Math.max(...childNodes.map(n => n.x - minX))
+      edges.push({ key: `stem-${parentKey}`, type: 'couple-stem',
+        x1: junctionX, y1: junctionY, x2: junctionX, y2: barY })
+      const minCX = Math.min(...childNodes.map(n => n.x - minX), junctionX)
+      const maxCX = Math.max(...childNodes.map(n => n.x - minX), junctionX)
       edges.push({ key: `bar-${parentKey}`, type: 'couple-bar', x1: minCX, y1: barY, x2: maxCX, y2: barY })
-
       for (const cn of childNodes) {
-        edges.push({
-          key: `drop-${parentKey}-${cn.id}`, type: 'child-drop',
-          x1: cn.x - minX, y1: barY,
-          x2: cn.x - minX, y2: cn.y - NH / 2 - minY,
-        })
+        edges.push({ key: `drop-${parentKey}-${cn.id}`, type: 'child-drop',
+          x1: cn.x - minX, y1: barY, x2: cn.x - minX, y2: cn.y - NH / 2 - minY })
       }
     }
   }
@@ -471,29 +516,17 @@ function buildEdges(nodes: LayoutNode[], relations: Relation[], minX: number, mi
   return edges
 }
 
-// ── PersonCard ────────────────────────────────────────────────────────────────
-
-function PersonCard({
-  person,
-  selected,
-  marriageCount,
-  marriageIndex,
-  onPrevMarriage,
-  onNextMarriage,
-}: {
+// ── PersonCard ─────────────────────────────────────────────────────────────────
+function PersonCard({ person, selected, isProband }: {
   person: PersonFull
   selected: boolean
-  marriageCount?: number
-  marriageIndex?: number
-  onPrevMarriage?: (e: React.MouseEvent) => void
-  onNextMarriage?: (e: React.MouseEvent) => void
+  isProband?: boolean
 }) {
   const [imgErr, setImgErr] = useState(false)
   const span = person.birth_year
     ? person.death_year ? `${person.birth_year}–${person.death_year}` : `* ${person.birth_year}`
     : null
   const initials = (person.name ?? '?').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
-  const hasMultiple = marriageCount !== undefined && marriageCount > 1
 
   return (
     <div className={[
@@ -502,6 +535,9 @@ function PersonCard({
         ? 'bg-brand-700 border-2 border-brand-400 shadow-lg shadow-brand-900/60'
         : 'bg-zinc-800/90 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800',
     ].join(' ')}>
+      {isProband && (
+        <div className="absolute top-1 right-1 text-[10px] text-amber-400 leading-none" title="Focus person">★</div>
+      )}
       {person.thumbnail_face_id && !imgErr ? (
         <img src={api.faceThumbnailUrl(person.thumbnail_face_id, 96)} alt=""
           className="w-10 h-10 rounded-full object-cover shrink-0"
@@ -513,43 +549,18 @@ function PersonCard({
       )}
       <div className="min-w-0 flex-1">
         <div className={`text-xs font-semibold truncate leading-snug ${selected ? 'text-white' : 'text-zinc-100'}`}>
-          {person.name ?? '(névtelen)'}
+          {person.name ?? '(unnamed)'}
         </div>
         {span && <div className={`text-[10px] leading-snug ${selected ? 'text-brand-200' : 'text-zinc-500'}`}>{span}</div>}
-        {!hasMultiple && person.face_count > 0 && (
-          <div className={`text-[9px] leading-snug ${selected ? 'text-brand-300' : 'text-zinc-600'}`}>{person.face_count} fotó</div>
+        {person.face_count > 0 && (
+          <div className={`text-[9px] leading-snug ${selected ? 'text-brand-300' : 'text-zinc-600'}`}>{person.face_count} photos</div>
         )}
       </div>
-
-      {/* Marriage navigator — only for persons with 2+ marriages */}
-      {hasMultiple && (
-        <div
-          className={[
-            'absolute bottom-0 left-0 right-0 flex items-center justify-center gap-1',
-            'h-5 rounded-b-xl text-[9px] font-medium',
-            selected ? 'bg-brand-600/80' : 'bg-zinc-900/80',
-          ].join(' ')}
-          onClick={e => e.stopPropagation()}
-        >
-          <button
-            className={`px-1 leading-none opacity-60 hover:opacity-100 ${selected ? 'text-brand-200' : 'text-zinc-400'}`}
-            onClick={onPrevMarriage}
-          >◄</button>
-          <span className={selected ? 'text-brand-200' : 'text-zinc-500'}>
-            {(marriageIndex ?? 0) + 1}/{marriageCount} házasság
-          </span>
-          <button
-            className={`px-1 leading-none opacity-60 hover:opacity-100 ${selected ? 'text-brand-200' : 'text-zinc-400'}`}
-            onClick={onNextMarriage}
-          >►</button>
-        </div>
-      )}
     </div>
   )
 }
 
-// ── TreeView ──────────────────────────────────────────────────────────────────
-
+// ── TreeView ───────────────────────────────────────────────────────────────────
 export default function TreeView({
   persons,
   relations,
@@ -564,90 +575,92 @@ export default function TreeView({
   panelOpen?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [pan,  setPan]  = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const dragOrigin = useRef<{ mx: number; my: number; px: number; py: number } | null>(null)
   const isDragging = useRef(false)
 
-  // personId → currently shown spouseId (for persons with 2+ spouses)
-  const [activeMarriages, setActiveMarriages] = useState<Map<number, number>>(new Map())
+  const [probandId,       setProbandId]       = useState<number | null>(null)
+  const [ancestorDepth,   setAncestorDepth]   = useState(3)
+  const [descendantDepth, setDescendantDepth] = useState(3)
+  const [collapsedIds,    setCollapsedIds]    = useState<Set<number>>(new Set())
 
-  // Full marriages map (unfiltered) — needed for the navigator UI on cards
-  const allMarriagesOf = useMemo(() => {
+  // Auto-set proband when selection changes
+  useEffect(() => {
+    if (selectedId !== null) setProbandId(selectedId)
+  }, [selectedId])
+
+  // Reset collapse when proband changes
+  useEffect(() => { setCollapsedIds(new Set()) }, [probandId])
+
+  // Full children map for collapse count (uses all relations, not just visible)
+  const fullChildrenOf = useMemo(() => {
     const m = new Map<number, number[]>()
     for (const r of relations) {
-      if (r.type !== 'spouse') continue
+      if (r.type !== 'parent') continue
       if (!m.has(r.person_a_id)) m.set(r.person_a_id, [])
-      if (!m.has(r.person_b_id)) m.set(r.person_b_id, [])
       m.get(r.person_a_id)!.push(r.person_b_id)
-      m.get(r.person_b_id)!.push(r.person_a_id)
     }
-    for (const [k, v] of m) { if (v.length <= 1) m.delete(k) }
     return m
   }, [relations])
 
-  // Relations with inactive marriages stripped out
-  const visibleRelations = useMemo(
-    () => filterRelationsForLayout(relations, activeMarriages),
-    [relations, activeMarriages],
-  )
+  const effectiveProbandId = probandId ?? persons[0]?.id ?? null
 
-  const nodes = useMemo(() => buildLayout(persons, visibleRelations), [persons, visibleRelations])
+  const nodes = useMemo(() => {
+    if (!effectiveProbandId || !persons.length) return []
+    return buildProbandLayout(
+      effectiveProbandId, persons, relations,
+      ancestorDepth, descendantDepth, collapsedIds,
+    )
+  }, [effectiveProbandId, persons, relations, ancestorDepth, descendantDepth, collapsedIds])
+
   const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
+
+  const layoutRelations = useMemo(() => {
+    const vis = new Set(nodes.map(n => n.id))
+    return relations.filter(r => vis.has(r.person_a_id) && vis.has(r.person_b_id))
+  }, [nodes, relations])
 
   const bounds = useMemo(() => {
     if (!nodes.length) return { minX: 0, minY: 0, canvasW: 800, canvasH: 500 }
-    const xs = nodes.map(n => n.x)
-    const ys = nodes.map(n => n.y)
+    const xs = nodes.map(n => n.x), ys = nodes.map(n => n.y)
     const minX = Math.min(...xs) - NW / 2 - PAD
     const minY = Math.min(...ys) - NH / 2 - PAD
-    const canvasW = Math.max(...xs) + NW / 2 + PAD - minX
-    const canvasH = Math.max(...ys) + NH / 2 + PAD - minY
-    return { minX, minY, canvasW, canvasH }
+    return {
+      minX, minY,
+      canvasW: Math.max(...xs) + NW / 2 + PAD - minX,
+      canvasH: Math.max(...ys) + NH / 2 + PAD - minY,
+    }
   }, [nodes])
 
-  useEffect(() => {
+  const edges = useMemo(
+    () => buildEdges(nodes, layoutRelations, bounds.minX, bounds.minY),
+    [nodes, layoutRelations, bounds],
+  )
+
+  function resetView() {
     if (!containerRef.current || !nodes.length) return
     const { width, height } = containerRef.current.getBoundingClientRect()
-    const fitZoom = Math.min(
-      (width - 40) / bounds.canvasW,
-      (height - 40) / bounds.canvasH,
-      1.2,
-    ) * 0.9
+    const fitZoom = Math.min((width - 40) / bounds.canvasW, (height - 40) / bounds.canvasH, 1.2) * 0.9
     setZoom(Math.max(0.15, fitZoom))
     setPan({ x: 0, y: 0 })
-  }, []) // eslint-disable-line
+  }
+
+  useEffect(() => { resetView() }, []) // eslint-disable-line
 
   useEffect(() => {
     if (!selectedId) return
     const node = nodeMap.get(selectedId)
     if (!node) return
     const { minX, minY, canvasW, canvasH } = bounds
-    setPan({
-      x: -(node.x - minX - canvasW / 2),
-      y: -(node.y - minY - canvasH / 2),
-    })
+    setPan({ x: -(node.x - minX - canvasW / 2), y: -(node.y - minY - canvasH / 2) })
   }, [selectedId]) // eslint-disable-line
 
-  const edges = useMemo(
-    () => buildEdges(nodes, visibleRelations, bounds.minX, bounds.minY),
-    [nodes, visibleRelations, bounds],
-  )
-
-  const cycleMarriage = (personId: number, dir: -1 | 1) => {
-    const spouses = allMarriagesOf.get(personId)
-    if (!spouses || spouses.length <= 1) return
-    const active = activeMarriages.get(personId) ?? spouses[0]
-    const idx = spouses.indexOf(active)
-    const newIdx = ((idx + dir) + spouses.length) % spouses.length
-    setActiveMarriages(prev => new Map(prev).set(personId, spouses[newIdx]))
-  }
-
-  if (!nodes.filter(n => !n.isPhantom).length) {
+  if (!nodes.length) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2">
         <div className="text-4xl opacity-20">🌳</div>
-        <p className="text-zinc-500 text-sm">Még nincsenek személyek</p>
+        <p className="text-zinc-500 text-sm">No persons yet</p>
       </div>
     )
   }
@@ -667,53 +680,62 @@ export default function TreeView({
       onMouseMove={e => {
         if (!dragOrigin.current) return
         isDragging.current = true
-        setPan({
-          x: dragOrigin.current.px + e.clientX - dragOrigin.current.mx,
-          y: dragOrigin.current.py + e.clientY - dragOrigin.current.my,
-        })
+        setPan({ x: dragOrigin.current.px + e.clientX - dragOrigin.current.mx, y: dragOrigin.current.py + e.clientY - dragOrigin.current.my })
       }}
       onMouseUp={() => { dragOrigin.current = null; isDragging.current = false }}
       onMouseLeave={() => { dragOrigin.current = null; isDragging.current = false }}
-      onWheel={e => {
-        e.preventDefault()
-        setZoom(z => clamp(z * (e.deltaY > 0 ? 0.9 : 1.1), 0.15, 3))
-      }}
+      onWheel={e => { e.preventDefault(); setZoom(z => clamp(z * (e.deltaY > 0 ? 0.9 : 1.1), 0.15, 3)) }}
     >
       {!panelOpen && (
         <>
-          <div className="absolute bottom-3 right-3 z-10 flex gap-1.5">
+          {/* Bottom-right: zoom + depth controls */}
+          <div className="absolute bottom-3 right-3 z-10 flex gap-1.5 flex-wrap justify-end">
             <button onClick={() => setZoom(z => clamp(z * 1.2, 0.15, 3))}
               className="w-7 h-7 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-300 hover:bg-zinc-700 flex items-center justify-center text-sm font-bold">+</button>
             <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }) }}
               className="h-7 px-2 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-400 hover:bg-zinc-700 text-xs tabular-nums">{Math.round(zoom * 100)}%</button>
             <button onClick={() => setZoom(z => clamp(z * 0.8, 0.15, 3))}
               className="w-7 h-7 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-300 hover:bg-zinc-700 flex items-center justify-center text-sm font-bold">−</button>
+            <button onClick={resetView}
+              className="h-7 px-2.5 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 text-xs">Reset</button>
+            <div className="flex items-center gap-1 ml-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7">
+              <span className="text-[10px] text-zinc-500">Ős</span>
+              <button onClick={() => setAncestorDepth(d => Math.max(1, d - 1))}
+                className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
+              <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{ancestorDepth}</span>
+              <button onClick={() => setAncestorDepth(d => Math.min(6, d + 1))}
+                className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
+            </div>
+            <div className="flex items-center gap-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7">
+              <span className="text-[10px] text-zinc-500">Les</span>
+              <button onClick={() => setDescendantDepth(d => Math.max(1, d - 1))}
+                className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
+              <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{descendantDepth}</span>
+              <button onClick={() => setDescendantDepth(d => Math.min(6, d + 1))}
+                className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
+            </div>
           </div>
+          {/* Bottom-left: legend */}
           <div className="absolute bottom-3 left-3 z-10 flex items-center gap-4 text-[10px] text-zinc-600">
             <span className="flex items-center gap-1.5">
               <svg width="22" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#52525b" strokeWidth="1.5"/></svg>
-              szülő–gyerek
+              parent–child
             </span>
             <span className="flex items-center gap-1.5">
               <svg width="22" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#7c3aed" strokeWidth="2" strokeDasharray="5 3"/></svg>
-              házastárs
+              spouse
             </span>
-            <span>Húzd · görgő = zoom</span>
+            <span>Drag · scroll = zoom</span>
           </div>
         </>
       )}
 
-      <div
-        style={{
-          position: 'absolute',
-          left: '50%',
-          top: '50%',
-          width: canvasW,
-          height: canvasH,
-          transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`,
-          transformOrigin: 'center',
-        }}
-      >
+      <div style={{
+        position: 'absolute', left: '50%', top: '50%',
+        width: canvasW, height: canvasH,
+        transform: `translate(calc(-50% + ${pan.x}px), calc(-50% + ${pan.y}px)) scale(${zoom})`,
+        transformOrigin: 'center',
+      }}>
         <svg className="absolute inset-0 pointer-events-none" width={canvasW} height={canvasH} overflow="visible">
           {edges.map(e => {
             switch (e.type) {
@@ -738,24 +760,10 @@ export default function TreeView({
         </svg>
 
         {nodes.map(node => {
-          if (node.isPhantom) {
-            return (
-              <div key={node.id} style={{
-                position: 'absolute',
-                left: node.x - minX - NW / 2,
-                top:  node.y - minY - NH / 2,
-                width: NW, height: NH,
-              }} className="flex items-center justify-center">
-                <div className="w-10 h-10 rounded-full border-2 border-dashed border-zinc-600 bg-zinc-900 flex items-center justify-center text-zinc-500 font-bold text-sm"
-                  title="Ismeretlen szülő">?</div>
-              </div>
-            )
-          }
-
-          const spouses = allMarriagesOf.get(node.id)
-          const hasMultiple = spouses !== undefined && spouses.length > 1
-          const activeSpouseId = hasMultiple ? (activeMarriages.get(node.id) ?? spouses![0]) : undefined
-          const marriageIdx    = hasMultiple ? spouses!.indexOf(activeSpouseId!) : undefined
+          const isCollapsed = collapsedIds.has(node.id)
+          const visibleChildCount = (fullChildrenOf.get(node.id) ?? []).filter(cid => nodeMap.has(cid)).length
+          const hasCollapsibleChildren = visibleChildCount > 0
+          const hiddenCount = isCollapsed ? countSubtreeDescendants(node.id, fullChildrenOf) : 0
 
           return (
             <div key={node.id} data-node style={{
@@ -765,13 +773,36 @@ export default function TreeView({
               width: NW, height: NH,
             }} onClick={() => { if (!isDragging.current) onSelect(node.id) }}>
               <PersonCard
-                person={node.person!}
+                person={node.person}
                 selected={node.id === selectedId}
-                marriageCount={hasMultiple ? spouses!.length : undefined}
-                marriageIndex={marriageIdx}
-                onPrevMarriage={hasMultiple ? e => { e.stopPropagation(); cycleMarriage(node.id, -1) } : undefined}
-                onNextMarriage={hasMultiple ? e => { e.stopPropagation(); cycleMarriage(node.id, +1) } : undefined}
+                isProband={node.id === effectiveProbandId}
               />
+
+              {/* Collapse button: visible below nodes that have visible children */}
+              {hasCollapsibleChildren && !isCollapsed && (
+                <button
+                  onClick={e => {
+                    e.stopPropagation()
+                    setCollapsedIds(prev => new Set([...prev, node.id]))
+                  }}
+                  className="absolute left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-zinc-800 border border-zinc-600 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200 text-xs flex items-center justify-center transition-colors cursor-pointer"
+                  style={{ top: NH + 4, zIndex: 20 }}
+                  title="Collapse subtree"
+                >▼</button>
+              )}
+
+              {/* Expand button: visible on collapsed nodes */}
+              {isCollapsed && (
+                <button
+                  onClick={e => {
+                    e.stopPropagation()
+                    setCollapsedIds(prev => { const s = new Set(prev); s.delete(node.id); return s })
+                  }}
+                  className="absolute left-1/2 -translate-x-1/2 h-5 min-w-[20px] px-1.5 flex items-center justify-center rounded-full font-bold text-[9px] bg-brand-800 border border-brand-500 text-brand-300 hover:bg-brand-700 transition-colors cursor-pointer select-none"
+                  style={{ top: NH + 4, zIndex: 20 }}
+                  title={`Expand — ${hiddenCount} persons hidden`}
+                >▶ +{hiddenCount}</button>
+              )}
             </div>
           )
         })}

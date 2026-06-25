@@ -1,13 +1,19 @@
-﻿import { useEffect, useState } from 'react'
+﻿import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { Cluster, ClusterConnection, FaceInfo, SimilarFaceInfo } from '../types'
+import type { Cluster, ClusterConnection, FaceInfo, PersonFull, SimilarFaceInfo } from '../types'
 
 type ModalTab = 'faces' | 'photos' | 'merge' | 'connections'
 
 // ── ClustersTab ───────────────────────────────────────────────────────────────
 
-export default function ClustersTab() {
+export default function ClustersTab({
+  navTarget,
+  onNavToCluster,
+}: {
+  navTarget?: { clusterId: number; key: number } | null
+  onNavToCluster?: (clusterId: number) => void
+}) {
   const [selected, setSelected] = useState<Cluster | null>(null)
   const [search, setSearch] = useState('')
 
@@ -15,6 +21,13 @@ export default function ClustersTab() {
     queryKey: ['clusters'],
     queryFn: api.cluster.list,
   })
+
+  // Auto-open cluster when navTarget changes (navigation from other tabs)
+  useEffect(() => {
+    if (!navTarget || !clusters.length) return
+    const target = clusters.find(c => c.id === navTarget.clusterId)
+    if (target) setSelected(target)
+  }, [navTarget?.key]) // eslint-disable-line
 
   const named = [...clusters]
     .filter(c => c.label !== -1)
@@ -91,9 +104,11 @@ export default function ClustersTab() {
       {/* Modal */}
       {selected && (
         <ClusterModal
+          key={selected.id}
           cluster={selected}
           allClusters={allNamed}
           onClose={() => setSelected(null)}
+          onNavToCluster={onNavToCluster}
         />
       )}
     </div>
@@ -146,10 +161,12 @@ function ClusterModal({
   cluster,
   allClusters,
   onClose,
+  onNavToCluster,
 }: {
   cluster: Cluster
   allClusters: Cluster[]
   onClose: () => void
+  onNavToCluster?: (clusterId: number) => void
 }) {
   const queryClient = useQueryClient()
   const isNoise = cluster.label === -1
@@ -161,12 +178,50 @@ function ClusterModal({
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [jumpTo, setJumpTo] = useState<{ imageId: number } | null>(null)
+  const [showPersonPicker, setShowPersonPicker] = useState(false)
+  const [personSearch, setPersonSearch] = useState('')
+  const [linking, setLinking] = useState(false)
+  const personPickerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showPersonPicker) return
+    function handleClick(e: MouseEvent) {
+      if (personPickerRef.current && !personPickerRef.current.contains(e.target as Node)) {
+        setShowPersonPicker(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [showPersonPicker])
+
+  const { data: allPersons = [] } = useQuery<PersonFull[]>({
+    queryKey: ['persons'],
+    queryFn: api.persons.list,
+    enabled: showPersonPicker,
+    staleTime: 30_000,
+  })
+
+  async function linkToPerson(person: PersonFull) {
+    if (linking) return
+    setLinking(true)
+    try {
+      await api.cluster.linkPerson(cluster.id, person.id)
+      setPersonName(person.name ?? '')
+      setSavedName(person.name ?? '')
+      setShowPersonPicker(false)
+      setPersonSearch('')
+      queryClient.invalidateQueries({ queryKey: ['clusters'] })
+      queryClient.invalidateQueries({ queryKey: ['persons'] })
+    } finally {
+      setLinking(false)
+    }
+  }
   const [splitEps, setSplitEps] = useState(0.35)
   const [showSplit, setShowSplit] = useState(false)
   const [splitting, setSplitting] = useState(false)
   const [splitMsg, setSplitMsg] = useState<string | null>(null)
   const [photoSort, setPhotoSort] = useState<'id_asc' | 'exif_date_asc' | 'exif_date_desc'>(() =>
-    (localStorage.getItem('cluster_photo_sort') as 'id_asc' | 'exif_date_asc' | 'exif_date_desc') ?? 'exif_date_asc'
+    (localStorage.getItem('cluster_photo_sort') as 'id_asc' | 'exif_date_asc' | 'exif_date_desc') ?? 'exif_date_desc'
   )
 
   function handleViewOriginal(imageId: number) {
@@ -304,6 +359,60 @@ function ClusterModal({
                     >
                       {saving ? 'Saving…' : isSaved ? 'Saved ✓' : 'Save'}
                     </button>
+                    {/* Person picker dropdown */}
+                    <div className="relative" ref={personPickerRef}>
+                      <button
+                        onClick={() => { setShowPersonPicker(p => !p); setPersonSearch('') }}
+                        title="Assign to existing person"
+                        className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 border border-zinc-700 rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        {cluster.person_id ? 'Change person' : 'Assign to person →'}
+                      </button>
+                      {showPersonPicker && (
+                        <div className="absolute right-0 top-full mt-1 w-64 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+                          <div className="p-2 border-b border-zinc-800">
+                            <input
+                              autoFocus
+                              type="search"
+                              value={personSearch}
+                              onChange={e => setPersonSearch(e.target.value)}
+                              placeholder="Search person…"
+                              className="w-full bg-zinc-800 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
+                            />
+                          </div>
+                          <div className="max-h-56 overflow-y-auto">
+                            {(() => {
+                              const eligible = allPersons.filter(p =>
+                                p.clusters.length === 0 &&
+                                p.name?.toLowerCase().includes(personSearch.toLowerCase())
+                              )
+                              if (eligible.length === 0) {
+                                return (
+                                  <p className="text-xs text-zinc-600 px-3 py-3">
+                                    {allPersons.filter(p => p.clusters.length === 0).length === 0
+                                      ? 'All persons already have a cluster'
+                                      : 'No results'}
+                                  </p>
+                                )
+                              }
+                              return eligible.map(p => (
+                                <button
+                                  key={p.id}
+                                  onClick={() => linkToPerson(p)}
+                                  disabled={linking}
+                                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-zinc-800 transition-colors"
+                                >
+                                  <div className="w-7 h-7 rounded-full bg-zinc-700 shrink-0 flex items-center justify-center text-xs text-zinc-400 font-bold">
+                                    {(p.name ?? '?').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2)}
+                                  </div>
+                                  <span className="truncate text-zinc-200">{p.name ?? '—'}</span>
+                                </button>
+                              ))
+                            })()}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                     <button
                       onClick={() => setDeleteConfirm(true)}
                       className="px-3 py-1.5 text-xs text-zinc-600 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors whitespace-nowrap"
@@ -385,9 +494,9 @@ function ClusterModal({
           ) : showSplit ? (
             <div className="space-y-4 py-4 max-w-md mx-auto">
               <p className="text-sm text-zinc-400">
-                Az algoritmus megpróbálja a clustert al-csoportokra bontani egy szűkebb
-                eps értékkel. A legnagyobb al-csoport az eredeti clusterben marad, a többiek
-                új, névtelen clusterekként jelennek meg.
+                The algorithm tries to split the cluster into sub-groups using a stricter
+                eps value. The largest sub-group stays in the original cluster; the rest
+                become new, unnamed clusters.
               </p>
               <div className="flex items-center gap-3">
                 <label className="text-xs text-zinc-500 w-8 shrink-0">eps</label>
@@ -403,7 +512,7 @@ function ClusterModal({
                 <span className="text-sm text-zinc-300 tabular-nums w-10 text-right">{splitEps.toFixed(2)}</span>
               </div>
               <p className="text-xs text-zinc-600">
-                Alacsonyabb eps → szigorúbb szétválasztás. Ha nem sikerül, próbálj alacsonyabb értékkel.
+                Lower eps → stricter separation. If it doesn't split, try a lower value.
               </p>
               {splitMsg && (
                 <p className={`text-sm px-3 py-2 rounded-lg ${
@@ -452,7 +561,7 @@ function ClusterModal({
           ) : tab === 'connections' ? (
             connsLoading
               ? <p className="text-center text-zinc-600 py-10 text-sm">Loading…</p>
-              : <ConnectionsPanel connections={clusterConns} />
+              : <ConnectionsPanel connections={clusterConns} onNavigate={onNavToCluster} />
           ) : (
             <MergePanel cluster={cluster} otherClusters={otherClusters} onMerged={onClose} />
           )}
@@ -464,7 +573,15 @@ function ClusterModal({
 
 // ── ConnectionsPanel ─────────────────────────────────────────────────────────
 
-function ConnectionsPanel({ connections }: { connections: ClusterConnection[] }) {
+type ScoringMode = 'count' | 'weighted'
+
+function ConnectionsPanel({ connections, onNavigate }: {
+  connections: ClusterConnection[]
+  onNavigate?: (clusterId: number) => void
+}) {
+  const [scoring, setScoring] = useState<ScoringMode>('count')
+  const [showTooltip, setShowTooltip] = useState(false)
+
   if (!connections.length) {
     return (
       <div className="py-12 text-center space-y-1">
@@ -474,34 +591,110 @@ function ConnectionsPanel({ connections }: { connections: ClusterConnection[] })
     )
   }
 
+  const sorted = [...connections].sort((a, b) =>
+    scoring === 'count' ? b.shared_photos - a.shared_photos : b.intimacy_score - a.intimacy_score
+  )
+
+  const maxCount = Math.max(...connections.map(c => c.shared_photos), 1)
+  const maxIntimacy = Math.max(...connections.map(c => c.intimacy_score), 0.001)
+
   return (
-    <div className="space-y-1 py-2">
-      <p className="text-xs text-zinc-600 px-2 pb-2">
-        {connections.length} person{connections.length !== 1 ? 's' : ''} appear in shared photos with this person.
-      </p>
-      {connections.map(c => (
-        <div
-          key={c.person_id}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-zinc-800 transition-colors"
-        >
-          <div className="w-8 h-8 rounded-full overflow-hidden bg-zinc-800 shrink-0">
-            {c.thumbnail_face_id != null ? (
-              <img
-                src={api.faceThumbnailUrl(c.thumbnail_face_id, 64)}
-                alt=""
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-xs font-bold text-zinc-400">
-                {c.person_name.charAt(0).toUpperCase()}
+    <div className="py-2">
+      {/* Toggle */}
+      <div className="flex items-center gap-2 px-2 pb-3">
+        <span className="text-xs text-zinc-600">{connections.length} kapcsolat</span>
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
+            {(['count', 'weighted'] as ScoringMode[]).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setScoring(mode)}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  scoring === mode
+                    ? 'bg-zinc-600 text-zinc-100'
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                {mode === 'count' ? 'Shared photos' : 'Weighted'}
+              </button>
+            ))}
+          </div>
+          {/* Info icon */}
+          <div className="relative">
+            <button
+              onMouseEnter={() => setShowTooltip(true)}
+              onMouseLeave={() => setShowTooltip(false)}
+              className="w-5 h-5 rounded-full bg-zinc-700 hover:bg-zinc-600 text-zinc-400 hover:text-zinc-200 text-[11px] font-bold flex items-center justify-center transition-colors"
+            >ℹ</button>
+            {showTooltip && (
+              <div className="absolute right-0 top-7 w-64 bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl p-3 z-50 text-xs text-zinc-300 leading-relaxed">
+                <p className="font-semibold text-zinc-200 mb-1">Shared photos vs. Weighted</p>
+                <p className="text-zinc-400 mb-2">
+                  <span className="text-zinc-300">Shared photos:</span> how many photos both persons appear in together.
+                </p>
+                <p className="text-zinc-400">
+                  <span className="text-zinc-300">Weighted:</span> 2–3 people in a photo → strong signal. 20 people in a group photo → weak signal. Adds 1/(number of people) per photo.
+                </p>
               </div>
             )}
           </div>
-          <span className="flex-1 text-sm text-zinc-200 font-medium">{c.person_name}</span>
-          <span className="tabular-nums text-sm text-zinc-300 font-semibold">{c.shared_photos}</span>
-          <span className="text-xs text-zinc-600">shared photo{c.shared_photos !== 1 ? 's' : ''}</span>
         </div>
-      ))}
+      </div>
+
+      <div className="space-y-0.5">
+        {sorted.map(c => {
+          const primaryVal = scoring === 'count' ? c.shared_photos : c.intimacy_score
+          const primaryMax = scoring === 'count' ? maxCount : maxIntimacy
+          const barPct = Math.round((primaryVal / primaryMax) * 100)
+
+          const canNav = onNavigate && c.cluster_id != null
+          return (
+            <div
+              key={c.person_id}
+              onClick={canNav ? () => onNavigate!(c.cluster_id!) : undefined}
+              className={`relative flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors overflow-hidden ${
+                canNav ? 'cursor-pointer hover:bg-zinc-700/60' : 'hover:bg-zinc-800/60'
+              }`}
+            >
+              {/* Bar background */}
+              <div
+                className="absolute inset-y-0 left-0 bg-zinc-800/70 rounded-xl transition-all duration-300"
+                style={{ width: `${barPct}%` }}
+              />
+
+              <div className="relative w-8 h-8 rounded-full overflow-hidden bg-zinc-700 shrink-0">
+                {c.thumbnail_face_id != null ? (
+                  <img src={api.faceThumbnailUrl(c.thumbnail_face_id, 64)} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-xs font-bold text-zinc-400">
+                    {c.person_name.charAt(0).toUpperCase()}
+                  </div>
+                )}
+              </div>
+
+              <span className="relative flex-1 text-sm text-zinc-200 font-medium truncate">{c.person_name}</span>
+
+              <div className="relative flex flex-col items-end shrink-0">
+                {scoring === 'count' ? (
+                  <>
+                    <span className="tabular-nums text-sm text-zinc-200 font-semibold leading-none">{c.shared_photos}</span>
+                    <span className="text-[10px] text-zinc-600 leading-none mt-0.5">
+                      shared · {c.intimacy_score.toFixed(2)} weighted
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="tabular-nums text-sm text-zinc-200 font-semibold leading-none">{c.intimacy_score.toFixed(2)}</span>
+                    <span className="text-[10px] text-zinc-600 leading-none mt-0.5">
+                      weighted · {c.shared_photos} shared
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -617,6 +810,14 @@ function FaceGrid({
                   </svg>
                 )}
               </div>
+              {/* Date overlay on hover */}
+              {f.exif_date && (
+                <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                  <p className="text-[8px] text-zinc-300 text-center leading-tight tabular-nums">
+                    {new Date(f.exif_date).toLocaleDateString('hu-HU')}
+                  </p>
+                </div>
+              )}
             </div>
           )
         })}
@@ -634,6 +835,11 @@ function FaceGrid({
               alt=""
               className="w-full rounded-xl shadow-2xl"
             />
+            {enlarged.exif_date && (
+              <p className="text-sm text-zinc-300 font-medium text-center">
+                {new Date(enlarged.exif_date).toLocaleDateString('hu-HU', { year: 'numeric', month: 'long', day: 'numeric' })}
+              </p>
+            )}
             <p className="text-xs text-zinc-500 font-mono break-all text-center">
               {enlarged.image_path}
             </p>

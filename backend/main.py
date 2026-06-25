@@ -301,6 +301,32 @@ def delete_image(image_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@app.get("/api/images/{image_id}/persons")
+def image_persons(image_id: int, db: Session = Depends(get_db)):
+    """Return the named persons (via faces → clusters) that appear in a given image."""
+    faces = db.query(DBFace).filter(DBFace.image_id == image_id).all()
+    seen: set[int] = set()
+    result = []
+    for f in faces:
+        if not f.cluster_id:
+            continue
+        cluster = db.get(DBCluster, f.cluster_id)
+        if not cluster or not cluster.person_id:
+            continue
+        if cluster.person_id in seen:
+            continue
+        seen.add(cluster.person_id)
+        person = db.get(DBPerson, cluster.person_id)
+        if person:
+            result.append({
+                "person_id": person.id,
+                "person_name": person.name,
+                "face_id": f.id,
+                "cluster_id": f.cluster_id,
+            })
+    return result
+
+
 @app.get("/api/images/{image_id}/view")
 def view_image(image_id: int, max_size: int = 1200, db: Session = Depends(get_db)):
     """Return the image as JPEG, resized to max_size on the longest edge. Handles HEIC."""
@@ -347,7 +373,7 @@ def list_clusters(db: Session = Depends(get_db)):
             "face_count": len(c.faces),
             "person_id": c.person_id,
             "person_name": c.person.name if c.person else None,
-            "preview_face_ids": [f.id for f in c.faces[:4]],
+            "preview_face_ids": _preview_face_ids(c.id, db),
         }
         for c in clusters
     ]
@@ -362,7 +388,12 @@ def list_unnamed_clusters(db: Session = Depends(get_db)):
         .all()
     )
     return [
-        {"id": c.id, "label": c.label, "face_count": len(c.faces)}
+        {
+            "id": c.id,
+            "label": c.label,
+            "face_count": len(c.faces),
+            "preview_face_ids": _preview_face_ids(c.id, db),
+        }
         for c in clusters
     ]
 
@@ -392,6 +423,27 @@ def rename_cluster(cluster_id: int, req: ClusterNameRequest, db: Session = Depen
 
     db.commit()
     return {"ok": True, "person_id": person_id, "person_name": name}
+
+
+@app.post("/api/clusters/{cluster_id}/link-person")
+def link_cluster_person(cluster_id: int, body: dict, db: Session = Depends(get_db)):
+    cluster = db.get(DBCluster, cluster_id)
+    if not cluster:
+        raise HTTPException(404, "Cluster not found")
+    person_id = body.get("person_id")
+    if person_id is None:
+        cluster.person_id = None
+        db.commit()
+        return {"ok": True, "person_id": None, "person_name": None}
+    person = db.get(DBPerson, person_id)
+    if not person:
+        raise HTTPException(404, "Person not found")
+    existing = db.query(DBCluster).filter(DBCluster.person_id == person_id, DBCluster.id != cluster_id).count()
+    if existing > 0:
+        raise HTTPException(400, "Ennek a személynek már van klasztere. Először merge-eld a Clusters tabon.")
+    cluster.person_id = person.id
+    db.commit()
+    return {"ok": True, "person_id": person.id, "person_name": person.name}
 
 
 @app.post("/api/clusters/{source_id}/merge-into/{target_id}")
@@ -697,6 +749,7 @@ def get_cluster_faces(
             "image_path": f.image.path,
             "bbox": json.loads(f.bbox_json),
             "det_score": round(f.det_score, 3),
+            "exif_date": f.image.exif_date.isoformat() if f.image.exif_date else None,
         }
         for f in faces
     ]
@@ -726,11 +779,14 @@ def cluster_connections(cluster_id: int, db: Session = Depends(get_db)):
         image_to_persons[image_id].add(pid)
 
     co_counts: dict[int, int] = defaultdict(int)
+    intimacy_scores: dict[int, float] = defaultdict(float)
     for persons in image_to_persons.values():
         if person_id in persons:
+            weight = 1.0 / len(persons)
             for other_pid in persons:
                 if other_pid != person_id:
                     co_counts[other_pid] += 1
+                    intimacy_scores[other_pid] += weight
 
     result = []
     for other_pid, count in sorted(co_counts.items(), key=lambda x: -x[1]):
@@ -742,8 +798,9 @@ def cluster_connections(cluster_id: int, db: Session = Depends(get_db)):
             "person_id": other_pid,
             "person_name": person.name,
             "shared_photos": count,
+            "intimacy_score": round(intimacy_scores[other_pid], 3),
             "cluster_id": their_cluster.id if their_cluster else None,
-            "thumbnail_face_id": person.thumbnail_face_id,
+            "thumbnail_face_id": _best_thumb_id(person, db),
         })
 
     return result
@@ -774,16 +831,19 @@ def get_connections(min_photos: int = Query(default=1, ge=1), db: Session = Depe
         image_to_persons[image_id].add(person_id)
         person_photo_count[person_id] += 1
 
-    # Pairwise co-occurrence counts
+    # Pairwise co-occurrence counts + intimacy scores (weighted by 1/group_size)
     pair_counts: dict[tuple[int, int], int] = defaultdict(int)
+    pair_intimacy: dict[tuple[int, int], float] = defaultdict(float)
     for persons in image_to_persons.values():
+        w = 1.0 / len(persons)
         for a, b in combinations(sorted(persons), 2):
             pair_counts[(a, b)] += 1
+            pair_intimacy[(a, b)] += w
 
     persons = db.query(DBPerson).filter(DBPerson.name != None).all()
 
     edges = [
-        {"source": a, "target": b, "weight": count}
+        {"source": a, "target": b, "weight": count, "intimacy_score": round(pair_intimacy[(a, b)], 3)}
         for (a, b), count in pair_counts.items()
         if count >= min_photos
     ]
@@ -796,7 +856,8 @@ def get_connections(min_photos: int = Query(default=1, ge=1), db: Session = Depe
             "name": p.name,
             "face_count": sum(len(c.faces) for c in p.clusters),
             "photo_count": person_photo_count.get(p.id, 0),
-            "thumbnail_face_id": p.thumbnail_face_id,
+            "thumbnail_face_id": _best_thumb_id(p, db),
+            "cluster_id": next((c.id for c in p.clusters if c.label != -1), None),
         }
         for p in persons
         if p.id in connected_ids
@@ -839,25 +900,46 @@ def fs_list(path: str = ""):
 
 # ── Persons (family tree) ─────────────────────────────────────────────────────
 
-def _person_dict(p: DBPerson, db: Session) -> dict:
-    face_count = (
-        db.query(func.count(DBFace.id))
-        .join(DBCluster)
-        .filter(DBCluster.person_id == p.id)
-        .scalar() or 0
+def _preview_face_ids(cluster_id: int, db: Session, n: int = 4) -> list:
+    """Top-N face IDs from a cluster, ordered by most recent EXIF date (undated last)."""
+    rows = (
+        db.query(DBFace.id)
+        .join(DBImage, DBFace.image_id == DBImage.id)
+        .filter(DBFace.cluster_id == cluster_id)
+        .order_by(nullslast(DBImage.exif_date.desc()), DBFace.id.desc())
+        .limit(n)
+        .all()
     )
-    thumb_id = p.thumbnail_face_id
-    if thumb_id is None and p.clusters:
-        # Use face from the most recently taken photo (exif_date desc), fall back to earliest face id
-        best_face = (
+    return [r[0] for r in rows]
+
+
+def _best_thumb_id(p: "DBPerson", db: Session) -> "int | None":
+    """Face from the most recently taken photo; falls back to stored thumbnail_face_id."""
+    if p.clusters:
+        best = (
             db.query(DBFace.id)
             .join(DBImage, DBFace.image_id == DBImage.id)
             .filter(DBFace.cluster_id.in_([c.id for c in p.clusters]))
             .order_by(nullslast(DBImage.exif_date.desc()), DBFace.id.asc())
             .first()
         )
-        if best_face:
-            thumb_id = best_face[0]
+        if best:
+            return best[0]
+    return p.thumbnail_face_id
+
+
+def _person_dict(p: "DBPerson", db: Session) -> dict:
+    face_count = (
+        db.query(func.count(DBFace.id))
+        .join(DBCluster)
+        .filter(DBCluster.person_id == p.id)
+        .scalar() or 0
+    )
+    thumb_id = _best_thumb_id(p, db)
+    linked_clusters = [
+        {"id": c.id, "label": c.label, "face_count": len(c.faces)}
+        for c in p.clusters if c.label != -1
+    ]
     return {
         "id": p.id,
         "name": p.name,
@@ -866,6 +948,7 @@ def _person_dict(p: DBPerson, db: Session) -> dict:
         "notes": p.notes,
         "thumbnail_face_id": thumb_id,
         "face_count": face_count,
+        "clusters": linked_clusters,
     }
 
 
@@ -958,6 +1041,14 @@ def create_relation(body: dict, db: Session = Depends(get_db)):
         ).first()
     if existing:
         return {"id": existing.id, "type": existing.type, "person_a_id": existing.person_a_id, "person_b_id": existing.person_b_id}
+    # Enforce max 2 parents per child
+    if rel_type == "parent":
+        parent_count = db.query(func.count(DBRelation.id)).filter(
+            DBRelation.type == "parent",
+            DBRelation.person_b_id == b_id,
+        ).scalar() or 0
+        if parent_count >= 2:
+            raise HTTPException(400, "A személynek már van 2 szülője")
     r = DBRelation(type=rel_type, person_a_id=a_id, person_b_id=b_id)
     db.add(r)
     db.commit()
