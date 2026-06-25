@@ -1,0 +1,89 @@
+name: Build Mnemosyne
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: mac
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt pyinstaller aiofiles
+
+      - name: Build with PyInstaller
+        run: pyinstaller mnemosyne.spec --clean --noconfirm
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist\Mnemosyne\* -DestinationPath Mnemosyne-windows.zip
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: cd dist && zip -r ../Mnemosyne-mac.zip Mnemosyne.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mnemosyne-${{ matrix.name }}
+          path: Mnemosyne-${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-$(date +%Y%m%d)-${{ github.run_number }}"
+          gh release create "$TAG" \
+            artifacts/Mnemosyne-windows/Mnemosyne-windows.zip \
+            artifacts/Mnemosyne-mac/Mnemosyne-mac.zip \
+            --title "Mnemosyne — $TAG" \
+            --notes "## Letöltés
+
+          | Platform | Fájl |
+          |----------|------|
+          | Windows | \`Mnemosyne-windows.zip\` → kicsomagol, duplakattint \`Mnemosyne.exe\` |
+          | Mac | \`Mnemosyne-mac.zip\` → kicsomagol, \`Mnemosyne.app\` az Applications mappába |
+
+          > **Első indításkor** az insightface modell (~300 MB) automatikusan letöltődik — ehhez internet szükséges."

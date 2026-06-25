@@ -2,8 +2,14 @@
 # PyInstaller spec for Mnemosyne
 # Run: pyinstaller mnemosyne.spec --clean --noconfirm
 
+import importlib.util
 from pathlib import Path
+
 ROOT = Path(SPECPATH)
+
+# Find insightface data files regardless of venv/system Python and platform
+_if_spec = importlib.util.find_spec('insightface')
+_insightface_objects = str(Path(_if_spec.origin).parent / 'data' / 'objects') if _if_spec else None
 
 a = Analysis(
     [str(ROOT / 'launcher.py')],
@@ -13,8 +19,7 @@ a = Analysis(
         (str(ROOT / 'frontend' / 'dist'), 'frontend_dist'),
         (str(ROOT / 'frontend' / 'public' / 'favicon.png'), '.'),
         # insightface's pickle_object.py looks for sys._MEIPASS/objects/*.pkl when frozen
-        (str(ROOT / '.venv/Lib/site-packages/insightface/data/objects'), 'objects'),
-    ],
+    ] + ([(_insightface_objects, 'objects')] if _insightface_objects and Path(_insightface_objects).exists() else []),
     hiddenimports=[
         # insightface
         'insightface',
