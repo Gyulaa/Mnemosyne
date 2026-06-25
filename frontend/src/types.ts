@@ -106,3 +106,20 @@ export interface FsListing {
   parent: string | null
   items: FsItem[]
 }
+
+export interface PersonFull {
+  id: number
+  name: string | null
+  birth_year: number | null
+  death_year: number | null
+  notes: string | null
+  thumbnail_face_id: number | null
+  face_count: number
+}
+
+export interface Relation {
+  id: number
+  type: 'parent' | 'spouse' | 'sibling'
+  person_a_id: number
+  person_b_id: number
+}

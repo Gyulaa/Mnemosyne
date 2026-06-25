@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation } from './types'
 
 const BASE = '/api'
 
@@ -111,6 +111,26 @@ export const api = {
   fs: {
     list: (path: string) =>
       fetchJson<FsListing>(`${BASE}/fs/list?path=${encodeURIComponent(path)}`),
+  },
+  persons: {
+    list: () => fetchJson<PersonFull[]>(`${BASE}/persons`),
+    create: (name: string, birth_year?: number | null, death_year?: number | null, notes?: string | null) =>
+      post<PersonFull>(`${BASE}/persons`, { name, birth_year, death_year, notes }),
+    update: (id: number, patch: Partial<Pick<PersonFull, 'name' | 'birth_year' | 'death_year' | 'notes'>>) =>
+      fetchJson<PersonFull>(`${BASE}/persons/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      }),
+    delete: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/persons/${id}`, { method: 'DELETE' }),
+  },
+  relations: {
+    list: () => fetchJson<Relation[]>(`${BASE}/relations`),
+    create: (type: 'parent' | 'spouse' | 'sibling', person_a_id: number, person_b_id: number) =>
+      post<Relation>(`${BASE}/relations`, { type, person_a_id, person_b_id }),
+    delete: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/relations/${id}`, { method: 'DELETE' }),
   },
   faceThumbnailUrl: (id: number, size = 160) =>
     `${BASE}/faces/${id}/thumbnail?size=${size}`,

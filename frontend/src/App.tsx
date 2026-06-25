@@ -4,24 +4,25 @@ import ScanTab from './components/ScanTab'
 import ClustersTab from './components/ClustersTab'
 import ConnectionsTab from './components/ConnectionsTab'
 import ImagesTab from './components/ImagesTab'
+import FamilyTreeTab from './components/FamilyTreeTab'
 import ProjectSwitcher from './components/ProjectSwitcher'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 5_000 } },
 })
 
-type Tab = 'scan' | 'clusters' | 'images' | 'connections'
+type Tab = 'scan' | 'clusters' | 'images' | 'connections' | 'genealogy'
 
 const TAB_LABELS: Record<Tab, string> = {
   scan: 'Scan',
   clusters: 'Clusters',
   images: 'Images',
   connections: 'Connections',
+  genealogy: 'Genealogy',
 }
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('scan')
-  // When navigating from Connections → Images with a person co-occurrence filter
   const [imageNavFilter, setImageNavFilter] = useState<{ personIds: number[]; key: number } | null>(null)
 
   function navToImages(personIds: number[]) {
@@ -31,8 +32,8 @@ export default function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="min-h-screen bg-zinc-950 text-zinc-100">
-        <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-3 sticky top-0 z-10">
+      <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden">
+        <header className="shrink-0 bg-zinc-900 border-b border-zinc-800 px-6 py-3 z-10">
           <div className="max-w-6xl mx-auto flex items-center gap-6">
             <div className="flex items-center gap-2">
               <img
@@ -65,11 +66,20 @@ export default function App() {
           </div>
         </header>
 
-        <main className={tab === 'connections' ? 'px-4 py-4' : 'max-w-6xl mx-auto px-6 py-8'}>
-          {tab === 'scan'        ? <ScanTab /> :
-           tab === 'clusters'   ? <ClustersTab /> :
-           tab === 'images'     ? <ImagesTab navFilter={imageNavFilter} /> :
-           <ConnectionsTab onEdgeClick={navToImages} />}
+        <main className={[
+          'flex-1 min-h-0',
+          tab === 'genealogy' ? 'overflow-hidden' : 'overflow-auto',
+        ].join(' ')}>
+          {tab === 'genealogy' ? (
+            <FamilyTreeTab />
+          ) : (
+            <div className={tab === 'connections' ? 'px-4 py-4' : 'max-w-6xl mx-auto px-6 py-8'}>
+              {tab === 'scan'        ? <ScanTab /> :
+               tab === 'clusters'   ? <ClustersTab /> :
+               tab === 'images'     ? <ImagesTab navFilter={imageNavFilter} /> :
+               <ConnectionsTab onEdgeClick={navToImages} />}
+            </div>
+          )}
         </main>
       </div>
     </QueryClientProvider>

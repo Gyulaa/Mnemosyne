@@ -49,9 +49,12 @@ class Person(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=True)
     birth_year = Column(Integer, nullable=True)
+    death_year = Column(Integer, nullable=True)
     notes = Column(String, nullable=True)
     thumbnail_face_id = Column(Integer, nullable=True)
     clusters = relationship("Cluster", back_populates="person")
+    relations_as_a = relationship("Relation", foreign_keys="Relation.person_a_id", back_populates="person_a", cascade="all, delete-orphan")
+    relations_as_b = relationship("Relation", foreign_keys="Relation.person_b_id", back_populates="person_b", cascade="all, delete-orphan")
 
 
 class Relation(Base):
@@ -59,7 +62,9 @@ class Relation(Base):
     id = Column(Integer, primary_key=True, index=True)
     person_a_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
     person_b_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
-    type = Column(String, nullable=False)  # parent/child/spouse/sibling/other
+    type = Column(String, nullable=False)  # 'parent' (a=szülő, b=gyerek) | 'spouse'
+    person_a = relationship("Person", foreign_keys=[person_a_id], back_populates="relations_as_a")
+    person_b = relationship("Person", foreign_keys=[person_b_id], back_populates="relations_as_b")
 
 
 def configure_engine(engine):
@@ -80,6 +85,10 @@ def init_db_schema(engine):
         for stmt in [
             "ALTER TABLE faces ADD COLUMN manually_assigned BOOLEAN NOT NULL DEFAULT 0",
             "ALTER TABLE images ADD COLUMN meta_json TEXT",
+            "ALTER TABLE persons ADD COLUMN death_year INTEGER",
+            "ALTER TABLE persons ADD COLUMN notes TEXT",
+            "ALTER TABLE persons ADD COLUMN thumbnail_face_id INTEGER",
+            "ALTER TABLE persons ADD COLUMN birth_year INTEGER",
         ]:
             try:
                 conn.execute(text(stmt))

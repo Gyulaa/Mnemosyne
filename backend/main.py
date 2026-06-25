@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import Response, FileResponse
 
 from .project_manager import project_manager
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation
 from . import scanner as scanner_mod
 from . import clusterer
 from .schemas import (
@@ -805,23 +805,6 @@ def get_connections(min_photos: int = Query(default=1, ge=1), db: Session = Depe
     return {"nodes": nodes, "edges": edges}
 
 
-# ── Persons ───────────────────────────────────────────────────────────────────
-
-@app.get("/api/persons")
-def list_persons(db: Session = Depends(get_db)):
-    persons = db.query(DBPerson).all()
-    return [
-        {
-            "id": p.id,
-            "name": p.name,
-            "birth_year": p.birth_year,
-            "cluster_count": len(p.clusters),
-            "face_count": sum(len(c.faces) for c in p.clusters),
-        }
-        for p in persons
-    ]
-
-
 # ── Filesystem browser ────────────────────────────────────────────────────────
 
 @app.get("/api/fs/list")
@@ -852,6 +835,144 @@ def fs_list(path: str = ""):
         pass
 
     return {"path": str(p), "parent": parent, "items": items}
+
+
+# ── Persons (family tree) ─────────────────────────────────────────────────────
+
+def _person_dict(p: DBPerson, db: Session) -> dict:
+    face_count = (
+        db.query(func.count(DBFace.id))
+        .join(DBCluster)
+        .filter(DBCluster.person_id == p.id)
+        .scalar() or 0
+    )
+    thumb_id = p.thumbnail_face_id
+    if thumb_id is None and p.clusters:
+        # Use face from the most recently taken photo (exif_date desc), fall back to earliest face id
+        best_face = (
+            db.query(DBFace.id)
+            .join(DBImage, DBFace.image_id == DBImage.id)
+            .filter(DBFace.cluster_id.in_([c.id for c in p.clusters]))
+            .order_by(nullslast(DBImage.exif_date.desc()), DBFace.id.asc())
+            .first()
+        )
+        if best_face:
+            thumb_id = best_face[0]
+    return {
+        "id": p.id,
+        "name": p.name,
+        "birth_year": p.birth_year,
+        "death_year": p.death_year,
+        "notes": p.notes,
+        "thumbnail_face_id": thumb_id,
+        "face_count": face_count,
+    }
+
+
+@app.get("/api/persons")
+def list_persons(db: Session = Depends(get_db)):
+    persons = db.query(DBPerson).order_by(DBPerson.name).all()
+    return [_person_dict(p, db) for p in persons]
+
+
+@app.post("/api/persons", status_code=201)
+def create_person(body: dict, db: Session = Depends(get_db)):
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    p = DBPerson(
+        name=name,
+        birth_year=body.get("birth_year"),
+        death_year=body.get("death_year"),
+        notes=body.get("notes"),
+    )
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return _person_dict(p, db)
+
+
+@app.patch("/api/persons/{person_id}")
+def update_person(person_id: int, body: dict, db: Session = Depends(get_db)):
+    p = db.get(DBPerson, person_id)
+    if not p:
+        raise HTTPException(404, "Person not found")
+    if "name" in body:
+        p.name = (body["name"] or "").strip() or p.name
+    if "birth_year" in body:
+        p.birth_year = body["birth_year"]
+    if "death_year" in body:
+        p.death_year = body["death_year"]
+    if "notes" in body:
+        p.notes = body["notes"]
+    db.commit()
+    return _person_dict(p, db)
+
+
+@app.delete("/api/persons/{person_id}")
+def delete_person(person_id: int, db: Session = Depends(get_db)):
+    p = db.get(DBPerson, person_id)
+    if not p:
+        raise HTTPException(404, "Person not found")
+    if p.clusters:
+        raise HTTPException(400, "Cannot delete person with assigned photo clusters")
+    db.delete(p)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Relations (family tree edges) ─────────────────────────────────────────────
+
+@app.get("/api/relations")
+def list_relations(db: Session = Depends(get_db)):
+    rels = db.query(DBRelation).all()
+    return [{"id": r.id, "type": r.type, "person_a_id": r.person_a_id, "person_b_id": r.person_b_id} for r in rels]
+
+
+@app.post("/api/relations", status_code=201)
+def create_relation(body: dict, db: Session = Depends(get_db)):
+    rel_type = body.get("type")
+    if rel_type not in ("parent", "spouse", "sibling"):
+        raise HTTPException(400, "type must be 'parent' or 'spouse'")
+    a_id = body.get("person_a_id")
+    b_id = body.get("person_b_id")
+    if not a_id or not b_id or a_id == b_id:
+        raise HTTPException(400, "person_a_id and person_b_id required and must differ")
+    if not db.get(DBPerson, a_id) or not db.get(DBPerson, b_id):
+        raise HTTPException(404, "Person not found")
+    # Prevent duplicates (spouse and sibling are symmetric)
+    from sqlalchemy import or_, and_
+    if rel_type in ("spouse", "sibling"):
+        existing = db.query(DBRelation).filter(
+            DBRelation.type == rel_type,
+            or_(
+                and_(DBRelation.person_a_id == a_id, DBRelation.person_b_id == b_id),
+                and_(DBRelation.person_a_id == b_id, DBRelation.person_b_id == a_id),
+            ),
+        ).first()
+    else:
+        existing = db.query(DBRelation).filter(
+            DBRelation.type == rel_type,
+            DBRelation.person_a_id == a_id,
+            DBRelation.person_b_id == b_id,
+        ).first()
+    if existing:
+        return {"id": existing.id, "type": existing.type, "person_a_id": existing.person_a_id, "person_b_id": existing.person_b_id}
+    r = DBRelation(type=rel_type, person_a_id=a_id, person_b_id=b_id)
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    return {"id": r.id, "type": r.type, "person_a_id": r.person_a_id, "person_b_id": r.person_b_id}
+
+
+@app.delete("/api/relations/{relation_id}")
+def delete_relation(relation_id: int, db: Session = Depends(get_db)):
+    r = db.get(DBRelation, relation_id)
+    if not r:
+        raise HTTPException(404, "Relation not found")
+    db.delete(r)
+    db.commit()
+    return {"ok": True}
 
 
 # ── Face thumbnails ────────────────────────────────────────────────────────────
