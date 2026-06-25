@@ -22,6 +22,7 @@ interface RelationMaps {
   childrenOf: Map<number, number[]>
   parentsOf:  Map<number, number[]>
   spousesOf:  Map<number, number[]>
+  siblingOf:  Map<number, number[]>
 }
 
 type EdgeType = 'spouse' | 'couple-stem' | 'couple-bar' | 'child-drop' | 'child-single'
@@ -34,6 +35,7 @@ function buildRelationMaps(relations: Relation[], visibleIds: Set<number>): Rela
   const childrenOf = new Map<number, number[]>()
   const parentsOf  = new Map<number, number[]>()
   const spousesOf  = new Map<number, number[]>()
+  const siblingOf  = new Map<number, number[]>()
   for (const r of relations) {
     if (!visibleIds.has(r.person_a_id) || !visibleIds.has(r.person_b_id)) continue
     if (r.type === 'parent') {
@@ -46,9 +48,14 @@ function buildRelationMaps(relations: Relation[], visibleIds: Set<number>): Rela
       spousesOf.get(r.person_a_id)!.push(r.person_b_id)
       if (!spousesOf.has(r.person_b_id)) spousesOf.set(r.person_b_id, [])
       spousesOf.get(r.person_b_id)!.push(r.person_a_id)
+    } else if (r.type === 'sibling') {
+      if (!siblingOf.has(r.person_a_id)) siblingOf.set(r.person_a_id, [])
+      siblingOf.get(r.person_a_id)!.push(r.person_b_id)
+      if (!siblingOf.has(r.person_b_id)) siblingOf.set(r.person_b_id, [])
+      siblingOf.get(r.person_b_id)!.push(r.person_a_id)
     }
   }
-  return { childrenOf, parentsOf, spousesOf }
+  return { childrenOf, parentsOf, spousesOf, siblingOf }
 }
 
 // ── Proband context extraction ─────────────────────────────────────────────────
@@ -114,6 +121,22 @@ function extractProbandContext(
             latQ.push([cid, depth + 1])
           }
         }
+      }
+    }
+  }
+
+  // Include persons connected via direct sibling relations (fixpoint).
+  // This handles siblings whose shared parent is not in the dataset.
+  let sibChanged = true
+  while (sibChanged) {
+    sibChanged = false
+    for (const r of allRelations) {
+      if (r.type !== 'sibling') continue
+      if (visible.has(r.person_a_id) && allIds.has(r.person_b_id) && !visible.has(r.person_b_id)) {
+        visible.add(r.person_b_id); sibChanged = true
+      }
+      if (visible.has(r.person_b_id) && allIds.has(r.person_a_id) && !visible.has(r.person_a_id)) {
+        visible.add(r.person_a_id); sibChanged = true
       }
     }
   }
@@ -185,6 +208,10 @@ function assignGenerations(
       visited.add(cid); genMap.set(cid, g + 1); queue.push(cid)
     }
     for (const sid of maps.spousesOf.get(id) ?? []) {
+      if (!visibleIds.has(sid) || visited.has(sid)) continue
+      visited.add(sid); genMap.set(sid, g); queue.push(sid)
+    }
+    for (const sid of maps.siblingOf.get(id) ?? []) {
       if (!visibleIds.has(sid) || visited.has(sid)) continue
       visited.add(sid); genMap.set(sid, g); queue.push(sid)
     }
@@ -389,6 +416,10 @@ function layoutGen0Row(
       }
     }
   }
+  // Also include persons connected via direct sibling relations
+  for (const sibId of maps.siblingOf.get(probandId) ?? []) {
+    if (visibleIds.has(sibId) && (genMap.get(sibId) ?? 0) === probandGen) siblings.add(sibId)
+  }
 
   xMap.set(probandId, probandX)
   probandSpouses.forEach((sid, i) => xMap.set(sid, probandX + (i + 1) * step))
@@ -513,6 +544,11 @@ function buildProbandLayout(
           if ((genMap.get(sibId) ?? 0) !== myGen) continue
           sibXs.push(combinedX.get(sibId)!)
         }
+      }
+      // Also include direct sibling-relation neighbors
+      for (const sibId of maps.siblingOf.get(id) ?? []) {
+        if (!combinedX.has(sibId) || (genMap.get(sibId) ?? 0) !== myGen) continue
+        sibXs.push(combinedX.get(sibId)!)
       }
       if (sibXs.length > 0) {
         goSide(sibXs.reduce((a, b) => a + b, 0) / sibXs.length)

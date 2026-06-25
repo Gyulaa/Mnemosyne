@@ -266,8 +266,14 @@ export default function FamilyTreeTab() {
     return ids
   }, [relations])
 
-  const activeGroup = selectedGroupKey ? groups.find(g => g.key === selectedGroupKey) ?? null : null
-  const displayPersons = activeGroup ? activeGroup.persons : persons
+  const activeGroup = useMemo(
+    () => selectedGroupKey ? groups.find(g => g.key === selectedGroupKey) ?? null : null,
+    [selectedGroupKey, groups],
+  )
+  const displayPersons = useMemo(
+    () => activeGroup ? activeGroup.persons : persons,
+    [activeGroup, persons],
+  )
   const displayRelations = useMemo(() => {
     if (!activeGroup) return relations
     const ids = new Set(activeGroup.persons.map(p => p.id))
@@ -394,6 +400,7 @@ export default function FamilyTreeTab() {
             </div>
           ) : (
             <TreeView
+              key={selectedGroupKey ?? '__all__'}
               persons={displayPersons}
               relations={displayRelations}
               selectedId={selectedId}
