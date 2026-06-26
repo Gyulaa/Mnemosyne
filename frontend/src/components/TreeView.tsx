@@ -73,8 +73,9 @@ function extractProbandContext(
   const maps = buildRelationMaps(allRelations, allIds)
   const visible = new Set<number>([probandId])
 
-  // BFS up: collect direct ancestors, track them for lateral expansion
+  // BFS up: collect direct ancestors, track by level for cousin-depth expansion
   const ancestorIds = new Set<number>()
+  const ancestorsByLevel = new Map<number, Set<number>>()
   const ancQueue: Array<[number, number]> = [[probandId, 0]]
   while (ancQueue.length) {
     const [id, depth] = ancQueue.shift()!
@@ -83,6 +84,9 @@ function extractProbandContext(
       if (!visible.has(pid)) {
         visible.add(pid)
         ancestorIds.add(pid)
+        const lvl = depth + 1
+        if (!ancestorsByLevel.has(lvl)) ancestorsByLevel.set(lvl, new Set())
+        ancestorsByLevel.get(lvl)!.add(pid)
         ancQueue.push([pid, depth + 1])
       }
     }
@@ -98,27 +102,24 @@ function extractProbandContext(
     }
   }
 
-  // Include proband's siblings
-  for (const pid of maps.parentsOf.get(probandId) ?? []) {
-    for (const sibId of maps.childrenOf.get(pid) ?? []) {
-      if (!visible.has(sibId)) visible.add(sibId)
-    }
-  }
-
-  // Lateral: from each ancestor, BFS down lateralDepth levels
-  // This adds aunts/uncles (depth 1), cousins (depth 2), etc.
-  if (lateralDepth > 0) {
-    for (const ancId of ancestorIds) {
-      const latQ: Array<[number, number]> = [[ancId, 0]]
-      const latSeen = new Set<number>([ancId])
-      while (latQ.length) {
-        const [id, depth] = latQ.shift()!
-        if (depth >= lateralDepth) continue
-        for (const cid of maps.childrenOf.get(id) ?? []) {
-          if (!latSeen.has(cid)) {
-            latSeen.add(cid)
-            if (!visible.has(cid)) visible.add(cid)
-            latQ.push([cid, depth + 1])
+  // Cousin-depth expansion (proband-centric semantics):
+  //   j=1: proband's siblings (parents' other children)
+  //   j=2: aunts/uncles (gen-1) + first cousins (gen-0)
+  //   j=3: great-aunts/uncles (gen-2) + second cousins chain
+  for (let j = 1; j <= Math.min(lateralDepth, ancestorDepth); j++) {
+    for (const ancId of ancestorsByLevel.get(j) ?? []) {
+      for (const child of maps.childrenOf.get(ancId) ?? []) {
+        if (ancestorIds.has(child) || child === probandId) continue
+        if (!allIds.has(child)) continue
+        const q: [number, number][] = [[child, 0]]
+        const seen = new Set<number>([child])
+        while (q.length) {
+          const [lid, d] = q.shift()!
+          if (!visible.has(lid)) visible.add(lid)
+          if (d < j - 1) {
+            for (const cid of maps.childrenOf.get(lid) ?? []) {
+              if (!seen.has(cid) && allIds.has(cid)) { seen.add(cid); q.push([cid, d + 1]) }
+            }
           }
         }
       }
@@ -384,9 +385,10 @@ function layoutAncestors(
 
   for (const persons of genGroups.values()) {
     persons.sort((a, b) => a.ahn - b.ahn)
-    const step = NW + HG
-    const totalW = persons.length * step - HG
-    persons.forEach(({ id }, i) => xMap.set(id, centerX + i * step - totalW / 2 + NW / 2))
+    const step = 2 * (NW + HG)
+    persons.forEach(({ id }, i) =>
+      xMap.set(id, centerX + (i - (persons.length - 1) / 2) * step)
+    )
   }
 
   return xMap
@@ -502,9 +504,10 @@ function buildProbandLayout(
   for (const [id, x] of ancXMap)  combinedX.set(id, x)
   for (const [id, x] of gen0XMap) combinedX.set(id, x)
 
-  // Unified fallback — three anchors tried in priority order, loop to convergence.
-  // All three share the same "go left / go right" primitive so lateral family
-  // clusters accumulate outward from center without overlapping Ahnentafel persons.
+  // Unified fallback — three anchors, loop to convergence.
+  // KEY INVARIANT: when any person is placed via sibling or parent anchor,
+  // their unpositioned same-gen spouses are placed IMMEDIATELY in the same step
+  // so no third party can be inserted between a couple.
   let passN = true
   while (passN) {
     passN = false
@@ -512,57 +515,72 @@ function buildProbandLayout(
       if (combinedX.has(id)) continue
       const myGen = genMap.get(id) ?? 0
 
-      const leftExtreme = () => {
-        let v = Infinity
-        for (const [oid, ox] of combinedX) { if ((genMap.get(oid) ?? 0) === myGen) v = Math.min(v, ox) }
-        combinedX.set(id, (v < Infinity ? v : 0) - (NW + HG))
-      }
-      const rightExtreme = () => {
-        let v = -Infinity
-        for (const [oid, ox] of combinedX) { if ((genMap.get(oid) ?? 0) === myGen) v = Math.max(v, ox) }
-        combinedX.set(id, (v > -Infinity ? v : 0) + (NW + HG))
-      }
-      const goSide = (anchorX: number) => { if (anchorX <= 0) leftExtreme(); else rightExtreme() }
+      const genLeftmost  = () => { let v = Infinity;  for (const [oid, ox] of combinedX) { if ((genMap.get(oid) ?? 0) === myGen) v = Math.min(v, ox) }; return v <  Infinity ? v : 0 }
+      const genRightmost = () => { let v = -Infinity; for (const [oid, ox] of combinedX) { if ((genMap.get(oid) ?? 0) === myGen) v = Math.max(v, ox) }; return v > -Infinity ? v : 0 }
 
-      // A: spouse anchor — follow spouse's side (left→further left, right→further right)
+      // Place `id` at `pos`, then immediately place any unpositioned same-gen
+      // spouses adjacent — prevents any person from slipping between a couple.
+      const placeWithSpouses = (pos: number) => {
+        combinedX.set(id, pos)
+        passN = true
+        const dir = pos <= 0 ? -1 : 1
+        let cursor = pos + dir * (NW + HG)
+        for (const spId of maps.spousesOf.get(id) ?? []) {
+          if (combinedX.has(spId) || (genMap.get(spId) ?? 0) !== myGen) continue
+          const occ = new Set([...combinedX.values()])
+          while (occ.has(cursor)) cursor += dir * (NW + HG)
+          combinedX.set(spId, cursor)
+          cursor += dir * (NW + HG)
+        }
+      }
+
+      // A: spouse anchor — place adjacent to positioned partner
       let placed = false
       for (const sid of maps.spousesOf.get(id) ?? []) {
-        if (combinedX.has(sid) && (genMap.get(sid) ?? 0) === myGen) {
-          goSide(combinedX.get(sid)!)
-          placed = true; passN = true; break
-        }
+        if (!combinedX.has(sid) || (genMap.get(sid) ?? 0) !== myGen) continue
+        const partnerX = combinedX.get(sid)!
+        const dir = partnerX <= 0 ? -1 : 1
+        let targetX = partnerX + dir * (NW + HG)
+        const occ = new Set([...combinedX.values()])
+        while (occ.has(targetX)) targetX += dir * (NW + HG)
+        combinedX.set(id, targetX)
+        placed = true; passN = true; break
       }
       if (placed) continue
 
-      // B: sibling anchor — direction from actual siblings only (no siblings' spouses,
-      // which would skew the center when both parents are Ahnentafel persons)
+      // B: sibling anchor — direction from actual siblings only
       const myParents = maps.parentsOf.get(id) ?? []
       const sibXs: number[] = []
       for (const pid of myParents) {
         for (const sibId of maps.childrenOf.get(pid) ?? []) {
-          if (sibId === id || !combinedX.has(sibId)) continue
-          if ((genMap.get(sibId) ?? 0) !== myGen) continue
+          if (sibId === id || !combinedX.has(sibId) || (genMap.get(sibId) ?? 0) !== myGen) continue
           sibXs.push(combinedX.get(sibId)!)
         }
       }
-      // Also include direct sibling-relation neighbors
       for (const sibId of maps.siblingOf.get(id) ?? []) {
         if (!combinedX.has(sibId) || (genMap.get(sibId) ?? 0) !== myGen) continue
         sibXs.push(combinedX.get(sibId)!)
       }
       if (sibXs.length > 0) {
-        goSide(sibXs.reduce((a, b) => a + b, 0) / sibXs.length)
-        passN = true; continue
+        const sibCenter = sibXs.reduce((a, b) => a + b, 0) / sibXs.length
+        const dir = sibCenter <= 0 ? -1 : 1
+        let targetX = sibCenter + dir * (NW + HG)
+        const occ = new Set([...combinedX.values()])
+        while (occ.has(targetX)) targetX += dir * (NW + HG)
+        placeWithSpouses(targetX)
+        continue
       }
 
-      // C: parent anchor — lateral relatives whose siblings aren't visible yet
-      // (e.g. children of a lateral at two generations removed from Ahnentafel)
-      const posParentXs = myParents
-        .filter(pid => combinedX.has(pid))
-        .map(pid => combinedX.get(pid)!)
+      // C: parent anchor — place directly below parent, not at generation extreme.
+      // Children of lateral relatives stay visually under their own parent cluster.
+      const posParentXs = myParents.filter(pid => combinedX.has(pid)).map(pid => combinedX.get(pid)!)
       if (posParentXs.length > 0) {
-        goSide(posParentXs.reduce((a, b) => a + b, 0) / posParentXs.length)
-        passN = true
+        const pc = posParentXs.reduce((a, b) => a + b, 0) / posParentXs.length
+        const dir = pc <= 0 ? -1 : 1
+        let targetX = pc
+        const occ = new Set([...combinedX.values()])
+        while (occ.has(targetX)) targetX += dir * (NW + HG)
+        placeWithSpouses(targetX)
       }
     }
   }
@@ -880,8 +898,8 @@ export default function TreeView({
               <button onClick={() => setDescendantDepth(d => Math.min(6, d + 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
             </div>
-            <div className="flex items-center gap-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7" title="Lateral relatives: aunts/uncles, cousins">
-              <span className="text-[10px] text-zinc-500">Oldal</span>
+            <div className="flex items-center gap-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7" title="0=csak direkt ág, 1=testvérek, 2=első unokatestvérek, 3=második unokatestvérek">
+              <span className="text-[10px] text-zinc-500">Unokafok</span>
               <button onClick={() => setLateralDepth(d => Math.max(0, d - 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
               <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{lateralDepth}</span>
