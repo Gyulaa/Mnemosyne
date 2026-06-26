@@ -55,6 +55,24 @@ function buildRelationMaps(relations: Relation[], visibleIds: Set<number>): Rela
       siblingOf.get(r.person_b_id)!.push(r.person_a_id)
     }
   }
+  // Derive implicit siblings: children who share both parents are siblings
+  for (const [, children] of childrenOf) {
+    for (let i = 0; i < children.length; i++) {
+      for (let j = i + 1; j < children.length; j++) {
+        const a = children[i], b = children[j]
+        const aParents = parentsOf.get(a) ?? []
+        const bParents = parentsOf.get(b) ?? []
+        if (aParents.length < 2 || bParents.length < 2) continue
+        const aSet = new Set(aParents)
+        if (bParents.every(p => aSet.has(p))) {
+          if (!siblingOf.has(a)) siblingOf.set(a, [])
+          if (!siblingOf.get(a)!.includes(b)) siblingOf.get(a)!.push(b)
+          if (!siblingOf.has(b)) siblingOf.set(b, [])
+          if (!siblingOf.get(b)!.includes(a)) siblingOf.get(b)!.push(a)
+        }
+      }
+    }
+  }
   return { childrenOf, parentsOf, spousesOf, siblingOf }
 }
 
@@ -650,20 +668,29 @@ function buildEdges(nodes: LayoutNode[], relations: Relation[], minX: number, mi
     coupleMap.get(key)!.childIds.push(childId)
   }
 
+  // Phase 1: collect geometry for all groups
+  type GroupGeom = {
+    parentIds: number[]; childIds: number[]
+    parentNodes: LayoutNode[]; childNodes: LayoutNode[]
+    junctionX: number; junctionY: number
+    cardBottomY: number; firstChildY: number
+    parentKey: string
+  }
+  const groups: GroupGeom[] = []
+
   for (const { parentIds, childIds } of coupleMap.values()) {
     const parentNodes = parentIds.map(id => nodeMap.get(id)).filter(Boolean) as LayoutNode[]
     const childNodes  = childIds.map(id => nodeMap.get(id)).filter(Boolean) as LayoutNode[]
     if (!parentNodes.length || !childNodes.length) continue
 
     let junctionX: number, junctionY: number
-
     if (parentNodes.length === 1) {
       const pn = parentNodes[0]
       junctionX = pn.x - minX
       junctionY = pn.y + NH / 2 - minY
     } else {
-      const sorted   = [...parentNodes].sort((a, b) => a.x - b.x)
-      const leftP    = sorted[0], rightP = sorted[sorted.length - 1]
+      const sorted = [...parentNodes].sort((a, b) => a.x - b.x)
+      const leftP = sorted[0], rightP = sorted[sorted.length - 1]
       const spouseKey = [leftP.id, rightP.id].sort().join('-')
       if (spouseSet.has(spouseKey)) {
         junctionX = (leftP.x + NW / 2 - minX + (rightP.x - NW / 2 - minX)) / 2
@@ -674,26 +701,46 @@ function buildEdges(nodes: LayoutNode[], relations: Relation[], minX: number, mi
       }
     }
 
-    const firstChildY  = Math.min(...childNodes.map(n => n.y - NH / 2 - minY))
-    const cardBottomY  = Math.max(...parentNodes.map(p => p.y)) + NH / 2 - minY
-    const barY         = cardBottomY + (firstChildY - cardBottomY) * 0.5
-    const parentKey    = parentIds.join(',')
+    groups.push({
+      parentIds, childIds, parentNodes, childNodes,
+      junctionX, junctionY,
+      cardBottomY: Math.max(...parentNodes.map(p => p.y)) + NH / 2 - minY,
+      firstChildY: Math.min(...childNodes.map(n => n.y - NH / 2 - minY)),
+      parentKey: parentIds.join(','),
+    })
+  }
 
-    if (childNodes.length === 1) {
-      const cn = childNodes[0]
-      edges.push({ key: `cs-${parentKey}-${cn.id}`, type: 'child-single',
-        x1: junctionX, y1: junctionY, x2: cn.x - minX, y2: cn.y - NH / 2 - minY })
-    } else {
-      edges.push({ key: `stem-${parentKey}`, type: 'couple-stem',
-        x1: junctionX, y1: junctionY, x2: junctionX, y2: barY })
-      const minCX = Math.min(...childNodes.map(n => n.x - minX), junctionX)
-      const maxCX = Math.max(...childNodes.map(n => n.x - minX), junctionX)
-      edges.push({ key: `bar-${parentKey}`, type: 'couple-bar', x1: minCX, y1: barY, x2: maxCX, y2: barY })
-      for (const cn of childNodes) {
-        edges.push({ key: `drop-${parentKey}-${cn.id}`, type: 'child-drop',
-          x1: cn.x - minX, y1: barY, x2: cn.x - minX, y2: cn.y - NH / 2 - minY })
+  // Phase 2: stagger barY within each generation tier so bars don't overlap visually
+  const tierMap = new Map<string, GroupGeom[]>()
+  for (const g of groups) {
+    const tierKey = `${Math.round(g.cardBottomY)}-${Math.round(g.firstChildY)}`
+    if (!tierMap.has(tierKey)) tierMap.set(tierKey, [])
+    tierMap.get(tierKey)!.push(g)
+  }
+
+  for (const tierGroups of tierMap.values()) {
+    tierGroups.sort((a, b) => a.junctionX - b.junctionX)
+    const count = tierGroups.length
+    tierGroups.forEach((g, i) => {
+      const t = count === 1 ? 0.5 : (i + 1) / (count + 1)
+      const barY = g.cardBottomY + (g.firstChildY - g.cardBottomY) * t
+
+      if (g.childNodes.length === 1) {
+        const cn = g.childNodes[0]
+        edges.push({ key: `cs-${g.parentKey}-${cn.id}`, type: 'child-single',
+          x1: g.junctionX, y1: g.junctionY, x2: cn.x - minX, y2: cn.y - NH / 2 - minY })
+      } else {
+        edges.push({ key: `stem-${g.parentKey}`, type: 'couple-stem',
+          x1: g.junctionX, y1: g.junctionY, x2: g.junctionX, y2: barY })
+        const minCX = Math.min(...g.childNodes.map(n => n.x - minX), g.junctionX)
+        const maxCX = Math.max(...g.childNodes.map(n => n.x - minX), g.junctionX)
+        edges.push({ key: `bar-${g.parentKey}`, type: 'couple-bar', x1: minCX, y1: barY, x2: maxCX, y2: barY })
+        for (const cn of g.childNodes) {
+          edges.push({ key: `drop-${g.parentKey}-${cn.id}`, type: 'child-drop',
+            x1: cn.x - minX, y1: barY, x2: cn.x - minX, y2: cn.y - NH / 2 - minY })
+        }
       }
-    }
+    })
   }
 
   return edges
@@ -790,6 +837,23 @@ export default function TreeView({
 
   const effectiveProbandId = probandId ?? persons[0]?.id ?? null
 
+  // Direct ancestor set — collapse is forbidden on these to prevent tree collapse
+  const directAncestorIds = useMemo(() => {
+    if (!effectiveProbandId) return new Set<number>()
+    const ids = new Set<number>()
+    const queue = [effectiveProbandId]
+    while (queue.length) {
+      const id = queue.shift()!
+      for (const r of relations) {
+        if (r.type === 'parent' && r.person_b_id === id && !ids.has(r.person_a_id)) {
+          ids.add(r.person_a_id)
+          queue.push(r.person_a_id)
+        }
+      }
+    }
+    return ids
+  }, [effectiveProbandId, relations])
+
   const nodes = useMemo(() => {
     if (!effectiveProbandId || !persons.length) return []
     return buildProbandLayout(
@@ -883,7 +947,7 @@ export default function TreeView({
             <button onClick={resetView}
               className="h-7 px-2.5 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 text-xs">Reset</button>
             <div className="flex items-center gap-1 ml-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7">
-              <span className="text-[10px] text-zinc-500">Ős</span>
+              <span className="text-[10px] text-zinc-500">Anc</span>
               <button onClick={() => setAncestorDepth(d => Math.max(1, d - 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
               <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{ancestorDepth}</span>
@@ -891,15 +955,15 @@ export default function TreeView({
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
             </div>
             <div className="flex items-center gap-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7">
-              <span className="text-[10px] text-zinc-500">Les</span>
+              <span className="text-[10px] text-zinc-500">Desc</span>
               <button onClick={() => setDescendantDepth(d => Math.max(1, d - 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
               <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{descendantDepth}</span>
               <button onClick={() => setDescendantDepth(d => Math.min(6, d + 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
             </div>
-            <div className="flex items-center gap-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7" title="0=csak direkt ág, 1=testvérek, 2=első unokatestvérek, 3=második unokatestvérek">
-              <span className="text-[10px] text-zinc-500">Unokafok</span>
+            <div className="flex items-center gap-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7" title="0=direct line only, 1=siblings, 2=first cousins, 3=second cousins">
+              <span className="text-[10px] text-zinc-500">Cousins</span>
               <button onClick={() => setLateralDepth(d => Math.max(0, d - 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
               <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{lateralDepth}</span>
@@ -978,8 +1042,8 @@ export default function TreeView({
                 isProband={node.id === effectiveProbandId}
               />
 
-              {/* Collapse button: visible below nodes that have visible children */}
-              {hasCollapsibleChildren && !isCollapsed && (
+              {/* Collapse button: visible below nodes that have visible children, but not on direct ancestors */}
+              {hasCollapsibleChildren && !isCollapsed && !directAncestorIds.has(node.id) && (
                 <button
                   onClick={e => {
                     e.stopPropagation()

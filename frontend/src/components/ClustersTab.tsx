@@ -16,6 +16,7 @@ export default function ClustersTab({
 }) {
   const [selected, setSelected] = useState<Cluster | null>(null)
   const [search, setSearch] = useState('')
+  const [nameFilter, setNameFilter] = useState<'all' | 'named' | 'unnamed'>('all')
 
   const { data: clusters = [], isLoading, isError } = useQuery({
     queryKey: ['clusters'],
@@ -35,9 +36,9 @@ export default function ClustersTab({
   const noiseCluster = clusters.find(c => c.label === -1)
   const allNamed = clusters.filter(c => c.label !== -1)
 
-  const filteredNamed = search.trim()
-    ? named.filter(c => c.person_name?.toLowerCase().includes(search.toLowerCase()))
-    : named
+  const filteredNamed = named
+    .filter(c => nameFilter === 'named' ? !!c.person_name : nameFilter === 'unnamed' ? !c.person_name : true)
+    .filter(c => !search.trim() || c.person_name?.toLowerCase().includes(search.toLowerCase()))
 
   if (isLoading) {
     return <div className="text-zinc-600 text-sm py-20 text-center">Loading clusters…</div>
@@ -78,9 +79,22 @@ export default function ClustersTab({
         </div>
       )}
 
-      {/* Summary + search */}
-      <div className="flex items-center gap-3">
+      {/* Summary + filter + search */}
+      <div className="flex items-center gap-3 flex-wrap">
         <span className="text-sm text-zinc-500 whitespace-nowrap">{named.length} clusters</span>
+        <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
+          {(['all', 'named', 'unnamed'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setNameFilter(f)}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                nameFilter === f ? 'bg-zinc-600 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              {f === 'all' ? 'All' : f === 'named' ? 'Named' : 'Unnamed'}
+            </button>
+          ))}
+        </div>
         <input
           type="search"
           value={search}
