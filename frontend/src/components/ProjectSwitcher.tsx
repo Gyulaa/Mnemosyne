@@ -2,6 +2,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function ProjectSwitcher() {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -9,6 +16,9 @@ export default function ProjectSwitcher() {
   const [newName, setNewName] = useState('')
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameVal, setRenameVal] = useState('')
+  const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const importInputRef = useRef<HTMLInputElement>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   const { data: projects = [] } = useQuery({
@@ -62,6 +72,36 @@ export default function ProjectSwitcher() {
     mutationFn: (id: string) => api.project.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
   })
+
+  async function handleExport() {
+    if (exporting) return
+    setExporting(true)
+    try {
+      const blob = await api.project.exportZip()
+      const name = active?.name?.replace(/\s+/g, '_') ?? 'project'
+      triggerDownload(blob, `${name}_export.zip`)
+    } catch (e) {
+      alert(`Export failed: ${e}`)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImporting(true)
+    try {
+      await api.project.importZip(file)
+      setOpen(false)
+      qc.clear()
+    } catch (e) {
+      alert(`Import failed: ${e}`)
+    } finally {
+      setImporting(false)
+      if (importInputRef.current) importInputRef.current.value = ''
+    }
+  }
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault()
@@ -207,6 +247,49 @@ export default function ProjectSwitcher() {
                 </svg>
                 New collection
               </button>
+            )}
+          </div>
+
+          {/* Export / Import */}
+          <div className="border-t border-zinc-800 p-2 flex flex-col gap-1.5">
+            <div className="flex gap-1">
+              <button
+                onClick={handleExport}
+                disabled={exporting || importing}
+                title="Export active collection as ZIP (includes all images)"
+                className="flex-1 px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                {exporting ? 'Building ZIP…' : 'Export'}
+              </button>
+              <button
+                onClick={() => importInputRef.current?.click()}
+                disabled={importing || exporting}
+                title="Import a collection from a ZIP archive"
+                className="flex-1 px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4 4l4-4m0 0l4 4m-4-4V4" />
+                </svg>
+                {importing ? 'Importing…' : 'Import'}
+              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".zip"
+                className="hidden"
+                onChange={handleImport}
+              />
+            </div>
+            {(exporting || importing) && (
+              <div className="h-0.5 rounded-full bg-zinc-800 overflow-hidden mx-0.5">
+                <div
+                  className="h-full bg-brand-500 rounded-full"
+                  style={{ width: '40%', animation: 'indeterminate 1.4s ease-in-out infinite' }}
+                />
+              </div>
             )}
           </div>
         </div>

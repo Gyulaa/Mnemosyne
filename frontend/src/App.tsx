@@ -24,11 +24,17 @@ const TAB_LABELS: Record<Tab, string> = {
 export default function App() {
   const [tab, setTab] = useState<Tab>('scan')
   const [imageNavFilter, setImageNavFilter] = useState<{ personIds: number[]; key: number } | null>(null)
+  const [imageOpenTarget, setImageOpenTarget] = useState<{ imageId: number; personIds: number[]; key: number } | null>(null)
   const [clusterNavTarget, setClusterNavTarget] = useState<{ clusterId: number; key: number } | null>(null)
 
   function navToImages(personIds: number[]) {
     setTab('images')
     setImageNavFilter({ personIds, key: Date.now() })
+  }
+
+  function navToImage(imageId: number, personIds: number[]) {
+    setTab('images')
+    setImageOpenTarget({ imageId, personIds, key: Date.now() })
   }
 
   function navToCluster(clusterId: number) {
@@ -81,8 +87,8 @@ export default function App() {
           ) : (
             <div className={tab === 'connections' ? 'px-4 py-4' : 'max-w-6xl mx-auto px-6 py-8'}>
               {tab === 'scan'        ? <ScanTab /> :
-               tab === 'clusters'   ? <ClustersTab navTarget={clusterNavTarget} onNavToCluster={navToCluster} /> :
-               tab === 'images'     ? <ImagesTab navFilter={imageNavFilter} onNavToCluster={navToCluster} /> :
+               tab === 'clusters'   ? <ClustersTab navTarget={clusterNavTarget} onNavToCluster={navToCluster} onNavToImage={navToImage} /> :
+               tab === 'images'     ? <ImagesTab navFilter={imageNavFilter} openImageTarget={imageOpenTarget} onImageTargetConsumed={() => setImageOpenTarget(null)} onNavToCluster={navToCluster} /> :
                <ConnectionsTab onEdgeClick={navToImages} onNodeClick={navToCluster} />}
             </div>
           )}

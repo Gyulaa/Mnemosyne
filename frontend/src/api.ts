@@ -94,6 +94,20 @@ export const api = {
     rename:   (id: string, name: string) => patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { name }),
     delete:   (id: string) =>
       fetchJson<{ ok: boolean }>(`${BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    exportZip: async (clusterIds?: number[]): Promise<Blob> => {
+      const p = new URLSearchParams()
+      if (clusterIds?.length) p.set('cluster_ids', clusterIds.join(','))
+      const res = await fetch(`${BASE}/projects/export?${p}`)
+      if (!res.ok) throw new Error(await res.text())
+      return res.blob()
+    },
+    importZip: async (file: File): Promise<Project> => {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch(`${BASE}/projects/import`, { method: 'POST', body: fd })
+      if (!res.ok) throw new Error(await res.text())
+      return res.json()
+    },
   },
   connections: {
     get: (minPhotos = 1) =>
@@ -107,6 +121,14 @@ export const api = {
       if (includePersonIds.length) p.set('include_person_ids', includePersonIds.join(','))
       if (excludePersonIds.length) p.set('exclude_person_ids', excludePersonIds.join(','))
       return fetchJson<ImagesPage>(`${BASE}/images?${p}`)
+    },
+    exportZip: async (filter: string, search: string, sort: string, includePersonIds: number[], excludePersonIds: number[], includeMode: string): Promise<Blob> => {
+      const p = new URLSearchParams({ filter, search, sort, include_mode: includeMode })
+      if (includePersonIds.length) p.set('include_person_ids', includePersonIds.join(','))
+      if (excludePersonIds.length) p.set('exclude_person_ids', excludePersonIds.join(','))
+      const res = await fetch(`${BASE}/images/export-zip?${p}`)
+      if (!res.ok) throw new Error(await res.text())
+      return res.blob()
     },
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/images/${id}`, { method: 'DELETE' }),

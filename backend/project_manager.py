@@ -2,6 +2,7 @@ import json
 import os
 import re
 import shutil
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -17,7 +18,8 @@ LEGACY_DB = ROOT_DIR / "photo_organizer.db"
 
 
 def _make_id(name: str) -> str:
-    slug = re.sub(r"[^\w\s]", "", name.lower()).strip()
+    ascii_name = unicodedata.normalize("NFD", name).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^\w\s]", "", ascii_name.lower()).strip()
     slug = re.sub(r"\s+", "_", slug) or "project"
     ts = int(datetime.now().timestamp())
     return f"{slug}_{ts}"

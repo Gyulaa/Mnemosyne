@@ -26,9 +26,13 @@ function parseMeta(metaJson: string | null): { width?: number; height?: number; 
 
 export default function ImagesTab({
   navFilter,
+  openImageTarget,
+  onImageTargetConsumed,
   onNavToCluster,
 }: {
   navFilter?: { personIds: number[]; key: number } | null
+  openImageTarget?: { imageId: number; personIds: number[]; key: number } | null
+  onImageTargetConsumed?: () => void
   onNavToCluster?: (clusterId: number) => void
 }) {
   const qc = useQueryClient()
@@ -56,6 +60,28 @@ export default function ImagesTab({
     setPage(1)
     setSelected(new Set())
   }, [navFilter])
+
+  // Direct image open from external navigation (e.g. "Open in Images" from Clusters)
+  const [pendingOpenImageId, setPendingOpenImageId] = useState<number | null>(null)
+  const prevOpenKey = useRef<number | null>(null)
+  useEffect(() => {
+    if (!openImageTarget || openImageTarget.key === prevOpenKey.current) return
+    prevOpenKey.current = openImageTarget.key
+    // Apply person filter so the image shows in context with navigation
+    if (openImageTarget.personIds.length > 0) {
+      setIncludePersonIds(new Set(openImageTarget.personIds))
+      setExcludePersonIds(new Set())
+      setIncludeMode('or')
+      setShowPersonFilter(true)
+      setFilter('all')
+      setPage(1)
+      setSelected(new Set())
+    }
+    setPendingOpenImageId(openImageTarget.imageId)
+    onImageTargetConsumed?.()
+  }, [openImageTarget?.key]) // eslint-disable-line
+
+  const [exportingZip, setExportingZip] = useState(false)
 
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     (localStorage.getItem('img_view_mode') as ViewMode) ?? 'list'
@@ -129,6 +155,22 @@ export default function ImagesTab({
     })
   }
 
+  async function exportZip() {
+    if (exportingZip || total === 0) return
+    setExportingZip(true)
+    try {
+      const blob = await api.images.exportZip(filter, search, sort, incArr, excArr, includeMode)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'images_export.zip'; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert(`Export failed: ${e}`)
+    } finally {
+      setExportingZip(false)
+    }
+  }
+
   function changeFilter(f: FilterType) { setFilter(f); setPage(1); setSelected(new Set()) }
   function changeSearch(s: string)     { setSearch(s);  setPage(1); setSelected(new Set()) }
 
@@ -173,6 +215,16 @@ export default function ImagesTab({
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const pageItems = data?.items ?? []
   const allPageSelected = pageItems.length > 0 && pageItems.every(i => selected.has(i.id))
+
+  // Once filtered images load, find the pending image and open it in the preview modal
+  useEffect(() => {
+    if (pendingOpenImageId === null || isFetching || !pageItems.length) return
+    const idx = pageItems.findIndex(img => img.id === pendingOpenImageId)
+    if (idx >= 0) {
+      setPreviewIdx(idx)
+      setPendingOpenImageId(null)
+    }
+  }, [pageItems, pendingOpenImageId, isFetching])
 
   const filterTabs: { key: FilterType; label: string; count: number | undefined }[] = [
     { key: 'all',     label: 'All',       count: counts ? counts.done + counts.no_face + counts.error + counts.pending : undefined },
@@ -232,6 +284,29 @@ export default function ImagesTab({
             <option value={100}>100 / page</option>
             <option value={200}>200 / page</option>
           </select>
+
+          {/* Export ZIP */}
+          {total > 0 && (
+            <div className="flex flex-col items-stretch gap-0.5">
+              <button
+                onClick={exportZip}
+                disabled={exportingZip}
+                title={`Export ${total.toLocaleString()} images as ZIP`}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-900 border border-zinc-800 hover:border-zinc-600 hover:text-zinc-200 rounded-lg text-xs text-zinc-500 transition-colors disabled:opacity-50 disabled:cursor-wait"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                {exportingZip ? 'Building ZIP…' : `Export ${total.toLocaleString()}`}
+              </button>
+              {exportingZip && (
+                <div className="h-0.5 rounded-full bg-zinc-800 overflow-hidden">
+                  <div className="h-full bg-brand-500 rounded-full"
+                       style={{ width: '40%', animation: 'indeterminate 1.4s ease-in-out infinite' }} />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* View mode toggle */}
           <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
@@ -479,6 +554,7 @@ export default function ImagesTab({
           onNavToCluster={onNavToCluster}
         />
       )}
+
     </div>
   )
 }

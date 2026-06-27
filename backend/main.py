@@ -1,22 +1,26 @@
+import io
 import json
 import os
 import string
+import unicodedata
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import update as sql_update, func, nullslast
 from sqlalchemy.orm import Session
-from starlette.responses import Response, FileResponse
+from starlette.responses import Response, FileResponse, StreamingResponse
 
-from .project_manager import project_manager
+from .project_manager import project_manager, PROJECTS_DIR
 from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation
 from . import scanner as scanner_mod
 from . import clusterer
+from . import export_utils
 from .schemas import (
     ScanStartRequest, ScanStatusResponse,
     ClusterRunRequest, ClusterResult,
@@ -95,6 +99,54 @@ def delete_project(project_id: str):
     except FileNotFoundError:
         raise HTTPException(404, "Project not found")
     return {"ok": True}
+
+
+@app.get("/api/projects/export")
+def export_project(
+    cluster_ids: str = Query(default=""),
+):
+    """Download the active project as a self-contained ZIP (DB + images)."""
+    project_id = project_manager.active_id
+    if not project_id:
+        raise HTTPException(404, "No active project")
+
+    project_dir = PROJECTS_DIR / project_id
+    source_db = project_dir / "photo_organizer.db"
+    project_info = json.loads((project_dir / "project.json").read_text())
+
+    parsed_cluster_ids: list[int] | None = None
+    if cluster_ids.strip():
+        parsed_cluster_ids = [int(x) for x in cluster_ids.split(",") if x.strip().isdigit()]
+
+    buf = export_utils.create_project_zip(source_db, project_info, parsed_cluster_ids)
+    raw_name = project_info.get('name', 'project')
+    ascii_name = unicodedata.normalize("NFD", raw_name).encode("ascii", "ignore").decode("ascii")
+    filename = f"{ascii_name.replace(' ', '_') or 'project'}_export.zip"
+    filename_utf8 = quote(f"{raw_name.replace(' ', '_')}_export.zip")
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{filename_utf8}"},
+    )
+
+
+@app.post("/api/projects/import")
+async def import_project(file: UploadFile = File(...)):
+    """Import a project ZIP archive and activate it."""
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(400, "Please upload a .zip file")
+
+    data = await file.read()
+    try:
+        info = export_utils.import_project_zip(data, PROJECTS_DIR)
+    except (ValueError, KeyError, Exception) as e:
+        raise HTTPException(400, f"Import failed: {e}")
+
+    try:
+        return project_manager.switch_project(info["id"])
+    except FileNotFoundError:
+        raise HTTPException(500, "Import succeeded but could not activate project")
 
 
 # ── Scan ──────────────────────────────────────────────────────────────────────
@@ -276,6 +328,57 @@ def list_images(
             for img in items
         ],
     }
+
+
+@app.get("/api/images/export-zip")
+def export_images_zip(
+    filter: str = Query(default="all"),
+    search: str = Query(default=""),
+    sort: str = Query(default="id_desc"),
+    include_person_ids: str = Query(default=""),
+    include_mode: str = Query(default="or"),
+    exclude_person_ids: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    """Download all images matching the current filter as a ZIP file."""
+    q = db.query(DBImage)
+    if filter != "all":
+        q = q.filter(DBImage.scan_status == filter)
+    if search.strip():
+        q = q.filter(DBImage.path.ilike(f"%{search.strip()}%"))
+    if include_person_ids.strip():
+        inc_ids = [int(x) for x in include_person_ids.split(",") if x.strip().isdigit()]
+        if inc_ids:
+            if include_mode == "and":
+                for pid in inc_ids:
+                    subq = db.query(DBFace.image_id).join(DBCluster).filter(DBCluster.person_id == pid).distinct().scalar_subquery()
+                    q = q.filter(DBImage.id.in_(subq))
+            else:
+                subq = db.query(DBFace.image_id).join(DBCluster).filter(DBCluster.person_id.in_(inc_ids)).distinct().scalar_subquery()
+                q = q.filter(DBImage.id.in_(subq))
+    if exclude_person_ids.strip():
+        exc_ids = [int(x) for x in exclude_person_ids.split(",") if x.strip().isdigit()]
+        if exc_ids:
+            subq = db.query(DBFace.image_id).join(DBCluster).filter(DBCluster.person_id.in_(exc_ids)).distinct().scalar_subquery()
+            q = q.filter(DBImage.id.notin_(subq))
+
+    images = q.all()
+    if not images:
+        raise HTTPException(404, "No images match the current filter")
+
+    buf = io.BytesIO()
+    with __import__("zipfile").ZipFile(buf, "w", __import__("zipfile").ZIP_DEFLATED, allowZip64=True) as zf:
+        for img in images:
+            p = Path(img.path)
+            if p.exists():
+                zf.write(str(p), f"{img.id}_{p.name}")
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=images_export.zip"},
+    )
 
 
 @app.post("/api/images/bulk-delete")

@@ -13,3 +13,8 @@
   --color-brand-900: #3b0764;
   --color-brand-950: #25044a;
 }
+
+@keyframes indeterminate {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}

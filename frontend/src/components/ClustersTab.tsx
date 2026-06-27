@@ -10,9 +10,11 @@ type ModalTab = 'faces' | 'photos' | 'merge' | 'connections'
 export default function ClustersTab({
   navTarget,
   onNavToCluster,
+  onNavToImage,
 }: {
   navTarget?: { clusterId: number; key: number } | null
   onNavToCluster?: (clusterId: number) => void
+  onNavToImage?: (imageId: number, personIds: number[]) => void
 }) {
   const [selected, setSelected] = useState<Cluster | null>(null)
   const [search, setSearch] = useState('')
@@ -23,12 +25,20 @@ export default function ClustersTab({
     queryFn: api.cluster.list,
   })
 
+  // Initialize with the current navTarget key so that stale navigations from
+  // before this component mounted don't auto-open a cluster on tab switch.
+  const handledNavKey = useRef<number | null>(navTarget?.key ?? null)
+
   // Auto-open cluster when navTarget changes (navigation from other tabs)
   useEffect(() => {
     if (!navTarget || !clusters.length) return
+    if (navTarget.key === handledNavKey.current) return
     const target = clusters.find(c => c.id === navTarget.clusterId)
-    if (target) setSelected(target)
-  }, [navTarget?.key]) // eslint-disable-line
+    if (target) {
+      handledNavKey.current = navTarget.key
+      setSelected(target)
+    }
+  }, [navTarget?.key, clusters]) // eslint-disable-line
 
   const named = [...clusters]
     .filter(c => c.label !== -1)
@@ -81,7 +91,9 @@ export default function ClustersTab({
 
       {/* Summary + filter + search */}
       <div className="flex items-center gap-3 flex-wrap">
-        <span className="text-sm text-zinc-500 whitespace-nowrap">{named.length} clusters</span>
+        <span className="text-sm text-zinc-500 whitespace-nowrap">
+          {filteredNamed.length}{filteredNamed.length !== named.length ? ` / ${named.length}` : ''} clusters
+        </span>
         <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
           {(['all', 'named', 'unnamed'] as const).map(f => (
             <button
@@ -123,6 +135,7 @@ export default function ClustersTab({
           allClusters={allNamed}
           onClose={() => setSelected(null)}
           onNavToCluster={onNavToCluster}
+          onNavToImage={onNavToImage}
         />
       )}
     </div>
@@ -176,11 +189,13 @@ function ClusterModal({
   allClusters,
   onClose,
   onNavToCluster,
+  onNavToImage,
 }: {
   cluster: Cluster
   allClusters: Cluster[]
   onClose: () => void
   onNavToCluster?: (clusterId: number) => void
+  onNavToImage?: (imageId: number, personIds: number[]) => void
 }) {
   const queryClient = useQueryClient()
   const isNoise = cluster.label === -1
@@ -571,6 +586,10 @@ function ClusterModal({
                 setPhotoSort(s)
                 localStorage.setItem('cluster_photo_sort', s)
               }}
+              onNavToImage={onNavToImage ? (imageId) => {
+                onClose()
+                onNavToImage(imageId, cluster.person_id != null ? [cluster.person_id] : [])
+              } : undefined}
             />
           ) : tab === 'connections' ? (
             connsLoading
@@ -898,14 +917,18 @@ function NoiseFaceGrid({
   faces,
   allClusters,
   noiseClusterId,
+  onViewOriginal,
 }: {
   faces: FaceInfo[]
   allClusters: Cluster[]
   noiseClusterId: number
+  onViewOriginal?: (imageId: number) => void
 }) {
   const queryClient = useQueryClient()
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [assigning, setAssigning] = useState(false)
+  const [enlarged, setEnlarged] = useState<FaceInfo | null>(null)
+  const [fullPhoto, setFullPhoto] = useState(false)
 
   const allSelected = faces.length > 0 && selected.size === faces.length
 
@@ -979,8 +1002,8 @@ function NoiseFaceGrid({
           return (
             <div
               key={f.id}
-              onClick={() => toggle(f.id)}
-              className={`relative aspect-square rounded-lg overflow-hidden bg-zinc-800 cursor-pointer select-none ${
+              onClick={() => setEnlarged(f)}
+              className={`relative aspect-square rounded-lg overflow-hidden bg-zinc-800 cursor-pointer select-none group ${
                 isSelected ? 'ring-2 ring-brand-400' : 'hover:ring-1 hover:ring-zinc-600'
               }`}
             >
@@ -988,14 +1011,15 @@ function NoiseFaceGrid({
                 src={api.faceThumbnailUrl(f.id)}
                 alt=""
                 loading="lazy"
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-200"
               />
-              {/* Selection indicator */}
+              {/* Selection checkbox — click toggles selection, does NOT open enlarged view */}
               <div
-                className={`absolute top-1 right-1 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
+                onClick={e => { e.stopPropagation(); toggle(f.id) }}
+                className={`absolute top-1 right-1 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer ${
                   isSelected
-                    ? 'bg-brand-400 border-brand-400'
-                    : 'bg-black/40 border-white/50'
+                    ? 'bg-brand-400 border-brand-400 opacity-100'
+                    : 'bg-black/40 border-white/50 opacity-0 group-hover:opacity-100'
                 }`}
               >
                 {isSelected && (
@@ -1008,6 +1032,68 @@ function NoiseFaceGrid({
           )
         })}
       </div>
+
+      {/* Enlarged face view */}
+      {enlarged && (
+        <div
+          className="fixed inset-0 bg-black/85 flex items-center justify-center z-60 p-4"
+          onClick={() => { setEnlarged(null); setFullPhoto(false) }}
+        >
+          {fullPhoto ? (
+            <div className="relative max-w-4xl w-full" onClick={e => e.stopPropagation()}>
+              <img
+                src={api.imageViewUrl(enlarged.image_id, 1600)}
+                alt=""
+                className="w-full max-h-[85vh] object-contain rounded-xl shadow-2xl"
+              />
+              <button
+                onClick={() => setFullPhoto(false)}
+                className="absolute top-3 left-3 px-3 py-1.5 bg-black/70 hover:bg-black/90 text-zinc-300 hover:text-white text-xs rounded-lg transition-colors"
+              >
+                ← Face
+              </button>
+            </div>
+          ) : (
+            <div className="max-w-xs w-full space-y-3" onClick={e => e.stopPropagation()}>
+              <img
+                src={api.faceThumbnailUrl(enlarged.id, 320)}
+                alt=""
+                className="w-full rounded-xl shadow-2xl"
+              />
+              {enlarged.exif_date && (
+                <p className="text-sm text-zinc-300 font-medium text-center">
+                  {new Date(enlarged.exif_date).toLocaleDateString('hu-HU', { year: 'numeric', month: 'long', day: 'numeric' })}
+                </p>
+              )}
+              <p className="text-xs text-zinc-500 font-mono break-all text-center">{enlarged.image_path}</p>
+              <p className="text-xs text-zinc-600 text-center">confidence {enlarged.det_score.toFixed(3)}</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setFullPhoto(true)}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 rounded-lg text-sm text-zinc-300 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  Full photo
+                </button>
+                {onViewOriginal && (
+                  <button
+                    onClick={() => { setEnlarged(null); setFullPhoto(false); onViewOriginal(enlarged.image_id) }}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 rounded-lg text-sm text-zinc-300 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                    Open in Photos
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {assigning && selectedFaces.length > 0 && (
         <AssignFacesOverlay
@@ -1350,11 +1436,13 @@ function PhotoGallery({
   jumpTo,
   sort,
   onSortChange,
+  onNavToImage,
 }: {
   faces: FaceInfo[]
   jumpTo?: { imageId: number } | null
   sort?: string
   onSortChange?: (s: 'id_asc' | 'exif_date_asc' | 'exif_date_desc') => void
+  onNavToImage?: (imageId: number) => void
 }) {
   const uniqueImages = [...new Map(faces.map(f => [f.image_id, f])).values()]
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
@@ -1435,7 +1523,7 @@ function PhotoGallery({
           {lightboxIdx > 0 && (
             <button
               onClick={e => { e.stopPropagation(); setLightboxIdx(i => (i != null ? i - 1 : i)) }}
-              className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-black/60 hover:bg-black/85 text-white transition-colors"
+              className="absolute left-4 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-black/60 hover:bg-black/85 text-white flex items-center justify-center transition-colors"
               aria-label="Previous"
             >
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -1444,12 +1532,12 @@ function PhotoGallery({
             </button>
           )}
 
-          {/* Image */}
+          {/* Image — maxHeight leaves room for the bottom bar */}
           <img
             src={api.imageViewUrl(currentImage.image_id, 1600)}
             alt=""
-            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-            style={{ maxHeight: 'calc(100vh - 80px)', maxWidth: 'calc(100vw - 120px)' }}
+            className="max-w-full object-contain rounded-lg shadow-2xl"
+            style={{ maxHeight: 'calc(100vh - 120px)', maxWidth: 'calc(100vw - 120px)' }}
             onClick={e => e.stopPropagation()}
           />
 
@@ -1457,7 +1545,7 @@ function PhotoGallery({
           {lightboxIdx < uniqueImages.length - 1 && (
             <button
               onClick={e => { e.stopPropagation(); setLightboxIdx(i => (i != null ? i + 1 : i)) }}
-              className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-black/60 hover:bg-black/85 text-white transition-colors"
+              className="absolute right-4 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-black/60 hover:bg-black/85 text-white flex items-center justify-center transition-colors"
               aria-label="Next"
             >
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -1466,15 +1554,31 @@ function PhotoGallery({
             </button>
           )}
 
-          {/* Counter + close */}
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-4">
+          {/* Bottom bar: counter + open-in-images — sits below the image */}
+          <div
+            className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-4"
+            onClick={e => e.stopPropagation()}
+          >
             <span className="text-sm text-zinc-400 tabular-nums">
               {lightboxIdx + 1} / {uniqueImages.length}
             </span>
+            {onNavToImage && (
+              <button
+                onClick={() => onNavToImage(currentImage.image_id)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700/70 hover:border-zinc-500 rounded-lg text-xs text-zinc-300 hover:text-white transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Open in Images
+              </button>
+            )}
           </div>
+
+          {/* Close */}
           <button
             onClick={() => setLightboxIdx(null)}
-            className="absolute top-4 right-4 p-2 rounded-full bg-black/60 hover:bg-black/85 text-zinc-300 hover:text-white transition-colors"
+            className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/60 hover:bg-black/85 text-zinc-300 hover:text-white flex items-center justify-center transition-colors"
             aria-label="Close"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
