@@ -29,11 +29,15 @@ export default function ImagesTab({
   openImageTarget,
   onImageTargetConsumed,
   onNavToCluster,
+  onExportStart,
+  onExportEnd,
 }: {
   navFilter?: { personIds: number[]; key: number } | null
   openImageTarget?: { imageId: number; personIds: number[]; key: number } | null
   onImageTargetConsumed?: () => void
   onNavToCluster?: (clusterId: number) => void
+  onExportStart?: () => void
+  onExportEnd?: (error?: string) => void
 }) {
   const qc = useQueryClient()
   const [filter, setFilter] = useState<FilterType>('all')
@@ -82,6 +86,7 @@ export default function ImagesTab({
   }, [openImageTarget?.key]) // eslint-disable-line
 
   const [exportingZip, setExportingZip] = useState(false)
+  const [exportingSelected, setExportingSelected] = useState(false)
 
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
     (localStorage.getItem('img_view_mode') as ViewMode) ?? 'list'
@@ -158,16 +163,36 @@ export default function ImagesTab({
   async function exportZip() {
     if (exportingZip || total === 0) return
     setExportingZip(true)
+    onExportStart?.()
     try {
       const blob = await api.images.exportZip(filter, search, sort, incArr, excArr, includeMode)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url; a.download = 'images_export.zip'; a.click()
       URL.revokeObjectURL(url)
+      onExportEnd?.()
     } catch (e) {
-      alert(`Export failed: ${e}`)
+      onExportEnd?.(String(e))
     } finally {
       setExportingZip(false)
+    }
+  }
+
+  async function exportSelected() {
+    if (exportingSelected || selected.size === 0) return
+    setExportingSelected(true)
+    onExportStart?.()
+    try {
+      const blob = await api.images.exportSelectedZip([...selected])
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `images_selected_${selected.size}.zip`; a.click()
+      URL.revokeObjectURL(url)
+      onExportEnd?.()
+    } catch (e) {
+      onExportEnd?.(String(e))
+    } finally {
+      setExportingSelected(false)
     }
   }
 
@@ -530,8 +555,18 @@ export default function ImagesTab({
           <span className="text-sm text-zinc-200 font-semibold tabular-nums">{selected.size} selected</span>
           <div className="w-px h-5 bg-zinc-700 shrink-0" />
           <button
+            onClick={exportSelected}
+            disabled={exportingSelected || bulkDeleting}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 disabled:cursor-wait text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            {exportingSelected ? 'Building ZIP…' : `Export ${selected.size}`}
+          </button>
+          <button
             onClick={deleteSelected}
-            disabled={bulkDeleting}
+            disabled={bulkDeleting || exportingSelected}
             className="px-4 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
           >
             {bulkDeleting ? 'Deleting…' : `Delete ${selected.size}`}

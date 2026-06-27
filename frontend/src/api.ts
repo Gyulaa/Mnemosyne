@@ -96,9 +96,10 @@ export const api = {
     rename:   (id: string, name: string) => patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { name }),
     delete:   (id: string) =>
       fetchJson<{ ok: boolean }>(`${BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    exportZip: async (clusterIds?: number[], name?: string, includeGenealogy = true): Promise<Blob> => {
+    exportZip: async (clusterIds?: number[], name?: string, includeGenealogy = true, personIds?: number[]): Promise<Blob> => {
       const p = new URLSearchParams()
       if (clusterIds?.length) p.set('cluster_ids', clusterIds.join(','))
+      if (personIds?.length) p.set('person_ids', personIds.join(','))
       if (name) p.set('name', name)
       if (!includeGenealogy) p.set('include_genealogy', 'false')
       const res = await fetch(`${BASE}/projects/export?${p}`)
@@ -130,6 +131,12 @@ export const api = {
       const p = new URLSearchParams({ filter, search, sort, include_mode: includeMode })
       if (includePersonIds.length) p.set('include_person_ids', includePersonIds.join(','))
       if (excludePersonIds.length) p.set('exclude_person_ids', excludePersonIds.join(','))
+      const res = await fetch(`${BASE}/images/export-zip?${p}`)
+      if (!res.ok) throw new Error(await res.text())
+      return res.blob()
+    },
+    exportSelectedZip: async (imageIds: number[]): Promise<Blob> => {
+      const p = new URLSearchParams({ image_ids: imageIds.join(',') })
       const res = await fetch(`${BASE}/images/export-zip?${p}`)
       if (!res.ok) throw new Error(await res.text())
       return res.blob()

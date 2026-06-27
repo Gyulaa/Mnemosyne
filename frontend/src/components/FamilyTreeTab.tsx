@@ -4,6 +4,7 @@ import { api } from '../api'
 import type { PersonFull, Relation } from '../types'
 import TreeView from './TreeView'
 import PersonPanel from './PersonPanel'
+import ExportModal from './ExportModal'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -242,9 +243,17 @@ function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
 // ── FamilyTreeTab ─────────────────────────────────────────────────────────────
 
-export default function FamilyTreeTab() {
+export default function FamilyTreeTab({
+  onExportStart,
+  onExportEnd,
+}: {
+  onExportStart?: () => void
+  onExportEnd?: (error?: string) => void
+}) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null)
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [groupNames, setGroupNames] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem('mnemosyne_group_names') ?? '{}') }
     catch { return {} }
@@ -295,6 +304,28 @@ export default function FamilyTreeTab() {
 
   const unlinkedCount = persons.filter(p => !linkedIds.has(p.id)).length
 
+  async function handleTreeExport({ name }: { name: string; includeGenealogy: boolean }) {
+    if (!activeGroup || exporting) return
+    setShowExportModal(false)
+    setExporting(true)
+    onExportStart?.()
+    try {
+      const personIds = activeGroup.persons.map(p => p.id)
+      const blob = await api.project.exportZip(undefined, name, true, personIds)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${name || 'family'}_export.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+      onExportEnd?.()
+    } catch (e) {
+      onExportEnd?.(String(e))
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="h-full flex flex-col bg-zinc-950">
 
@@ -333,6 +364,18 @@ export default function FamilyTreeTab() {
               onRename={renameGroup}
             />
           </>
+        )}
+
+        {/* Export tree — only when a specific family group is selected */}
+        {activeGroup && (
+          <button
+            onClick={() => setShowExportModal(true)}
+            disabled={exporting}
+            className="h-7 px-3 text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-600 rounded-full transition-colors shrink-0 disabled:opacity-40"
+            title="Export this family tree with linked clusters and photos"
+          >
+            {exporting ? 'Exporting…' : 'Export tree'}
+          </button>
         )}
 
         {/* Stats */}
@@ -428,6 +471,17 @@ export default function FamilyTreeTab() {
           onCreated={p => { setShowNew(false); setSelectedId(p.id) }}
         />
       )}
+
+      {showExportModal && activeGroup && (
+        <ExportModal
+          defaultName={groupNames[activeGroup.key] ?? activeGroup.autoName}
+          subtitle={`${activeGroup.persons.length} person${activeGroup.persons.length !== 1 ? 's' : ''}`}
+          hideGenealogyOption
+          onExport={handleTreeExport}
+          onClose={() => setShowExportModal(false)}
+        />
+      )}
+
     </div>
   )
 }

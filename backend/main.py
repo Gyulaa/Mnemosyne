@@ -116,6 +116,7 @@ def delete_project(project_id: str):
 @app.get("/api/projects/export")
 def export_project(
     cluster_ids: str = Query(default=""),
+    person_ids: str = Query(default=""),
     name: str = Query(default=""),
     include_genealogy: bool = Query(default=True),
 ):
@@ -135,7 +136,11 @@ def export_project(
     if cluster_ids.strip():
         parsed_cluster_ids = [int(x) for x in cluster_ids.split(",") if x.strip().isdigit()]
 
-    buf = export_utils.create_project_zip(source_db, project_info, parsed_cluster_ids, include_genealogy)
+    parsed_person_ids: list[int] | None = None
+    if person_ids.strip():
+        parsed_person_ids = [int(x) for x in person_ids.split(",") if x.strip().isdigit()]
+
+    buf = export_utils.create_project_zip(source_db, project_info, parsed_cluster_ids, include_genealogy, parsed_person_ids)
     raw_name = project_info.get('name', 'project')
     ascii_name = unicodedata.normalize("NFD", raw_name).encode("ascii", "ignore").decode("ascii")
     filename = f"{ascii_name.replace(' ', '_') or 'project'}_export.zip"
@@ -240,11 +245,11 @@ def list_images(
     exclude_person_ids: str = Query(default=""),  # comma-separated — hide images with these persons
     db: Session = Depends(get_db),
 ):
-    q = db.query(DBImage)
-    if filter != "all":
-        q = q.filter(DBImage.scan_status == filter)
+    # Base query: search + person filters only (no status filter).
+    # Used for status_counts so each tab shows how many results it would return.
+    q_base = db.query(DBImage)
     if search.strip():
-        q = q.filter(DBImage.path.ilike(f"%{search.strip()}%"))
+        q_base = q_base.filter(DBImage.path.ilike(f"%{search.strip()}%"))
 
     if include_person_ids.strip():
         inc_ids = [int(x) for x in include_person_ids.split(",") if x.strip().isdigit()]
@@ -259,7 +264,7 @@ def list_images(
                         .distinct()
                         .scalar_subquery()
                     )
-                    q = q.filter(DBImage.id.in_(subq))
+                    q_base = q_base.filter(DBImage.id.in_(subq))
             else:
                 # OR: any of the persons must appear
                 incl_subq = (
@@ -269,7 +274,7 @@ def list_images(
                     .distinct()
                     .scalar_subquery()
                 )
-                q = q.filter(DBImage.id.in_(incl_subq))
+                q_base = q_base.filter(DBImage.id.in_(incl_subq))
 
     if exclude_person_ids.strip():
         exc_ids = [int(x) for x in exclude_person_ids.split(",") if x.strip().isdigit()]
@@ -281,7 +286,19 @@ def list_images(
                 .distinct()
                 .scalar_subquery()
             )
-            q = q.filter(DBImage.id.notin_(excl_subq))
+            q_base = q_base.filter(DBImage.id.notin_(excl_subq))
+
+    # Status counts reflect search + person filters so tab badges stay accurate.
+    status_counts = dict(
+        q_base.with_entities(DBImage.scan_status, func.count(DBImage.id))
+        .group_by(DBImage.scan_status)
+        .all()
+    )
+
+    # Add status filter for the paginated results.
+    q = q_base
+    if filter != "all":
+        q = q.filter(DBImage.scan_status == filter)
 
     total = q.count()
     if sort == "exif_date_desc":
@@ -293,12 +310,6 @@ def list_images(
     else:
         q = q.order_by(DBImage.id.desc())
     items = q.offset((page - 1) * page_size).limit(page_size).all()
-
-    status_counts = dict(
-        db.query(DBImage.scan_status, func.count(DBImage.id))
-        .group_by(DBImage.scan_status)
-        .all()
-    )
 
     image_ids = [img.id for img in items]
     if image_ids:
@@ -355,31 +366,35 @@ def export_images_zip(
     include_person_ids: str = Query(default=""),
     include_mode: str = Query(default="or"),
     exclude_person_ids: str = Query(default=""),
+    image_ids: str = Query(default=""),  # comma-separated; when set, overrides all other filters
     db: Session = Depends(get_db),
 ):
-    """Download all images matching the current filter as a ZIP file."""
-    q = db.query(DBImage)
-    if filter != "all":
-        q = q.filter(DBImage.scan_status == filter)
-    if search.strip():
-        q = q.filter(DBImage.path.ilike(f"%{search.strip()}%"))
-    if include_person_ids.strip():
-        inc_ids = [int(x) for x in include_person_ids.split(",") if x.strip().isdigit()]
-        if inc_ids:
-            if include_mode == "and":
-                for pid in inc_ids:
-                    subq = db.query(DBFace.image_id).join(DBCluster).filter(DBCluster.person_id == pid).distinct().scalar_subquery()
+    """Download images as a ZIP file — either a specific selection or all matching the filter."""
+    if image_ids.strip():
+        ids = [int(x) for x in image_ids.split(",") if x.strip().isdigit()]
+        images = db.query(DBImage).filter(DBImage.id.in_(ids)).all() if ids else []
+    else:
+        q = db.query(DBImage)
+        if filter != "all":
+            q = q.filter(DBImage.scan_status == filter)
+        if search.strip():
+            q = q.filter(DBImage.path.ilike(f"%{search.strip()}%"))
+        if include_person_ids.strip():
+            inc_ids = [int(x) for x in include_person_ids.split(",") if x.strip().isdigit()]
+            if inc_ids:
+                if include_mode == "and":
+                    for pid in inc_ids:
+                        subq = db.query(DBFace.image_id).join(DBCluster).filter(DBCluster.person_id == pid).distinct().scalar_subquery()
+                        q = q.filter(DBImage.id.in_(subq))
+                else:
+                    subq = db.query(DBFace.image_id).join(DBCluster).filter(DBCluster.person_id.in_(inc_ids)).distinct().scalar_subquery()
                     q = q.filter(DBImage.id.in_(subq))
-            else:
-                subq = db.query(DBFace.image_id).join(DBCluster).filter(DBCluster.person_id.in_(inc_ids)).distinct().scalar_subquery()
-                q = q.filter(DBImage.id.in_(subq))
-    if exclude_person_ids.strip():
-        exc_ids = [int(x) for x in exclude_person_ids.split(",") if x.strip().isdigit()]
-        if exc_ids:
-            subq = db.query(DBFace.image_id).join(DBCluster).filter(DBCluster.person_id.in_(exc_ids)).distinct().scalar_subquery()
-            q = q.filter(DBImage.id.notin_(subq))
-
-    images = q.all()
+        if exclude_person_ids.strip():
+            exc_ids = [int(x) for x in exclude_person_ids.split(",") if x.strip().isdigit()]
+            if exc_ids:
+                subq = db.query(DBFace.image_id).join(DBCluster).filter(DBCluster.person_id.in_(exc_ids)).distinct().scalar_subquery()
+                q = q.filter(DBImage.id.notin_(subq))
+        images = q.all()
     if not images:
         raise HTTPException(404, "No images match the current filter")
 

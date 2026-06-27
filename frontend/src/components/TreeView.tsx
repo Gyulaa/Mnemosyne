@@ -73,6 +73,18 @@ function buildRelationMaps(relations: Relation[], visibleIds: Set<number>): Rela
       }
     }
   }
+  // Derive implicit spouses: co-parents (persons sharing a common child) are implicitly spouses
+  for (const [, parents] of parentsOf) {
+    for (let i = 0; i < parents.length; i++) {
+      for (let j = i + 1; j < parents.length; j++) {
+        const a = parents[i], b = parents[j]
+        if (!spousesOf.has(a)) spousesOf.set(a, [])
+        if (!spousesOf.get(a)!.includes(b)) spousesOf.get(a)!.push(b)
+        if (!spousesOf.has(b)) spousesOf.set(b, [])
+        if (!spousesOf.get(b)!.includes(a)) spousesOf.get(b)!.push(a)
+      }
+    }
+  }
   return { childrenOf, parentsOf, spousesOf, siblingOf }
 }
 
@@ -447,9 +459,38 @@ function layoutGen0Row(
   const nucleusLeft  = probandX - NW / 2
   const nucleusRight = probandX + probandSpouses.length * step + NW / 2
 
-  const sibArr = [...siblings]
-  const leftSibs  = sibArr.slice(0, Math.floor(sibArr.length / 2))
-  const rightSibs = sibArr.slice(Math.floor(sibArr.length / 2))
+  // Classify siblings by which side of the proband's ancestry they belong to.
+  // Sorted proband parents: lower ID = Ahnentafel-2 = left, higher ID = Ahnentafel-3 = right.
+  const probandParentsSorted = [...probandParents].sort((a, b) => a - b)
+  const leftParent  = probandParentsSorted[0] ?? null
+  const rightParent = probandParentsSorted[1] ?? null
+  const probandParentSet = new Set(probandParents)
+
+  const leftOnlySibs:  number[] = []
+  const rightOnlySibs: number[] = []
+  const neutralSibs:   number[] = []
+
+  for (const sid of siblings) {
+    const sidParents    = maps.parentsOf.get(sid) ?? []
+    const sharedParents = sidParents.filter(p => probandParentSet.has(p))
+    const extraParents  = sidParents.filter(p => !probandParentSet.has(p))
+
+    if (rightParent == null) {
+      // Proband has one known parent. Siblings with additional (outside) parents
+      // go right; pure half-siblings via the same single parent go left.
+      if (extraParents.length > 0) rightOnlySibs.push(sid)
+      else                          leftOnlySibs.push(sid)
+    } else {
+      const fromLeft  = sharedParents.includes(leftParent!)
+      const fromRight = sharedParents.includes(rightParent!)
+      if      (fromLeft && !fromRight) leftOnlySibs.push(sid)
+      else if (fromRight && !fromLeft) rightOnlySibs.push(sid)
+      else                              neutralSibs.push(sid)
+    }
+  }
+
+  const leftSibs  = [...leftOnlySibs,  ...neutralSibs.slice(0, Math.floor(neutralSibs.length / 2))]
+  const rightSibs = [...rightOnlySibs, ...neutralSibs.slice(Math.floor(neutralSibs.length / 2))]
 
   let leftCursor = nucleusLeft - HG
   for (let i = leftSibs.length - 1; i >= 0; i--) {
@@ -566,13 +607,19 @@ function buildProbandLayout(
       }
       if (placed) continue
 
-      // B: sibling anchor — direction from actual siblings only
+      // B: sibling anchor — direction based on parent position for half-siblings.
+      // If this person has fewer parents than a positioned sibling, they are a
+      // half-sibling: aim them toward their OWN parent(s) rather than following
+      // the sibling cluster (which may be on the opposite side of the tree).
       const myParents = maps.parentsOf.get(id) ?? []
       const sibXs: number[] = []
+      let maxSibParentCount = 0
       for (const pid of myParents) {
         for (const sibId of maps.childrenOf.get(pid) ?? []) {
           if (sibId === id || !combinedX.has(sibId) || (genMap.get(sibId) ?? 0) !== myGen) continue
           sibXs.push(combinedX.get(sibId)!)
+          const cnt = (maps.parentsOf.get(sibId) ?? []).length
+          if (cnt > maxSibParentCount) maxSibParentCount = cnt
         }
       }
       for (const sibId of maps.siblingOf.get(id) ?? []) {
@@ -581,7 +628,13 @@ function buildProbandLayout(
       }
       if (sibXs.length > 0) {
         const sibCenter = sibXs.reduce((a, b) => a + b, 0) / sibXs.length
-        const dir = sibCenter <= 0 ? -1 : 1
+        // Half-sibling: fewer parents than the sibling → use own parents as direction ref.
+        const isHalfSibling = myParents.length < maxSibParentCount
+        const myParentXs = myParents.filter(p => combinedX.has(p)).map(p => combinedX.get(p)!)
+        const dirRef = isHalfSibling && myParentXs.length > 0
+          ? myParentXs.reduce((a, b) => a + b, 0) / myParentXs.length
+          : sibCenter
+        const dir = dirRef <= 0 ? -1 : 1
         let targetX = sibCenter + dir * (NW + HG)
         const occ = new Set([...combinedX.values()])
         while (occ.has(targetX)) targetX += dir * (NW + HG)
@@ -627,18 +680,46 @@ function buildProbandLayout(
 }
 
 // ── Edge drawing ───────────────────────────────────────────────────────────────
-function buildEdges(nodes: LayoutNode[], relations: Relation[], minX: number, minY: number): EdgeSpec[] {
+function buildEdges(nodes: LayoutNode[], relations: Relation[], groupRelations: Relation[], minX: number, minY: number): EdgeSpec[] {
   const nodeMap = new Map(nodes.map(n => [n.id, n]))
   const edges: EdgeSpec[] = []
 
-  // Spouse lines
-  const drawnSpouses = new Set<string>()
+  // Build child→parents from ALL group relations (for implicit spouse detection).
+  // Using groupRelations (not just visible) ensures co-parents are linked even
+  // when their shared children are not currently visible in the layout.
+  const childParentsAll = new Map<number, number[]>()
+  for (const r of groupRelations) {
+    if (r.type !== 'parent') continue
+    if (!childParentsAll.has(r.person_b_id)) childParentsAll.set(r.person_b_id, [])
+    childParentsAll.get(r.person_b_id)!.push(r.person_a_id)
+  }
+
+  // Build child→parents from VISIBLE relations only (for parent-child edge drawing).
+  const childParents = new Map<number, number[]>()
   for (const r of relations) {
-    if (r.type !== 'spouse') continue
-    const key = [r.person_a_id, r.person_b_id].sort().join('-')
-    if (drawnSpouses.has(key)) continue
-    drawnSpouses.add(key)
-    const an = nodeMap.get(r.person_a_id), bn = nodeMap.get(r.person_b_id)
+    if (r.type !== 'parent') continue
+    if (!childParents.has(r.person_b_id)) childParents.set(r.person_b_id, [])
+    childParents.get(r.person_b_id)!.push(r.person_a_id)
+  }
+
+  // Spouse set: explicit + implicit co-parents — always from full group relations so that
+  // co-parents without a visible shared child are still connected by the dashed line.
+  const spouseSet = new Set<string>()
+  for (const r of groupRelations) {
+    if (r.type === 'spouse') spouseSet.add([r.person_a_id, r.person_b_id].sort().join('-'))
+  }
+  for (const [, parents] of childParentsAll) {
+    for (let i = 0; i < parents.length; i++) {
+      for (let j = i + 1; j < parents.length; j++) {
+        spouseSet.add([parents[i], parents[j]].sort().join('-'))
+      }
+    }
+  }
+
+  // Spouse lines (explicit + implicit co-parents)
+  for (const key of spouseSet) {
+    const [aId, bId] = key.split('-').map(Number)
+    const an = nodeMap.get(aId), bn = nodeMap.get(bId)
     if (!an || !bn) continue
     const leftN  = an.x <= bn.x ? an : bn
     const rightN = an.x <= bn.x ? bn : an
@@ -649,17 +730,6 @@ function buildEdges(nodes: LayoutNode[], relations: Relation[], minX: number, mi
   }
 
   // Parent-child edges grouped by couple
-  const spouseSet = new Set<string>()
-  for (const r of relations) {
-    if (r.type === 'spouse') spouseSet.add([r.person_a_id, r.person_b_id].sort().join('-'))
-  }
-
-  const childParents = new Map<number, number[]>()
-  for (const r of relations) {
-    if (r.type !== 'parent') continue
-    if (!childParents.has(r.person_b_id)) childParents.set(r.person_b_id, [])
-    childParents.get(r.person_b_id)!.push(r.person_a_id)
-  }
 
   const coupleMap = new Map<string, { parentIds: number[]; childIds: number[] }>()
   for (const [childId, parents] of childParents) {
@@ -882,8 +952,8 @@ export default function TreeView({
   }, [nodes])
 
   const edges = useMemo(
-    () => buildEdges(nodes, layoutRelations, bounds.minX, bounds.minY),
-    [nodes, layoutRelations, bounds],
+    () => buildEdges(nodes, layoutRelations, relations, bounds.minX, bounds.minY),
+    [nodes, layoutRelations, relations, bounds],
   )
 
   function resetView() {

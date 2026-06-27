@@ -1,10 +1,10 @@
-﻿import { useEffect, useRef, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { Cluster, ClusterConnection, FaceInfo, PersonFull, SimilarFaceInfo } from '../types'
+import type { Cluster, ClusterConnection, FaceInfo, PersonFull, Relation, SimilarFaceInfo } from '../types'
 import ExportModal from './ExportModal'
 
-type ModalTab = 'faces' | 'photos' | 'merge' | 'connections'
+type ModalTab = 'faces' | 'photos' | 'merge' | 'connections' | 'genealogy'
 
 // ── ClustersTab ───────────────────────────────────────────────────────────────
 
@@ -12,10 +12,16 @@ export default function ClustersTab({
   navTarget,
   onNavToCluster,
   onNavToImage,
+  onNavConsumed,
+  onExportStart,
+  onExportEnd,
 }: {
   navTarget?: { clusterId: number; key: number } | null
   onNavToCluster?: (clusterId: number) => void
   onNavToImage?: (imageId: number, personIds: number[]) => void
+  onNavConsumed?: () => void
+  onExportStart?: () => void
+  onExportEnd?: (error?: string) => void
 }) {
   const qc = useQueryClient()
   const [selected, setSelected] = useState<Cluster | null>(null)
@@ -31,11 +37,11 @@ export default function ClustersTab({
     queryFn: api.cluster.list,
   })
 
-  // Initialize with the current navTarget key so that stale navigations from
-  // before this component mounted don't auto-open a cluster on tab switch.
-  const handledNavKey = useRef<number | null>(navTarget?.key ?? null)
+  const handledNavKey = useRef<number | null>(null)
 
-  // Auto-open cluster when navTarget changes (navigation from other tabs)
+  // Auto-open cluster when navTarget changes (navigation from other tabs).
+  // After processing, call onNavConsumed so App.tsx clears the target and
+  // a later tab switch back to Clusters doesn't re-open the same panel.
   useEffect(() => {
     if (!navTarget || !clusters.length) return
     if (navTarget.key === handledNavKey.current) return
@@ -43,6 +49,7 @@ export default function ClustersTab({
     if (target) {
       handledNavKey.current = navTarget.key
       setSelected(target)
+      onNavConsumed?.()
     }
   }, [navTarget?.key, clusters]) // eslint-disable-line
 
@@ -73,17 +80,19 @@ export default function ClustersTab({
   }
 
   async function doExport({ name, includeGenealogy }: { name: string; includeGenealogy: boolean }) {
-    setShowExportModal(false)
     if (exportingClusters) return
+    setShowExportModal(false)
     setExportingClusters(true)
+    onExportStart?.()
     try {
       const blob = await api.project.exportZip([...checkedClusters], name, includeGenealogy)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url; a.download = `${name.replace(/\s+/g, '_') || 'clusters'}_export.zip`; a.click()
       URL.revokeObjectURL(url)
+      onExportEnd?.()
     } catch (e) {
-      alert(`Export failed: ${e}`)
+      onExportEnd?.(String(e))
     } finally {
       setExportingClusters(false)
     }
@@ -233,6 +242,7 @@ export default function ClustersTab({
           onClose={() => setSelected(null)}
           onNavToCluster={onNavToCluster}
           onNavToImage={onNavToImage}
+          onOpenCluster={setSelected}
         />
       )}
     </div>
@@ -315,12 +325,14 @@ function ClusterModal({
   onClose,
   onNavToCluster,
   onNavToImage,
+  onOpenCluster,
 }: {
   cluster: Cluster
   allClusters: Cluster[]
   onClose: () => void
   onNavToCluster?: (clusterId: number) => void
   onNavToImage?: (imageId: number, personIds: number[]) => void
+  onOpenCluster?: (cluster: Cluster) => void
 }) {
   const queryClient = useQueryClient()
   const isNoise = cluster.label === -1
@@ -616,6 +628,18 @@ function ClusterModal({
                   Connections
                 </button>
               )}
+              {cluster.person_id != null && (
+                <button
+                  onClick={() => { setTab('genealogy'); setShowSplit(false) }}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                    tab === 'genealogy' && !showSplit
+                      ? 'bg-zinc-700 text-zinc-100'
+                      : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+                  }`}
+                >
+                  Genealogy
+                </button>
+              )}
               {cluster.face_count >= 6 && (
                 <button
                   onClick={() => { setShowSplit(s => !s); setSplitMsg(null) }}
@@ -720,6 +744,12 @@ function ClusterModal({
             connsLoading
               ? <p className="text-center text-zinc-600 py-10 text-sm">Loading…</p>
               : <ConnectionsPanel connections={clusterConns} onNavigate={onNavToCluster} />
+          ) : tab === 'genealogy' && cluster.person_id != null ? (
+            <GenealogyTab
+              personId={cluster.person_id}
+              allClusters={allClusters}
+              onOpenCluster={onOpenCluster}
+            />
           ) : (
             <MergePanel cluster={cluster} otherClusters={otherClusters} onMerged={onClose} />
           )}
@@ -853,6 +883,200 @@ function ConnectionsPanel({ connections, onNavigate }: {
           )
         })}
       </div>
+    </div>
+  )
+}
+
+// ── GenealogyTab ─────────────────────────────────────────────────────────────
+
+function RelativeRow({
+  person,
+  onNavigate,
+}: {
+  person: PersonFull
+  onNavigate?: () => void
+}) {
+  const [imgErr, setImgErr] = useState(false)
+  const initials = (person.name ?? '?').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2)
+
+  return (
+    <div
+      className={`flex items-center gap-3 px-3 py-2 rounded-xl transition-colors ${
+        onNavigate ? 'cursor-pointer hover:bg-zinc-800' : ''
+      }`}
+      onClick={onNavigate}
+    >
+      <div className="w-8 h-8 rounded-full overflow-hidden bg-zinc-700 shrink-0 flex items-center justify-center text-xs font-bold text-zinc-400">
+        {person.thumbnail_face_id && !imgErr ? (
+          <img
+            src={api.faceThumbnailUrl(person.thumbnail_face_id, 64)}
+            alt=""
+            className="w-full h-full object-cover"
+            onError={() => setImgErr(true)}
+          />
+        ) : (
+          initials
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm text-zinc-100 truncate">{person.name ?? '(névtelen)'}</div>
+        {(person.birth_year || person.death_year) && (
+          <div className="text-xs text-zinc-500 tabular-nums">
+            {person.birth_year ?? '?'}–{person.death_year ?? ''}
+          </div>
+        )}
+      </div>
+      {onNavigate && (
+        <svg className="w-4 h-4 text-zinc-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+      )}
+    </div>
+  )
+}
+
+function GenealogyTab({
+  personId,
+  allClusters,
+  onOpenCluster,
+}: {
+  personId: number
+  allClusters: Cluster[]
+  onOpenCluster?: (cluster: Cluster) => void
+}) {
+  const { data: persons = [], isLoading: personsLoading } = useQuery<PersonFull[]>({
+    queryKey: ['persons'],
+    queryFn: api.persons.list,
+    staleTime: 30_000,
+  })
+  const { data: relations = [], isLoading: relsLoading } = useQuery<Relation[]>({
+    queryKey: ['relations'],
+    queryFn: api.relations.list,
+    staleTime: 30_000,
+  })
+
+  const byId = useMemo(() => new Map(persons.map(p => [p.id, p])), [persons])
+
+  const maps = useMemo(() => {
+    const parentsOf = new Map<number, number[]>()
+    const childrenOf = new Map<number, number[]>()
+    const siblingOf = new Map<number, number[]>()
+
+    function push(m: Map<number, number[]>, k: number, v: number) {
+      if (!m.has(k)) m.set(k, [])
+      if (!m.get(k)!.includes(v)) m.get(k)!.push(v)
+    }
+
+    for (const r of relations) {
+      if (r.type === 'parent') {
+        push(childrenOf, r.person_a_id, r.person_b_id)
+        push(parentsOf, r.person_b_id, r.person_a_id)
+      } else if (r.type === 'sibling') {
+        push(siblingOf, r.person_a_id, r.person_b_id)
+        push(siblingOf, r.person_b_id, r.person_a_id)
+      }
+    }
+    return { parentsOf, childrenOf, siblingOf }
+  }, [relations])
+
+  const relatives = useMemo(() => {
+    const { parentsOf, childrenOf, siblingOf } = maps
+    const parentIds = parentsOf.get(personId) ?? []
+    const childIds  = childrenOf.get(personId) ?? []
+
+    const siblingIds = new Set<number>()
+    for (const pid of parentIds) {
+      for (const cid of childrenOf.get(pid) ?? []) {
+        if (cid !== personId) siblingIds.add(cid)
+      }
+    }
+    for (const sid of siblingOf.get(personId) ?? []) siblingIds.add(sid)
+
+    const grandparentIds = new Set<number>()
+    for (const pid of parentIds) {
+      for (const gpid of parentsOf.get(pid) ?? []) grandparentIds.add(gpid)
+    }
+
+    const cousinIds = new Set<number>()
+    for (const pid of parentIds) {
+      const auntUncleIds = new Set<number>()
+      for (const gpid of parentsOf.get(pid) ?? []) {
+        for (const uid of childrenOf.get(gpid) ?? []) {
+          if (uid !== pid) auntUncleIds.add(uid)
+        }
+      }
+      for (const uid of siblingOf.get(pid) ?? []) auntUncleIds.add(uid)
+      for (const uid of auntUncleIds) {
+        for (const cid of childrenOf.get(uid) ?? []) cousinIds.add(cid)
+      }
+    }
+
+    const grandchildIds = new Set<number>()
+    for (const cid of childIds) {
+      for (const gcid of childrenOf.get(cid) ?? []) grandchildIds.add(gcid)
+    }
+
+    function resolve(ids: Iterable<number>): PersonFull[] {
+      return [...ids].map(id => byId.get(id)).filter((p): p is PersonFull => p != null)
+    }
+
+    return {
+      parents:      resolve(parentIds),
+      siblings:     resolve(siblingIds),
+      children:     resolve(childIds),
+      grandparents: resolve(grandparentIds),
+      cousins:      resolve(cousinIds),
+      grandchildren: resolve(grandchildIds),
+    }
+  }, [maps, personId, byId])
+
+  if (personsLoading || relsLoading) {
+    return <p className="text-center text-zinc-600 py-10 text-sm">Betöltés…</p>
+  }
+
+  const sections = [
+    { label: 'Szülők',          persons: relatives.parents },
+    { label: 'Testvérek',       persons: relatives.siblings },
+    { label: 'Gyerekek',        persons: relatives.children },
+    { label: 'Nagyszülők',      persons: relatives.grandparents },
+    { label: 'Unokatestvérek',  persons: relatives.cousins },
+    { label: 'Unokák',          persons: relatives.grandchildren },
+  ]
+
+  const hasAny = sections.some(s => s.persons.length > 0)
+  if (!hasAny) {
+    return (
+      <div className="py-12 text-center space-y-1">
+        <p className="text-zinc-500 text-sm">Nem találhatók hozzátartozók.</p>
+        <p className="text-zinc-600 text-xs">Adj hozzá kapcsolatokat a Genealogy fülön.</p>
+      </div>
+    )
+  }
+
+  function navigateTo(person: PersonFull) {
+    if (!onOpenCluster || !person.clusters.length) return undefined
+    const cluster = allClusters.find(c => c.id === person.clusters[0].id)
+    if (!cluster) return undefined
+    return () => onOpenCluster(cluster)
+  }
+
+  return (
+    <div className="space-y-5 py-2">
+      {sections.map(({ label, persons }) => {
+        if (!persons.length) return null
+        return (
+          <div key={label}>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 px-3 pb-1">
+              {label}
+            </p>
+            <div>
+              {persons.map(p => (
+                <RelativeRow key={p.id} person={p} onNavigate={navigateTo(p)} />
+              ))}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

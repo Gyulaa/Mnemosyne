@@ -32,6 +32,7 @@ def build_export_db(
     dest_db_path: Path,
     cluster_ids: list[int] | None,
     include_genealogy: bool = True,
+    person_ids: list[int] | None = None,
 ) -> dict[int, tuple[str, str]]:
     """
     Copy source DB to dest, optionally filter to specific cluster IDs, rewrite image
@@ -44,30 +45,70 @@ def build_export_db(
         conn.execute("PRAGMA journal_mode=DELETE")
         conn.execute("PRAGMA foreign_keys=ON")
 
-        if cluster_ids is not None and len(cluster_ids) > 0:
+        if person_ids is not None and len(person_ids) > 0:
+            pids_str = ",".join(str(x) for x in person_ids)
+
+            # Derive cluster IDs linked to these persons.
+            family_cluster_ids = [
+                r[0] for r in conn.execute(
+                    f"SELECT id FROM clusters WHERE person_id IN ({pids_str}) AND label != -1"
+                ).fetchall()
+            ]
+
+            if family_cluster_ids:
+                cids_str = ",".join(str(x) for x in family_cluster_ids)
+                keep_images = f"SELECT DISTINCT image_id FROM faces WHERE cluster_id IN ({cids_str})"
+                conn.execute(f"DELETE FROM faces WHERE image_id NOT IN ({keep_images})")
+                conn.execute(f"DELETE FROM images WHERE id NOT IN ({keep_images})")
+
+                noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
+                if not noise_row:
+                    conn.execute("INSERT INTO clusters (label, person_id) VALUES (-1, NULL)")
+                    noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
+                noise_id = noise_row[0]
+
+                conn.execute(f"""
+                    UPDATE faces
+                    SET cluster_id = {noise_id},
+                        manually_assigned = 0
+                    WHERE cluster_id NOT IN (
+                        SELECT id FROM clusters WHERE id IN ({cids_str}) OR label = -1
+                    )
+                """)
+                conn.execute(f"DELETE FROM clusters WHERE id NOT IN ({cids_str}) AND label != -1")
+            else:
+                # No linked clusters — no images to include.
+                conn.execute("DELETE FROM faces")
+                conn.execute("DELETE FROM images")
+                conn.execute("DELETE FROM clusters WHERE label != -1")
+
+            # Filter persons and relations to the selected family group.
+            conn.execute(f"""
+                DELETE FROM relations
+                WHERE person_a_id NOT IN ({pids_str})
+                   OR person_b_id NOT IN ({pids_str})
+            """)
+            conn.execute(f"DELETE FROM persons WHERE id NOT IN ({pids_str})")
+            conn.commit()
+
+        elif cluster_ids is not None and len(cluster_ids) > 0:
             ids_str = ",".join(str(x) for x in cluster_ids)
             keep_images = f"SELECT DISTINCT image_id FROM faces WHERE cluster_id IN ({ids_str})"
 
-            # FK order matters: faces reference images, so faces must be deleted first.
-
-            # 1. Delete faces on images that have no face from selected clusters
-            #    (required before deleting those images to satisfy faces→images FK).
+            # 1. Faces reference images — delete faces first to satisfy FK.
             conn.execute(f"DELETE FROM faces WHERE image_id NOT IN ({keep_images})")
-
-            # 2. Now safely delete images with no selected-cluster face.
+            # 2. Delete images that have no face from selected clusters.
             conn.execute(f"DELETE FROM images WHERE id NOT IN ({keep_images})")
 
-            # 3. Ensure noise cluster exists — we'll move unselected faces into it
-            #    so their embeddings survive for re-clustering in the new collection.
+            # 3. Ensure noise cluster exists — unselected faces move here so
+            #    their embeddings survive for re-clustering in the new collection.
             noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
             if not noise_row:
                 conn.execute("INSERT INTO clusters (label, person_id) VALUES (-1, NULL)")
                 noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
             noise_id = noise_row[0]
 
-            # 4. Move faces from unselected named clusters to noise.
-            #    Do NOT delete them — preserving the embeddings lets the user
-            #    re-cluster the imported collection and discover those persons.
+            # 4. Move (not delete) faces from unselected named clusters to noise.
             conn.execute(f"""
                 UPDATE faces
                 SET cluster_id = {noise_id},
@@ -77,27 +118,37 @@ def build_export_db(
                 )
             """)
 
-            # 5. Delete unselected named clusters (their faces are now in noise).
+            # 5. Delete unselected named clusters (faces are now in noise).
             conn.execute(f"DELETE FROM clusters WHERE id NOT IN ({ids_str}) AND label != -1")
 
-            # 5. Remove persons no longer linked to any remaining cluster.
-            conn.execute("""
-                DELETE FROM persons
-                WHERE id NOT IN (
-                    SELECT person_id FROM clusters WHERE person_id IS NOT NULL
-                )
-            """)
-
-            # 6. Remove relations whose persons were just deleted.
-            conn.execute("""
-                DELETE FROM relations
-                WHERE person_a_id NOT IN (SELECT id FROM persons)
-                   OR person_b_id NOT IN (SELECT id FROM persons)
-            """)
+            if include_genealogy:
+                # Keep only persons linked to the remaining (selected) clusters.
+                # Relations must be deleted first (they reference persons via FK).
+                conn.execute("""
+                    DELETE FROM relations
+                    WHERE person_a_id NOT IN (
+                        SELECT person_id FROM clusters WHERE person_id IS NOT NULL)
+                       OR person_b_id NOT IN (
+                        SELECT person_id FROM clusters WHERE person_id IS NOT NULL)
+                """)
+                conn.execute("""
+                    DELETE FROM persons
+                    WHERE id NOT IN (
+                        SELECT person_id FROM clusters WHERE person_id IS NOT NULL
+                    )
+                """)
+            else:
+                # clusters.person_id references persons, so unlink before deleting.
+                conn.execute("DELETE FROM relations")
+                conn.execute("UPDATE clusters SET person_id = NULL")
+                conn.execute("DELETE FROM persons")
             conn.commit()
 
-        if not include_genealogy:
+        elif not include_genealogy:
+            # Full-project export without genealogy.
             conn.execute("DELETE FROM relations")
+            conn.execute("UPDATE clusters SET person_id = NULL")
+            conn.execute("DELETE FROM persons")
             conn.commit()
 
         rows = conn.execute("SELECT id, path FROM images").fetchall()
@@ -121,6 +172,7 @@ def create_project_zip(
     project_info: dict,
     cluster_ids: list[int] | None,
     include_genealogy: bool = True,
+    person_ids: list[int] | None = None,
 ) -> io.BytesIO:
     """Build a self-contained project ZIP (DB + images) and return it as a BytesIO."""
     import tempfile
@@ -131,7 +183,7 @@ def create_project_zip(
     # OS clean the temp dir later is safe since the data is already in `buf`.
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         tmp_db = Path(tmpdir) / "project.db"
-        path_map = build_export_db(source_db_path, tmp_db, cluster_ids, include_genealogy)
+        path_map = build_export_db(source_db_path, tmp_db, cluster_ids, include_genealogy, person_ids)
 
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
             zf.writestr(

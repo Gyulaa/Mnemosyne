@@ -8,18 +8,22 @@ export type ExportSettings = {
 type Props = {
   defaultName: string
   clusterCount?: number
+  subtitle?: string
+  hideGenealogyOption?: boolean
   onExport: (settings: ExportSettings) => void
   onClose: () => void
 }
 
-export default function ExportModal({ defaultName, clusterCount, onExport, onClose }: Props) {
+export default function ExportModal({ defaultName, clusterCount, subtitle, hideGenealogyOption, onExport, onClose }: Props) {
   const [name, setName] = useState(defaultName)
   const [includeGenealogy, setIncludeGenealogy] = useState(true)
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    onExport({ name: name.trim() || defaultName, includeGenealogy })
+    onExport({ name: name.trim() || defaultName, includeGenealogy: hideGenealogyOption ? true : includeGenealogy })
   }
+
+  const subtitleText = subtitle ?? (clusterCount != null ? `${clusterCount} cluster${clusterCount !== 1 ? 's' : ''} selected` : null)
 
   return (
     <div
@@ -32,8 +36,8 @@ export default function ExportModal({ defaultName, clusterCount, onExport, onClo
         onClick={e => e.stopPropagation()}
       >
         <h2 className="text-sm font-semibold text-zinc-100 mb-1">Export settings</h2>
-        {clusterCount != null && (
-          <p className="text-xs text-zinc-500 mb-4">{clusterCount} cluster{clusterCount !== 1 ? 's' : ''} selected</p>
+        {subtitleText && (
+          <p className="text-xs text-zinc-500 mb-4">{subtitleText}</p>
         )}
 
         <div className="space-y-4 mt-4">
@@ -46,18 +50,20 @@ export default function ExportModal({ defaultName, clusterCount, onExport, onClo
             />
           </div>
 
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={includeGenealogy}
-              onChange={e => setIncludeGenealogy(e.target.checked)}
-              className="mt-0.5 w-4 h-4 accent-brand-500 shrink-0"
-            />
-            <div>
-              <p className="text-sm text-zinc-200">Include genealogy data</p>
-              <p className="text-xs text-zinc-500">Family tree relationships between persons</p>
-            </div>
-          </label>
+          {!hideGenealogyOption && (
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeGenealogy}
+                onChange={e => setIncludeGenealogy(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-brand-500 shrink-0"
+              />
+              <div>
+                <p className="text-sm text-zinc-200">Include genealogy data</p>
+                <p className="text-xs text-zinc-500">Family tree relationships between persons</p>
+              </div>
+            </label>
+          )}
         </div>
 
         <div className="flex gap-3 mt-6">
