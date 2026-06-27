@@ -46,6 +46,8 @@ export const api = {
       ),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/clusters/${id}`, { method: 'DELETE' }),
+    batchDelete: (ids: number[]) =>
+      post<{ ok: boolean; count: number }>(`${BASE}/clusters/batch-delete`, { cluster_ids: ids }),
     create: (faceIds?: number[], personName?: string) =>
       post<{ ok: boolean; cluster_id: number; label: number; person_id: number | null; person_name: string | null }>(
         `${BASE}/clusters`,
@@ -94,9 +96,11 @@ export const api = {
     rename:   (id: string, name: string) => patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { name }),
     delete:   (id: string) =>
       fetchJson<{ ok: boolean }>(`${BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    exportZip: async (clusterIds?: number[]): Promise<Blob> => {
+    exportZip: async (clusterIds?: number[], name?: string, includeGenealogy = true): Promise<Blob> => {
       const p = new URLSearchParams()
       if (clusterIds?.length) p.set('cluster_ids', clusterIds.join(','))
+      if (name) p.set('name', name)
+      if (!includeGenealogy) p.set('include_genealogy', 'false')
       const res = await fetch(`${BASE}/projects/export?${p}`)
       if (!res.ok) throw new Error(await res.text())
       return res.blob()

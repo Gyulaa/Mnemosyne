@@ -12,11 +12,11 @@ import numpy as np
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import update as sql_update, func, nullslast
+from sqlalchemy import update as sql_update, func, nullslast, text
 from sqlalchemy.orm import Session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
-from .project_manager import project_manager, PROJECTS_DIR
+from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
 from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation
 from . import scanner as scanner_mod
 from . import clusterer
@@ -33,7 +33,7 @@ app = FastAPI(title="Photo Organizer API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -41,6 +41,20 @@ app.add_middleware(
 
 def get_db():
     yield from project_manager.get_db()
+
+
+def _purge_empty_named_clusters(db: Session) -> None:
+    """Delete named clusters (label >= 0) with no remaining faces.
+    Persons linked via person_id are intentionally left intact so they stay
+    visible in the genealogy and can be re-linked to a new cluster later."""
+    db.execute(text("""
+        DELETE FROM clusters
+        WHERE label >= 0
+          AND id NOT IN (
+              SELECT DISTINCT cluster_id FROM faces WHERE cluster_id IS NOT NULL
+          )
+    """))
+    db.commit()
 
 
 # ── Projects ──────────────────────────────────────────────────────────────────
@@ -93,17 +107,17 @@ def rename_project(project_id: str, body: dict):
 @app.delete("/api/projects/{project_id}")
 def delete_project(project_id: str):
     try:
-        project_manager.delete_project(project_id)
-    except ValueError as e:
-        raise HTTPException(409, str(e))
+        new_active = project_manager.delete_project(project_id)
     except FileNotFoundError:
         raise HTTPException(404, "Project not found")
-    return {"ok": True}
+    return {"ok": True, "new_active": new_active}
 
 
 @app.get("/api/projects/export")
 def export_project(
     cluster_ids: str = Query(default=""),
+    name: str = Query(default=""),
+    include_genealogy: bool = Query(default=True),
 ):
     """Download the active project as a self-contained ZIP (DB + images)."""
     project_id = project_manager.active_id
@@ -112,13 +126,16 @@ def export_project(
 
     project_dir = PROJECTS_DIR / project_id
     source_db = project_dir / "photo_organizer.db"
-    project_info = json.loads((project_dir / "project.json").read_text())
+    project_info = _read_project_json(project_dir / "project.json")
+
+    if name.strip():
+        project_info = {**project_info, "name": name.strip()}
 
     parsed_cluster_ids: list[int] | None = None
     if cluster_ids.strip():
         parsed_cluster_ids = [int(x) for x in cluster_ids.split(",") if x.strip().isdigit()]
 
-    buf = export_utils.create_project_zip(source_db, project_info, parsed_cluster_ids)
+    buf = export_utils.create_project_zip(source_db, project_info, parsed_cluster_ids, include_genealogy)
     raw_name = project_info.get('name', 'project')
     ascii_name = unicodedata.normalize("NFD", raw_name).encode("ascii", "ignore").decode("ascii")
     filename = f"{ascii_name.replace(' ', '_') or 'project'}_export.zip"
@@ -391,6 +408,7 @@ def bulk_delete_images(body: dict, db: Session = Depends(get_db)):
     for img in images:
         db.delete(img)
     db.commit()
+    _purge_empty_named_clusters(db)
     return {"ok": True, "count": count}
 
 
@@ -401,6 +419,7 @@ def delete_image(image_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Image not found")
     db.delete(img)
     db.commit()
+    _purge_empty_named_clusters(db)
     return {"ok": True}
 
 
@@ -595,6 +614,47 @@ def delete_cluster(cluster_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@app.post("/api/clusters/batch-delete")
+def batch_delete_clusters(body: dict, db: Session = Depends(get_db)):
+    """Delete multiple named clusters. Faces are moved to the noise cluster; persons are preserved."""
+    cluster_ids: list[int] = body.get("cluster_ids", [])
+    if not cluster_ids:
+        return {"ok": True, "count": 0}
+
+    clusters = db.query(DBCluster).filter(
+        DBCluster.id.in_(cluster_ids),
+        DBCluster.label != -1,
+    ).all()
+
+    if not clusters:
+        return {"ok": True, "count": 0}
+
+    # Ensure noise cluster exists before moving faces
+    has_faced = any(db.query(DBFace).filter(DBFace.cluster_id == c.id).first() for c in clusters)
+    noise = None
+    if has_faced:
+        noise = db.query(DBCluster).filter(DBCluster.label == -1).first()
+        if not noise:
+            noise = DBCluster(label=-1)
+            db.add(noise)
+            db.flush()
+
+    for cluster in clusters:
+        if noise:
+            db.execute(
+                sql_update(DBFace)
+                .where(DBFace.cluster_id == cluster.id)
+                .values(cluster_id=noise.id)
+            )
+            db.flush()
+        cluster.person_id = None
+        db.flush()
+        db.delete(cluster)
+
+    db.commit()
+    return {"ok": True, "count": len(clusters)}
+
+
 @app.post("/api/clusters")
 def create_cluster(req: CreateClusterRequest, db: Session = Depends(get_db)):
     max_label = db.query(func.max(DBCluster.label)).scalar() or -1
@@ -698,6 +758,7 @@ def assign_face(face_id: int, req: FaceAssignRequest, db: Session = Depends(get_
     face.cluster_id = req.cluster_id
     face.manually_assigned = True
     db.commit()
+    _purge_empty_named_clusters(db)
     return {"ok": True}
 
 
@@ -714,6 +775,7 @@ def batch_assign_faces(req: BatchFaceAssignRequest, db: Session = Depends(get_db
         .values(cluster_id=req.cluster_id, manually_assigned=True)
     )
     db.commit()
+    _purge_empty_named_clusters(db)
     return {"ok": True, "count": len(req.face_ids)}
 
 
@@ -734,6 +796,7 @@ def batch_unclassify_faces(body: dict, db: Session = Depends(get_db)):
         .values(cluster_id=noise.id, manually_assigned=False)
     )
     db.commit()
+    _purge_empty_named_clusters(db)
     return {"ok": True, "count": len(face_ids)}
 
 
@@ -813,6 +876,7 @@ def split_cluster(
         new_clusters_info.append({"cluster_id": new_c.id, "face_count": len(sub_ids)})
 
     db.commit()
+    _purge_empty_named_clusters(db)
     return {
         "ok": True,
         "sub_clusters": len(sorted_labels),
@@ -1196,9 +1260,11 @@ if _dist.exists():
     if _assets.exists():
         app.mount('/assets', StaticFiles(directory=str(_assets)), name='assets')
 
+    _dist_resolved = _dist.resolve()
+
     @app.get('/{full_path:path}', include_in_schema=False)
     async def _spa_fallback(full_path: str):
-        candidate = _dist / full_path
-        if candidate.exists() and candidate.is_file():
+        candidate = (_dist / full_path).resolve()
+        if candidate.is_relative_to(_dist_resolved) and candidate.is_file():
             return FileResponse(str(candidate))
         return FileResponse(str(_dist / 'index.html'))

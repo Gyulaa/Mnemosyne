@@ -25,6 +25,17 @@ def _make_id(name: str) -> str:
     return f"{slug}_{ts}"
 
 
+def _read_project_json(path: Path) -> dict:
+    """Read project.json, auto-migrating CP1252-encoded files to UTF-8."""
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1252")
+        path.write_text(json.dumps(json.loads(text), ensure_ascii=False), encoding="utf-8")
+    return json.loads(text)
+
+
 class ProjectManager:
     def __init__(self):
         self._engine = None
@@ -61,7 +72,7 @@ class ProjectManager:
             if p.exists():
                 p.unlink(missing_ok=True)
         info = {"id": project_id, "name": "Default", "created": datetime.now().isoformat()}
-        (project_dir / "project.json").write_text(json.dumps(info, ensure_ascii=False))
+        (project_dir / "project.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
         self._write_config(project_id)
 
     # ── internal helpers ───────────────────────────────────────────────────────
@@ -83,19 +94,19 @@ class ProjectManager:
         project_dir = PROJECTS_DIR / project_id
         project_dir.mkdir(parents=True, exist_ok=True)
         info = {"id": project_id, "name": name.strip(), "created": datetime.now().isoformat()}
-        (project_dir / "project.json").write_text(json.dumps(info, ensure_ascii=False))
+        (project_dir / "project.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
         return info
 
     def _read_config(self) -> dict:
         if CONFIG_FILE.exists():
             try:
-                return json.loads(CONFIG_FILE.read_text())
+                return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
             except Exception:
                 pass
         return {}
 
     def _write_config(self, active_id: str):
-        CONFIG_FILE.write_text(json.dumps({"active_project": active_id}))
+        CONFIG_FILE.write_text(json.dumps({"active_project": active_id}), encoding="utf-8")
 
     # ── public API ─────────────────────────────────────────────────────────────
 
@@ -111,7 +122,7 @@ class ProjectManager:
             pj = d / "project.json"
             if d.is_dir() and pj.exists():
                 try:
-                    info = json.loads(pj.read_text())
+                    info = _read_project_json(pj)
                     info["is_active"] = d.name == self._active_id
                     result.append(info)
                 except Exception:
@@ -124,26 +135,56 @@ class ProjectManager:
             raise FileNotFoundError(f"Project not found: {project_id}")
         self._write_config(project_id)
         self._activate(project_id)
-        info = json.loads((project_dir / "project.json").read_text())
+        info = _read_project_json(project_dir / "project.json")
         info["is_active"] = True
         return info
 
-    def delete_project(self, project_id: str):
-        if project_id == self._active_id:
-            raise ValueError("Cannot delete the active project")
+    def delete_project(self, project_id: str) -> dict | None:
+        """Delete a project. If active, switches to another (creates Default if none left).
+        Returns new active project info when the active project was deleted, else None."""
         project_dir = PROJECTS_DIR / project_id
         if not project_dir.exists():
             raise FileNotFoundError(f"Project not found: {project_id}")
+
+        was_active = project_id == self._active_id
+
+        # Release all SQLAlchemy pooled connections before deleting files.
+        # On Windows, open file handles prevent shutil.rmtree from succeeding.
+        if was_active and self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
+            self._SessionLocal = None
+            self._active_id = None
+
         shutil.rmtree(str(project_dir))
+
+        if not was_active:
+            return None
+
+        others = [
+            d for d in sorted(PROJECTS_DIR.iterdir())
+            if d.is_dir() and (d / "project.json").exists()
+        ]
+        if others:
+            new_id = others[0].name
+        else:
+            new_info = self._create_project_internal("Default")
+            new_id = new_info["id"]
+
+        self._write_config(new_id)
+        self._activate(new_id)
+        info = _read_project_json(PROJECTS_DIR / new_id / "project.json")
+        info["is_active"] = True
+        return info
 
     def rename_project(self, project_id: str, new_name: str) -> dict:
         project_dir = PROJECTS_DIR / project_id
         if not project_dir.exists():
             raise FileNotFoundError(f"Project not found: {project_id}")
         pj = project_dir / "project.json"
-        info = json.loads(pj.read_text())
+        info = _read_project_json(pj)
         info["name"] = new_name.strip()
-        pj.write_text(json.dumps(info, ensure_ascii=False))
+        pj.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
         info["is_active"] = project_id == self._active_id
         return info
 

@@ -1,62 +1,80 @@
 # Mnemosyne
 
-Arcfelismerésen alapuló, személyes fotórendező alkalmazás. Beolvassa a képtáradat,
-automatikusan detektálja és klaszterezi az arcokat, te pedig neveket rendelhetsz a
-személyekhez — az összes adat megmarad az újraklaszterezések között.
+A personal photo organizer powered by face recognition. It scans your photo library,
+automatically detects and clusters faces, and lets you assign names to people —
+all data persists across re-clustering runs.
 
-## Funkciók
+## Features
 
 ### Scan
-- Arcdetektálás és ArcFace embedding (insightface `buffalo_l` modell)
-- DBSCAN klaszterezés, centroid-alapú személyfelismeréssel
-- HEIC/HEIF támogatás (iPhone fotók)
-- Folytatható szkennelés — megszakítás után onnan folytatja, ahol abbahagyta
-- EXIF metaadat kiolvasás (dátum, kamera, felbontás)
+- Face detection and ArcFace embedding (insightface `buffalo_l` model)
+- DBSCAN clustering with centroid-based person recognition
+- HEIC/HEIF support (iPhone photos)
+- Resumable scanning — picks up where it left off after interruption
+- EXIF metadata extraction (date, camera, resolution)
 
 ### Clusters
-- Clusterek elnevezése, összevonása, törlése
-- Ismeretlen arcok hozzárendelése meglévő vagy új clusterhez (hasonlósági javaslatok alapján)
-- Cluster összekötése genealógiában szereplő személlyel
-- A 4 legfrissebb fotó előnézete minden clusternél (EXIF dátum szerint)
-- Fotók és arcok időrendben, legújabb elöl
+- Rename, merge, and delete clusters
+- Assign unknown faces to existing or new clusters (with similarity suggestions)
+- Link a cluster to a person in the genealogy
+- Preview of the 4 most recent photos per cluster (sorted by EXIF date)
+- Photos and faces in reverse chronological order
+- Select multiple clusters and batch-delete them
+- Empty clusters (zero faces) are automatically removed after re-clustering and face assignment (the linked person is preserved in the genealogy)
+- Sticky filter/search toolbar — stays visible while scrolling
+- Export selected clusters to a ZIP archive (see below)
 
 ### Connections
-- Személyek közötti kapcsolatok erőssége két metrikával:
-  - **Közös fotók**: hány képen szerepel egyszerre a két személy
-  - **Súlyozott**: kis csoportos képek erősebb jelet adnak (`Σ 1/n`)
-- Force-directed gráf nézet (interaktív: zoom, pan, drag)
-- Rangsor nézet: a legerősebb kapcsolatok listája sorrendben
-- Szűrés személyekre, minimális közös fotó küszöb állítható
-- Gráf csomópontokra és rangsor sorokra kattintva az adott cluster oldalára navigál
-- Kapcsolat vonalra kattintva az Images fülön megnyílik a két személy közös fotóinak szűrése
+- Connection strength between people shown with two metrics:
+  - **Shared photos**: how many images two people appear in together
+  - **Weighted**: small group photos carry more weight (`Σ 1/n`)
+- Force-directed graph view (interactive: zoom, pan, drag)
+- Ranked list view: strongest connections sorted in order
+- Filter by person, adjustable minimum shared-photo threshold
+- Click a graph node or ranked row to navigate to that cluster's page
+- Click a connection line to filter the Images tab to the two people's shared photos
 
 ### Images
-- Képek böngészése lista és rács nézetben
-- Szűrés státusz, személyek és fájlnév alapján
-- AND/OR szűrési mód több személyre
-- Előnézeti modalban az arcok alatt kattintható személycipők → az adott cluster oldalára navigál
-- Képek törlése az adatbázisból (a forrásfájl érintetlen marad)
+- Browse photos in list and grid view
+- Filter by status, people, and filename
+- AND/OR filter mode for multiple people
+- Clickable person badges under faces in the preview modal → navigates to that cluster
+- Delete images from the database (source files are never touched)
 
 ### Genealogy
-- Interaktív családfa szerkesztő
-- Személyek hozzáadása, szerkesztése, törlése
-- Kapcsolatok: szülő–gyerek, házastárs, testvér
-- Sugiyama-algoritmus alapú elrendezés (vonalkeresztezések minimalizálása)
-- Zoom, pan, „Reset view" gomb
-- Cluster hozzárendelés a személyekhez (1 személy = 1 cluster)
+- Interactive family tree editor
+- Add, edit, and delete people
+- Relationship types: parent–child, spouse, sibling
+- Reingold-Tilford layout with Ahnentafel ancestor positioning, proband-centric view
+- Ancestor depth and cousin-degree sliders (control how many generations and lateral relatives are shown)
+- Zoom, pan, Reset View button
+- Link clusters to people (1 person = 1 cluster)
 
-## Előfeltételek
+### Projects and Export
+- Create, rename, and delete collections — including the currently active one
+- **Export ZIP**: export the active collection — or only selected clusters — into a single ZIP (database + images); optionally without genealogy data
+- **Import ZIP**: load a previously exported collection as a new project; image paths are rewritten automatically
+- Custom collection name can be set at export time
 
-| Eszköz | Minimális verzió |
-|--------|-----------------|
-| Python | 3.11+ |
-| Node.js | 18+ |
+## Security
 
-> **Windows:** az `insightface` fordításához szükség lehet a
+- The server binds **exclusively to `127.0.0.1`** (localhost) — it is not reachable from the local network, Wi-Fi, or the internet
+- CORS is restricted to `http://localhost` and `http://127.0.0.1` origins only
+- Imported ZIP archives are path-validated (protection against Zip Slip attacks)
+- The application **never sends any data** to any external server; it works entirely offline
+
+## Prerequisites
+
+| Tool    | Minimum version |
+|---------|----------------|
+| Python  | 3.11+          |
+| Node.js | 18+            |
+
+> **Windows:** building `insightface` may require the
 > [Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-> telepítésére (a „Desktop development with C++" munkaterhelés).
+> ("Desktop development with C++" workload).
 
-## Telepítés
+## Installation
 
 ```bash
 git clone <repo-url>
@@ -68,7 +86,7 @@ cd Image-Organizer
 ```bash
 python -m venv .venv
 
-# Aktiválás
+# Activate
 .venv\Scripts\activate          # Windows
 source .venv/bin/activate       # macOS / Linux
 
@@ -83,7 +101,7 @@ npm install
 cd ..
 ```
 
-## Indítás
+## Running
 
 **Terminal 1 — backend:**
 ```bash
@@ -99,46 +117,47 @@ cd frontend
 npm run dev
 ```
 
-Ezután nyisd meg: **http://localhost:5173**
+Then open: **http://localhost:5173**
 
-## Első futtatás
+## First run
 
-1. A **Scan** fülön válaszd ki a fotókat tartalmazó mappát
-2. Kattints a **Start scan** gombra — az első futáskor az insightface letölti a `buffalo_l` modellt (~300 MB, egyszeri)
-3. Szkennelés után kattints a **Run clustering** gombra
-4. A **Clusters** fülön nevezd el a személyeket
-5. A **Genealogy** fülön építsd fel a családfát, és kösd össze a személyeket a clusterekkel
+1. On the **Scan** tab, select the folder containing your photos
+2. Click **Start scan** — on the first run, insightface downloads the `buffalo_l` model (~300 MB, one-time only)
+3. After scanning, click **Run clustering**
+4. On the **Clusters** tab, name the people
+5. On the **Genealogy** tab, build the family tree and link people to their clusters
 
-> A forrás fotóidat az alkalmazás **soha nem módosítja** — csak olvassa őket.
+> The application **never modifies** your source photos — it only reads them.
 
-## Projektek és adatbázis
+## Projects and database
 
-Minden munkafolyamathoz külön projekt hozható létre. Az alkalmazás fejlécében lévő
-projektváltóval lehet projektet váltani, újat létrehozni vagy törölni.
+A separate project can be created for each workflow. Use the project switcher in the
+header to switch between projects, create new ones, or delete existing ones.
 
-Minden projekt egy önálló könyvtárban él (`projects/<id>/`), saját SQLite adatbázissal.
-A sémaverzió az adatbázisban tárolódik (`schema_version` tábla), ezért jövőbeli frissítések
-automatikusan migrálják a meglévő adatokat.
+Each project lives in its own directory (`projects/<id>/`) with its own SQLite database.
+The schema version is stored in the database (`schema_version` table), so future updates
+migrate existing data automatically.
 
-Az adatbázis fájlok (`*.db`) és a `config.json` **nincsenek** a git repositoryban.
+Database files (`*.db`) and `config.json` are **not** tracked by git.
 
-## Projekt struktúra
+## Project structure
 
 ```
 Image-Organizer/
 ├── backend/
-│   ├── main.py              # FastAPI app, REST API végpontok
-│   ├── scanner.py           # Háttérben futó, folytatható fájlszkenner
-│   ├── clusterer.py         # DBSCAN + centroid-alapú klaszterezés
-│   ├── database.py          # SQLAlchemy modellek, SQLite, séma-migráció
-│   ├── project_manager.py   # Multi-projekt kezelés
-│   ├── image_utils.py       # Képbetöltés, HEIC-konverzió, thumbnail-vágás
-│   └── schemas.py           # Pydantic request/response modellek
+│   ├── main.py              # FastAPI app, REST API endpoints
+│   ├── scanner.py           # Background, resumable file scanner
+│   ├── clusterer.py         # DBSCAN + centroid-based clustering
+│   ├── database.py          # SQLAlchemy models, SQLite, schema migration
+│   ├── project_manager.py   # Multi-project management
+│   ├── export_utils.py      # ZIP export/import logic
+│   ├── image_utils.py       # Image loading, HEIC conversion, thumbnail cropping
+│   └── schemas.py           # Pydantic request/response models
 ├── frontend/
 │   └── src/
-│       ├── App.tsx           # Tab-navigáció, cross-tab navigációs logika
-│       ├── api.ts            # Összes API-hívás egy helyen
-│       ├── types.ts          # TypeScript interfészek
+│       ├── App.tsx           # Tab navigation, cross-tab navigation logic
+│       ├── api.ts            # All API calls in one place
+│       ├── types.ts          # TypeScript interfaces
 │       └── components/
 │           ├── ScanTab.tsx
 │           ├── ClustersTab.tsx
@@ -147,11 +166,13 @@ Image-Organizer/
 │           ├── FamilyTreeTab.tsx
 │           ├── TreeView.tsx
 │           ├── PersonPanel.tsx
-│           └── ProjectSwitcher.tsx
+│           ├── ProjectSwitcher.tsx
+│           ├── ExportModal.tsx
+│           └── FolderPicker.tsx
 ├── requirements.txt
-├── config.json              # ← gitignore-ban (aktív projekt neve)
-└── projects/                # ← gitignore-ban (adatbázisok, user-adat)
+├── config.json              # ← gitignored (active project name)
+└── projects/                # ← gitignored (databases, user data)
     └── <project-id>/
         ├── project.json
-        └── mnemosyne.db
+        └── photo_organizer.db
 ```

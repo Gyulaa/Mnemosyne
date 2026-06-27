@@ -45,7 +45,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden">
-        <header className="shrink-0 bg-zinc-900 border-b border-zinc-800 px-6 py-3 z-10">
+        <header className="shrink-0 bg-zinc-900 border-b border-zinc-800 px-6 py-3 z-40 relative">
           <div className="max-w-6xl mx-auto flex items-center gap-6">
             <div className="flex items-center gap-2">
               <img

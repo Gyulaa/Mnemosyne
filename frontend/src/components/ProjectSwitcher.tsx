@@ -1,6 +1,7 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
+import ExportModal from './ExportModal'
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -18,6 +19,7 @@ export default function ProjectSwitcher() {
   const [renameVal, setRenameVal] = useState('')
   const [exporting, setExporting] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [showExportModal, setShowExportModal] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -45,8 +47,7 @@ export default function ProjectSwitcher() {
     mutationFn: (id: string) => api.project.activate(id),
     onSuccess: () => {
       setOpen(false)
-      // Clear ALL cached data — switching collection is a completely fresh slate
-      qc.clear()
+      qc.invalidateQueries()
     },
   })
 
@@ -56,7 +57,7 @@ export default function ProjectSwitcher() {
       setCreating(false)
       setNewName('')
       setOpen(false)
-      qc.clear()
+      qc.invalidateQueries()
     },
   })
 
@@ -70,16 +71,18 @@ export default function ProjectSwitcher() {
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => api.project.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+    onSuccess: () => qc.invalidateQueries(),
+    onError: (e) => alert(`Delete failed: ${e}`),
   })
 
-  async function handleExport() {
+  async function handleExport({ name, includeGenealogy }: { name: string; includeGenealogy: boolean }) {
+    setShowExportModal(false)
     if (exporting) return
     setExporting(true)
     try {
-      const blob = await api.project.exportZip()
-      const name = active?.name?.replace(/\s+/g, '_') ?? 'project'
-      triggerDownload(blob, `${name}_export.zip`)
+      const blob = await api.project.exportZip(undefined, name, includeGenealogy)
+      const safeName = name.replace(/\s+/g, '_') || 'project'
+      triggerDownload(blob, `${safeName}_export.zip`)
     } catch (e) {
       alert(`Export failed: ${e}`)
     } finally {
@@ -94,7 +97,7 @@ export default function ProjectSwitcher() {
     try {
       await api.project.importZip(file)
       setOpen(false)
-      qc.clear()
+      qc.invalidateQueries()
     } catch (e) {
       alert(`Import failed: ${e}`)
     } finally {
@@ -135,6 +138,14 @@ export default function ProjectSwitcher() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
+
+      {showExportModal && (
+        <ExportModal
+          defaultName={active?.name ?? 'project'}
+          onExport={handleExport}
+          onClose={() => setShowExportModal(false)}
+        />
+      )}
 
       {open && (
         <div className="absolute right-0 top-full mt-1.5 w-72 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 overflow-hidden">
@@ -184,7 +195,7 @@ export default function ProjectSwitcher() {
                         <span className="shrink-0 text-xs text-brand-400 font-medium">active</span>
                       )}
                     </button>
-                    <div className="hidden group-hover:flex items-center gap-0.5">
+                    <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
                         onClick={() => startRename(p.id, p.name)}
                         title="Rename"
@@ -195,21 +206,21 @@ export default function ProjectSwitcher() {
                             d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
                         </svg>
                       </button>
-                      {!p.is_active && (
-                        <button
-                          onClick={() => {
-                            if (confirm(`Delete collection "${p.name}"? This cannot be undone.`))
-                              deleteMut.mutate(p.id)
-                          }}
-                          title="Delete"
-                          className="p-1 text-zinc-600 hover:text-red-400 transition-colors rounded"
-                        >
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0a2 2 0 012-2h4a2 2 0 012 2M4 7h16" />
-                          </svg>
-                        </button>
-                      )}
+                      <button
+                        onClick={() => {
+                          const msg = p.is_active
+                            ? `Delete active collection "${p.name}"? The app will switch to another collection. This cannot be undone.`
+                            : `Delete collection "${p.name}"? This cannot be undone.`
+                          if (confirm(msg)) deleteMut.mutate(p.id)
+                        }}
+                        title="Delete"
+                        className="p-1 text-zinc-600 hover:text-red-400 transition-colors rounded"
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0a2 2 0 012-2h4a2 2 0 012 2M4 7h16" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -254,7 +265,7 @@ export default function ProjectSwitcher() {
           <div className="border-t border-zinc-800 p-2 flex flex-col gap-1.5">
             <div className="flex gap-1">
               <button
-                onClick={handleExport}
+                onClick={() => setShowExportModal(true)}
                 disabled={exporting || importing}
                 title="Export active collection as ZIP (includes all images)"
                 className="flex-1 px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
@@ -271,7 +282,7 @@ export default function ProjectSwitcher() {
                 className="flex-1 px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4 4l4-4m0 0l4 4m-4-4V4" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 14V4m-4 4l4-4 4 4" />
                 </svg>
                 {importing ? 'Importing…' : 'Import'}
               </button>

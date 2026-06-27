@@ -1,3 +1,4 @@
+import gc
 import io
 import json
 import re
@@ -19,14 +20,18 @@ def _make_id(name: str) -> str:
 def _vacuum_copy(source: Path, dest: Path) -> None:
     """Create a clean, WAL-free copy of a SQLite DB using VACUUM INTO."""
     conn = sqlite3.connect(str(source))
-    conn.execute(f"VACUUM INTO '{str(dest)}'")
-    conn.close()
+    try:
+        conn.execute(f"VACUUM INTO '{str(dest)}'")
+    finally:
+        conn.close()
+        gc.collect()
 
 
 def build_export_db(
     source_db_path: Path,
     dest_db_path: Path,
     cluster_ids: list[int] | None,
+    include_genealogy: bool = True,
 ) -> dict[int, tuple[str, str]]:
     """
     Copy source DB to dest, optionally filter to specific cluster IDs, rewrite image
@@ -35,49 +40,79 @@ def build_export_db(
     _vacuum_copy(source_db_path, dest_db_path)
 
     conn = sqlite3.connect(str(dest_db_path))
-    conn.execute("PRAGMA journal_mode=DELETE")
-    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute("PRAGMA journal_mode=DELETE")
+        conn.execute("PRAGMA foreign_keys=ON")
 
-    if cluster_ids is not None and len(cluster_ids) > 0:
-        ids_str = ",".join(str(x) for x in cluster_ids)
-        conn.execute(f"""
-            DELETE FROM faces
-            WHERE cluster_id NOT IN (
-                SELECT id FROM clusters WHERE id IN ({ids_str}) OR label = -1
-            )
-        """)
-        conn.execute(f"""
-            DELETE FROM clusters
-            WHERE id NOT IN ({ids_str}) AND label != -1
-        """)
-        conn.execute("""
-            DELETE FROM images
-            WHERE scan_status = 'done'
-              AND id NOT IN (SELECT DISTINCT image_id FROM faces)
-        """)
-        conn.execute("""
-            DELETE FROM persons
-            WHERE id NOT IN (
-                SELECT person_id FROM clusters WHERE person_id IS NOT NULL
-            )
-        """)
-        conn.execute("""
-            DELETE FROM relations
-            WHERE person_a_id NOT IN (SELECT id FROM persons)
-               OR person_b_id NOT IN (SELECT id FROM persons)
-        """)
+        if cluster_ids is not None and len(cluster_ids) > 0:
+            ids_str = ",".join(str(x) for x in cluster_ids)
+            keep_images = f"SELECT DISTINCT image_id FROM faces WHERE cluster_id IN ({ids_str})"
+
+            # FK order matters: faces reference images, so faces must be deleted first.
+
+            # 1. Delete faces on images that have no face from selected clusters
+            #    (required before deleting those images to satisfy faces→images FK).
+            conn.execute(f"DELETE FROM faces WHERE image_id NOT IN ({keep_images})")
+
+            # 2. Now safely delete images with no selected-cluster face.
+            conn.execute(f"DELETE FROM images WHERE id NOT IN ({keep_images})")
+
+            # 3. Ensure noise cluster exists — we'll move unselected faces into it
+            #    so their embeddings survive for re-clustering in the new collection.
+            noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
+            if not noise_row:
+                conn.execute("INSERT INTO clusters (label, person_id) VALUES (-1, NULL)")
+                noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
+            noise_id = noise_row[0]
+
+            # 4. Move faces from unselected named clusters to noise.
+            #    Do NOT delete them — preserving the embeddings lets the user
+            #    re-cluster the imported collection and discover those persons.
+            conn.execute(f"""
+                UPDATE faces
+                SET cluster_id = {noise_id},
+                    manually_assigned = 0
+                WHERE cluster_id NOT IN (
+                    SELECT id FROM clusters WHERE id IN ({ids_str}) OR label = -1
+                )
+            """)
+
+            # 5. Delete unselected named clusters (their faces are now in noise).
+            conn.execute(f"DELETE FROM clusters WHERE id NOT IN ({ids_str}) AND label != -1")
+
+            # 5. Remove persons no longer linked to any remaining cluster.
+            conn.execute("""
+                DELETE FROM persons
+                WHERE id NOT IN (
+                    SELECT person_id FROM clusters WHERE person_id IS NOT NULL
+                )
+            """)
+
+            # 6. Remove relations whose persons were just deleted.
+            conn.execute("""
+                DELETE FROM relations
+                WHERE person_a_id NOT IN (SELECT id FROM persons)
+                   OR person_b_id NOT IN (SELECT id FROM persons)
+            """)
+            conn.commit()
+
+        if not include_genealogy:
+            conn.execute("DELETE FROM relations")
+            conn.commit()
+
+        rows = conn.execute("SELECT id, path FROM images").fetchall()
+        path_map: dict[int, tuple[str, str]] = {}
+        for img_id, orig_path in rows:
+            filename = Path(orig_path).name
+            new_rel = f"images/{img_id}_{filename}"
+            path_map[img_id] = (orig_path, new_rel)
+            conn.execute("UPDATE images SET path = ? WHERE id = ?", (new_rel, img_id))
+
         conn.commit()
+    finally:
+        conn.close()
+        gc.collect()
 
-    rows = conn.execute("SELECT id, path FROM images").fetchall()
-    path_map: dict[int, tuple[str, str]] = {}
-    for img_id, orig_path in rows:
-        filename = Path(orig_path).name
-        new_rel = f"images/{img_id}_{filename}"
-        path_map[img_id] = (orig_path, new_rel)
-        conn.execute("UPDATE images SET path = ? WHERE id = ?", (new_rel, img_id))
-
-    conn.commit()
-    conn.close()
     return path_map
 
 
@@ -85,14 +120,18 @@ def create_project_zip(
     source_db_path: Path,
     project_info: dict,
     cluster_ids: list[int] | None,
+    include_genealogy: bool = True,
 ) -> io.BytesIO:
     """Build a self-contained project ZIP (DB + images) and return it as a BytesIO."""
     import tempfile
 
     buf = io.BytesIO()
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # ignore_cleanup_errors=True: on Windows the SQLite file may still have a
+    # transient OS-level lock even after conn.close() + gc.collect(); letting the
+    # OS clean the temp dir later is safe since the data is already in `buf`.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         tmp_db = Path(tmpdir) / "project.db"
-        path_map = build_export_db(source_db_path, tmp_db, cluster_ids)
+        path_map = build_export_db(source_db_path, tmp_db, cluster_ids, include_genealogy)
 
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
             zf.writestr(
@@ -129,7 +168,12 @@ def import_project_zip(zip_data: bytes, projects_dir: Path) -> dict:
         project_dir = projects_dir / new_id
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        zf.extractall(str(project_dir))
+        project_dir_resolved = project_dir.resolve()
+        for member in zf.infolist():
+            target = (project_dir / member.filename).resolve()
+            if not target.is_relative_to(project_dir_resolved):
+                raise ValueError(f"Unsafe path in ZIP: {member.filename}")
+            zf.extract(member, str(project_dir))
 
     project_info["id"] = new_id
     (project_dir / "project.json").write_text(
@@ -144,12 +188,15 @@ def import_project_zip(zip_data: bytes, projects_dir: Path) -> dict:
 
     if dest_db.exists():
         conn = sqlite3.connect(str(dest_db))
-        rows = conn.execute("SELECT id, path FROM images").fetchall()
-        for img_id, rel_path in rows:
-            abs_path = str(project_dir / rel_path)
-            conn.execute("UPDATE images SET path = ? WHERE id = ?", (abs_path, img_id))
-        conn.commit()
-        conn.close()
+        try:
+            rows = conn.execute("SELECT id, path FROM images").fetchall()
+            for img_id, rel_path in rows:
+                abs_path = str(project_dir / rel_path)
+                conn.execute("UPDATE images SET path = ? WHERE id = ?", (abs_path, img_id))
+            conn.commit()
+        finally:
+            conn.close()
+            gc.collect()
 
     project_info["is_active"] = False
     return project_info

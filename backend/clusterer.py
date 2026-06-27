@@ -70,8 +70,15 @@ def run_clustering(db: Session, eps: float = 0.4, min_samples: int = 2, min_det_
         best_pidx = np.argmin(dists, axis=1)
         best_dist = dists[np.arange(len(active_faces)), best_pidx]
 
+        # Use a stricter threshold than DBSCAN eps so that faces only
+        # "near" a named person (not just within the general neighbourhood)
+        # are snapped to that person.  Faces that are ambiguous (between
+        # eps*0.7 and eps) go through DBSCAN instead, letting them form
+        # their own cluster or join one by similarity — rather than being
+        # silently absorbed into the closest named person.
+        snap_threshold = eps * 0.7
         for i in range(len(active_faces)):
-            if best_dist[i] <= eps:
+            if best_dist[i] <= snap_threshold:
                 pre_assigned[i] = pid_list[int(best_pidx[i])]
 
     # ── Phase 4: DBSCAN on truly unassigned faces ─────────────────────────────
