@@ -175,6 +175,14 @@ export default function ClustersTab({
             <>
               <div className="h-4 w-px bg-zinc-700 shrink-0" />
               <span className="text-xs text-zinc-500 whitespace-nowrap">{checkedClusters.size} selected</span>
+              {filteredNamed.some(c => !checkedClusters.has(c.id)) && (
+                <button
+                  onClick={() => setCheckedClusters(new Set(filteredNamed.map(c => c.id)))}
+                  className="text-xs text-brand-400 hover:text-brand-300 transition-colors whitespace-nowrap"
+                >
+                  Select All ({filteredNamed.length})
+                </button>
+              )}
               <button
                 onClick={() => setShowExportModal(true)}
                 disabled={exportingClusters || deletingClusters}

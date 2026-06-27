@@ -33,6 +33,7 @@ def build_export_db(
     cluster_ids: list[int] | None,
     include_genealogy: bool = True,
     person_ids: list[int] | None = None,
+    include_faceless: bool = True,
 ) -> dict[int, tuple[str, str]]:
     """
     Copy source DB to dest, optionally filter to specific cluster IDs, rewrite image
@@ -151,6 +152,12 @@ def build_export_db(
             conn.execute("DELETE FROM persons")
             conn.commit()
 
+        if not include_faceless:
+            conn.execute(
+                "DELETE FROM images WHERE id NOT IN (SELECT DISTINCT image_id FROM faces)"
+            )
+            conn.commit()
+
         rows = conn.execute("SELECT id, path FROM images").fetchall()
         path_map: dict[int, tuple[str, str]] = {}
         for img_id, orig_path in rows:
@@ -173,6 +180,7 @@ def create_project_zip(
     cluster_ids: list[int] | None,
     include_genealogy: bool = True,
     person_ids: list[int] | None = None,
+    include_faceless: bool = True,
 ) -> io.BytesIO:
     """Build a self-contained project ZIP (DB + images) and return it as a BytesIO."""
     import tempfile
@@ -183,7 +191,7 @@ def create_project_zip(
     # OS clean the temp dir later is safe since the data is already in `buf`.
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         tmp_db = Path(tmpdir) / "project.db"
-        path_map = build_export_db(source_db_path, tmp_db, cluster_ids, include_genealogy, person_ids)
+        path_map = build_export_db(source_db_path, tmp_db, cluster_ids, include_genealogy, person_ids, include_faceless)
 
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
             zf.writestr(

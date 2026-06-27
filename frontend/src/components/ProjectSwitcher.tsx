@@ -10,7 +10,13 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-export default function ProjectSwitcher() {
+export default function ProjectSwitcher({
+  onExportStart,
+  onExportEnd,
+}: {
+  onExportStart?: () => void
+  onExportEnd?: (error?: string) => void
+}) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -71,20 +77,31 @@ export default function ProjectSwitcher() {
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => api.project.delete(id),
-    onSuccess: () => qc.invalidateQueries(),
+    onSuccess: (data) => {
+      setOpen(false)
+      if (data.new_active) {
+        // Active project changed — invalidate everything (clusters, images, etc.)
+        qc.invalidateQueries()
+      } else {
+        // Inactive project deleted — only the list needs refreshing
+        qc.invalidateQueries({ queryKey: ['projects'] })
+      }
+    },
     onError: (e) => alert(`Delete failed: ${e}`),
   })
 
-  async function handleExport({ name, includeGenealogy }: { name: string; includeGenealogy: boolean }) {
-    setShowExportModal(false)
+  async function handleExport({ name, includeGenealogy, includeFaceless }: { name: string; includeGenealogy: boolean; includeFaceless: boolean }) {
     if (exporting) return
+    setShowExportModal(false)
     setExporting(true)
+    onExportStart?.()
     try {
-      const blob = await api.project.exportZip(undefined, name, includeGenealogy)
+      const blob = await api.project.exportZip(undefined, name, includeGenealogy, undefined, includeFaceless)
       const safeName = name.replace(/\s+/g, '_') || 'project'
       triggerDownload(blob, `${safeName}_export.zip`)
+      onExportEnd?.()
     } catch (e) {
-      alert(`Export failed: ${e}`)
+      onExportEnd?.(String(e))
     } finally {
       setExporting(false)
     }
@@ -142,6 +159,7 @@ export default function ProjectSwitcher() {
       {showExportModal && (
         <ExportModal
           defaultName={active?.name ?? 'project'}
+          showFacelessOption
           onExport={handleExport}
           onClose={() => setShowExportModal(false)}
         />

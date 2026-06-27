@@ -3,6 +3,7 @@ import { useState } from 'react'
 export type ExportSettings = {
   name: string
   includeGenealogy: boolean
+  includeFaceless: boolean
 }
 
 type Props = {
@@ -10,17 +11,23 @@ type Props = {
   clusterCount?: number
   subtitle?: string
   hideGenealogyOption?: boolean
+  showFacelessOption?: boolean
   onExport: (settings: ExportSettings) => void
   onClose: () => void
 }
 
-export default function ExportModal({ defaultName, clusterCount, subtitle, hideGenealogyOption, onExport, onClose }: Props) {
+export default function ExportModal({ defaultName, clusterCount, subtitle, hideGenealogyOption, showFacelessOption, onExport, onClose }: Props) {
   const [name, setName] = useState(defaultName)
   const [includeGenealogy, setIncludeGenealogy] = useState(true)
+  const [includeFaceless, setIncludeFaceless] = useState(true)
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    onExport({ name: name.trim() || defaultName, includeGenealogy: hideGenealogyOption ? true : includeGenealogy })
+    onExport({
+      name: name.trim() || defaultName,
+      includeGenealogy: hideGenealogyOption ? true : includeGenealogy,
+      includeFaceless: showFacelessOption ? includeFaceless : true,
+    })
   }
 
   const subtitleText = subtitle ?? (clusterCount != null ? `${clusterCount} cluster${clusterCount !== 1 ? 's' : ''} selected` : null)
@@ -61,6 +68,21 @@ export default function ExportModal({ defaultName, clusterCount, subtitle, hideG
               <div>
                 <p className="text-sm text-zinc-200">Include genealogy data</p>
                 <p className="text-xs text-zinc-500">Family tree relationships between persons</p>
+              </div>
+            </label>
+          )}
+
+          {showFacelessOption && (
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeFaceless}
+                onChange={e => setIncludeFaceless(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-brand-500 shrink-0"
+              />
+              <div>
+                <p className="text-sm text-zinc-200">Include images without faces</p>
+                <p className="text-xs text-zinc-500">Photos where no face was detected</p>
               </div>
             </label>
           )}

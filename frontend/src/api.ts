@@ -95,13 +95,14 @@ export const api = {
     activate: (id: string) => post<Project>(`${BASE}/projects/${encodeURIComponent(id)}/activate`),
     rename:   (id: string, name: string) => patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { name }),
     delete:   (id: string) =>
-      fetchJson<{ ok: boolean }>(`${BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    exportZip: async (clusterIds?: number[], name?: string, includeGenealogy = true, personIds?: number[]): Promise<Blob> => {
+      fetchJson<{ ok: boolean; new_active: import('./types').Project | null }>(`${BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    exportZip: async (clusterIds?: number[], name?: string, includeGenealogy = true, personIds?: number[], includeFaceless = true): Promise<Blob> => {
       const p = new URLSearchParams()
       if (clusterIds?.length) p.set('cluster_ids', clusterIds.join(','))
       if (personIds?.length) p.set('person_ids', personIds.join(','))
       if (name) p.set('name', name)
       if (!includeGenealogy) p.set('include_genealogy', 'false')
+      if (!includeFaceless) p.set('include_faceless', 'false')
       const res = await fetch(`${BASE}/projects/export?${p}`)
       if (!res.ok) throw new Error(await res.text())
       return res.blob()

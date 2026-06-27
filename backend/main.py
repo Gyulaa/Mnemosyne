@@ -119,6 +119,7 @@ def export_project(
     person_ids: str = Query(default=""),
     name: str = Query(default=""),
     include_genealogy: bool = Query(default=True),
+    include_faceless: bool = Query(default=True),
 ):
     """Download the active project as a self-contained ZIP (DB + images)."""
     project_id = project_manager.active_id
@@ -140,7 +141,7 @@ def export_project(
     if person_ids.strip():
         parsed_person_ids = [int(x) for x in person_ids.split(",") if x.strip().isdigit()]
 
-    buf = export_utils.create_project_zip(source_db, project_info, parsed_cluster_ids, include_genealogy, parsed_person_ids)
+    buf = export_utils.create_project_zip(source_db, project_info, parsed_cluster_ids, include_genealogy, parsed_person_ids, include_faceless)
     raw_name = project_info.get('name', 'project')
     ascii_name = unicodedata.normalize("NFD", raw_name).encode("ascii", "ignore").decode("ascii")
     filename = f"{ascii_name.replace(' ', '_') or 'project'}_export.zip"

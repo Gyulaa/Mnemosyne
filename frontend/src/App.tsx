@@ -85,7 +85,7 @@ export default function App() {
               ))}
             </nav>
             <div className="ml-auto">
-              <ProjectSwitcher />
+              <ProjectSwitcher onExportStart={onExportStart} onExportEnd={onExportEnd} />
             </div>
           </div>
         </header>

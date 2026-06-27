@@ -1,7 +1,9 @@
+import gc
 import json
 import os
 import re
 import shutil
+import time
 import unicodedata
 from datetime import datetime
 from pathlib import Path
@@ -78,6 +80,12 @@ class ProjectManager:
     # ── internal helpers ───────────────────────────────────────────────────────
 
     def _activate(self, project_id: str):
+        # Dispose the previous engine before switching so Windows releases file handles.
+        if self._engine is not None:
+            self._engine.dispose()
+            self._engine = None
+        gc.collect()
+
         db_path = PROJECTS_DIR / project_id / "photo_organizer.db"
         engine = create_engine(
             f"sqlite:///{db_path}",
@@ -155,8 +163,22 @@ class ProjectManager:
             self._engine = None
             self._SessionLocal = None
             self._active_id = None
+            gc.collect()
 
-        shutil.rmtree(str(project_dir))
+        # Retry loop: on Windows, WAL/SHM files released by SQLAlchemy may still
+        # be briefly locked by the OS after dispose(). A short wait usually suffices.
+        last_err: Exception | None = None
+        for attempt in range(4):
+            try:
+                shutil.rmtree(str(project_dir))
+                last_err = None
+                break
+            except PermissionError as e:
+                last_err = e
+                gc.collect()
+                time.sleep(0.3 * (attempt + 1))
+        if last_err is not None:
+            raise last_err
 
         if not was_active:
             return None
