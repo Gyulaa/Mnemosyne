@@ -1,15 +1,18 @@
 import io
 import json
+import mimetypes
 import os
 import string
 import unicodedata
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import update as sql_update, func, nullslast, text
@@ -17,7 +20,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument
 from . import scanner as scanner_mod
 from . import clusterer
 from . import export_utils
@@ -1126,13 +1129,62 @@ def _person_dict(p: "DBPerson", db: Session) -> dict:
     return {
         "id": p.id,
         "name": p.name,
+        "sex": p.sex,
         "birth_year": p.birth_year,
+        "birth_place": p.birth_place,
+        "birth_date": p.birth_date,
+        "christening_year": p.christening_year,
+        "christening_place": p.christening_place,
+        "christening_date": p.christening_date,
         "death_year": p.death_year,
+        "death_place": p.death_place,
+        "death_date": p.death_date,
+        "burial_year": p.burial_year,
+        "burial_place": p.burial_place,
+        "burial_date": p.burial_date,
+        "occupation": p.occupation,
         "notes": p.notes,
         "thumbnail_face_id": thumb_id,
         "face_count": face_count,
         "clusters": linked_clusters,
     }
+
+
+def _rel_dict(r: "DBRelation") -> dict:
+    return {
+        "id": r.id,
+        "type": r.type,
+        "person_a_id": r.person_a_id,
+        "person_b_id": r.person_b_id,
+        "marriage_year": r.marriage_year,
+        "marriage_place": r.marriage_place,
+        "divorce_year": r.divorce_year,
+        "divorce_place": r.divorce_place,
+    }
+
+
+def _doc_dict(d: "DBDocument") -> dict:
+    return {
+        "id": d.id,
+        "person_id": d.person_id,
+        "stored_name": d.stored_name,
+        "filename": d.filename,
+        "mime_type": d.mime_type,
+        "title": d.title,
+        "doc_type": d.doc_type,
+        "year": d.year,
+        "description": d.description,
+        "created_at": d.created_at,
+    }
+
+
+def _docs_dir() -> Path:
+    pid = project_manager.active_id
+    if not pid:
+        raise HTTPException(404, "No active project")
+    d = PROJECTS_DIR / pid / "documents"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 @app.get("/api/persons")
@@ -1141,17 +1193,30 @@ def list_persons(db: Session = Depends(get_db)):
     return [_person_dict(p, db) for p in persons]
 
 
+_PERSON_FIELDS = [
+    "sex", "birth_year", "birth_place", "birth_date",
+    "christening_year", "christening_place", "christening_date",
+    "death_year", "death_place", "death_date",
+    "burial_year", "burial_place", "burial_date",
+    "occupation", "notes",
+]
+
+
+def _year_from_date(d: str | None) -> int | None:
+    if d and len(d) >= 4:
+        try:
+            return int(d[:4])
+        except ValueError:
+            pass
+    return None
+
+
 @app.post("/api/persons", status_code=201)
 def create_person(body: dict, db: Session = Depends(get_db)):
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name required")
-    p = DBPerson(
-        name=name,
-        birth_year=body.get("birth_year"),
-        death_year=body.get("death_year"),
-        notes=body.get("notes"),
-    )
+    p = DBPerson(name=name, **{f: body.get(f) for f in _PERSON_FIELDS if f in body})
     db.add(p)
     db.commit()
     db.refresh(p)
@@ -1165,12 +1230,13 @@ def update_person(person_id: int, body: dict, db: Session = Depends(get_db)):
         raise HTTPException(404, "Person not found")
     if "name" in body:
         p.name = (body["name"] or "").strip() or p.name
-    if "birth_year" in body:
-        p.birth_year = body["birth_year"]
-    if "death_year" in body:
-        p.death_year = body["death_year"]
-    if "notes" in body:
-        p.notes = body["notes"]
+    for f in _PERSON_FIELDS:
+        if f in body:
+            setattr(p, f, body[f])
+    # Auto-derive _year from _date so tree display stays in sync
+    for prefix in ("birth", "death", "christening", "burial"):
+        if f"{prefix}_date" in body:
+            setattr(p, f"{prefix}_year", _year_from_date(getattr(p, f"{prefix}_date")))
     db.commit()
     return _person_dict(p, db)
 
@@ -1191,8 +1257,7 @@ def delete_person(person_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/relations")
 def list_relations(db: Session = Depends(get_db)):
-    rels = db.query(DBRelation).all()
-    return [{"id": r.id, "type": r.type, "person_a_id": r.person_a_id, "person_b_id": r.person_b_id} for r in rels]
+    return [_rel_dict(r) for r in db.query(DBRelation).all()]
 
 
 @app.post("/api/relations", status_code=201)
@@ -1223,7 +1288,7 @@ def create_relation(body: dict, db: Session = Depends(get_db)):
             DBRelation.person_b_id == b_id,
         ).first()
     if existing:
-        return {"id": existing.id, "type": existing.type, "person_a_id": existing.person_a_id, "person_b_id": existing.person_b_id}
+        return _rel_dict(existing)
     # Enforce max 2 parents per child
     if rel_type == "parent":
         parent_count = db.query(func.count(DBRelation.id)).filter(
@@ -1236,7 +1301,19 @@ def create_relation(body: dict, db: Session = Depends(get_db)):
     db.add(r)
     db.commit()
     db.refresh(r)
-    return {"id": r.id, "type": r.type, "person_a_id": r.person_a_id, "person_b_id": r.person_b_id}
+    return _rel_dict(r)
+
+
+@app.patch("/api/relations/{relation_id}")
+def update_relation(relation_id: int, body: dict, db: Session = Depends(get_db)):
+    r = db.get(DBRelation, relation_id)
+    if not r:
+        raise HTTPException(404, "Relation not found")
+    for f in ("marriage_year", "marriage_place", "divorce_year", "divorce_place"):
+        if f in body:
+            setattr(r, f, body[f])
+    db.commit()
+    return _rel_dict(r)
 
 
 @app.delete("/api/relations/{relation_id}")
@@ -1245,6 +1322,98 @@ def delete_relation(relation_id: int, db: Session = Depends(get_db)):
     if not r:
         raise HTTPException(404, "Relation not found")
     db.delete(r)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Documents ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/persons/{person_id}/documents")
+def list_documents(person_id: int, db: Session = Depends(get_db)):
+    p = db.get(DBPerson, person_id)
+    if not p:
+        raise HTTPException(404, "Person not found")
+    docs = db.query(DBDocument).filter(DBDocument.person_id == person_id).order_by(DBDocument.year, DBDocument.created_at).all()
+    return [_doc_dict(d) for d in docs]
+
+
+@app.post("/api/persons/{person_id}/documents", status_code=201)
+async def upload_document(
+    person_id: int,
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(default=None),
+    doc_type: Optional[str] = Form(default="other"),
+    year: Optional[int] = Form(default=None),
+    description: Optional[str] = Form(default=None),
+    db: Session = Depends(get_db),
+):
+    p = db.get(DBPerson, person_id)
+    if not p:
+        raise HTTPException(404, "Person not found")
+    docs_dir = _docs_dir()
+    ext = Path(file.filename or "file").suffix or ""
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    dest = docs_dir / stored_name
+    data = await file.read()
+    dest.write_bytes(data)
+    mime = file.content_type or mimetypes.guess_type(file.filename or "")[0]
+    doc = DBDocument(
+        person_id=person_id,
+        stored_name=stored_name,
+        filename=file.filename or stored_name,
+        mime_type=mime,
+        title=title or None,
+        doc_type=doc_type or "other",
+        year=year,
+        description=description or None,
+        created_at=datetime.now().isoformat(),
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    return _doc_dict(doc)
+
+
+@app.patch("/api/documents/{doc_id}")
+def update_document(doc_id: int, body: dict, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    for f in ("title", "doc_type", "year", "description"):
+        if f in body:
+            setattr(d, f, body[f])
+    db.commit()
+    return _doc_dict(d)
+
+
+@app.get("/api/documents/{doc_id}/file")
+def serve_document(doc_id: int, dl: bool = Query(default=False), db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    docs_dir = _docs_dir()
+    path = docs_dir / d.stored_name
+    if not path.exists():
+        raise HTTPException(404, "File not found on disk")
+    disposition = "attachment" if dl else "inline"
+    safe_name = quote(d.filename)
+    return FileResponse(
+        str(path),
+        media_type=d.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": f'{disposition}; filename="{safe_name}"'},
+    )
+
+
+@app.delete("/api/documents/{doc_id}")
+def delete_document(doc_id: int, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    docs_dir = _docs_dir()
+    path = docs_dir / d.stored_name
+    if path.exists():
+        path.unlink(missing_ok=True)
+    db.delete(d)
     db.commit()
     return {"ok": True}
 

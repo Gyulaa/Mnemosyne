@@ -1,7 +1,32 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { LinkedCluster, PersonFull, Relation, ImageItem } from '../types'
+import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument } from '../types'
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const PHOTOS_CAP = 6
+
+const MONTHS_HU = ['január', 'február', 'március', 'április', 'május', 'június',
+  'július', 'augusztus', 'szeptember', 'október', 'november', 'december']
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  birth_cert:    'Születési anyakönyv',
+  death_cert:    'Halotti anyakönyv',
+  marriage_cert: 'Házassági anyakönyv',
+  baptism:       'Keresztelési anyakönyv',
+  burial_record: 'Temetési bejegyzés',
+  passport:      'Útlevél / igazolvány',
+  military:      'Katonai irat',
+  land_record:   'Telekkönyv',
+  will:          'Végrendelet',
+  letter:        'Levél',
+  photo:         'Régi fotó',
+  other:         'Egyéb',
+}
+
+const DOC_TYPES = Object.entries(DOC_TYPE_LABELS)
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -9,13 +34,130 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('hu-HU', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
+function formatDateHu(date: string | null | undefined, fallbackYear?: number | null): string | null {
+  if (date) {
+    const parts = date.split('-')
+    if (parts.length === 3) return `${parts[0]}. ${MONTHS_HU[parseInt(parts[1]) - 1]} ${parseInt(parts[2])}.`
+    if (parts.length === 2) return `${parts[0]}. ${MONTHS_HU[parseInt(parts[1]) - 1]}`
+    return parts[0]
+  }
+  return fallbackYear != null ? String(fallbackYear) : null
+}
+
+function lifespan(p: PersonFull) {
+  const b = [formatDateHu(p.birth_date, p.birth_year), p.birth_place].filter(Boolean).join(', ')
+  const d = [formatDateHu(p.death_date, p.death_year), p.death_place].filter(Boolean).join(', ')
+  if (!b && !d) return null
+  if (p.death_year || p.death_place || p.death_date) return `${b || '?'} – ${d || '?'}`
+  return b ? `* ${b}` : null
+}
+
+// ── DatePartPicker ────────────────────────────────────────────────────────────
+// value: "" | "YYYY" | "YYYY-MM" | "YYYY-MM-DD"
+
+function DatePartPicker({ value, onChange, placeholder = 'Év' }: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  const parts = value ? value.split('-') : []
+  const yr = parts[0] ?? ''
+  const mo = parts[1] ?? ''
+  const dy = parts[2] ?? ''
+
+  function update(y: string, m: string, d: string) {
+    if (!y) { onChange(''); return }
+    let result = y
+    if (m) {
+      result += '-' + m
+      if (d) result += '-' + d
+    }
+    onChange(result)
+  }
+
+  const maxDays = yr && mo ? new Date(parseInt(yr), parseInt(mo), 0).getDate() : 31
+
+  return (
+    <div className="flex gap-1 items-center flex-wrap">
+      <input
+        type="number"
+        value={yr}
+        onChange={e => update(e.target.value, mo, dy)}
+        placeholder={placeholder}
+        min={1000} max={2100}
+        className="w-16 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 [appearance:textfield]"
+      />
+      {yr && (
+        <select
+          value={mo}
+          onChange={e => update(yr, e.target.value, e.target.value ? dy : '')}
+          className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-brand-400"
+        >
+          <option value="">— hó —</option>
+          {MONTHS_HU.map((m, i) => (
+            <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>
+          ))}
+        </select>
+      )}
+      {yr && mo && (
+        <select
+          value={dy}
+          onChange={e => update(yr, mo, e.target.value)}
+          className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-brand-400"
+        >
+          <option value="">— nap —</option>
+          {Array.from({ length: maxDays }, (_, i) => i + 1).map(d => (
+            <option key={d} value={String(d).padStart(2, '0')}>{d}.</option>
+          ))}
+        </select>
+      )}
+    </div>
+  )
+}
+
+function isImage(mime: string | null) {
+  return mime?.startsWith('image/') ?? false
+}
+
+function isPdf(mime: string | null) {
+  return mime === 'application/pdf'
+}
+
+function DocIcon({ mime }: { mime: string | null }) {
+  if (isImage(mime)) {
+    return (
+      <svg className="w-4 h-4 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 16.5V6.75A2.25 2.25 0 015.25 4.5h13.5A2.25 2.25 0 0121 6.75v10.5A2.25 2.25 0 0118.75 19.5H5.25A2.25 2.25 0 013 17.25v-.75z" />
+      </svg>
+    )
+  }
+  if (isPdf(mime)) {
+    return (
+      <svg className="w-4 h-4 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+      </svg>
+    )
+  }
+  return (
+    <svg className="w-4 h-4 text-zinc-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+    </svg>
+  )
+}
+
 // ── Lightbox ──────────────────────────────────────────────────────────────────
 
-function Lightbox({ images, idx, onClose, onChange }: {
+function parseMeta(json: string | null): { width?: number; height?: number; make?: string; model?: string } {
+  if (!json) return {}
+  try { return JSON.parse(json) } catch { return {} }
+}
+
+function Lightbox({ images, idx, onClose, onChange, onNavigateTo }: {
   images: ImageItem[]
   idx: number
   onClose: () => void
   onChange: (i: number) => void
+  onNavigateTo: (id: number) => void
 }) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -28,28 +170,94 @@ function Lightbox({ images, idx, onClose, onChange }: {
   }, [idx, images.length, onClose, onChange])
 
   const img = images[idx]
+  const { data: persons = [] } = useQuery<ImagePerson[]>({
+    queryKey: ['image-persons', img.id],
+    queryFn: () => api.images.persons(img.id),
+    staleTime: 120_000,
+    enabled: img.face_count > 0,
+  })
+  const exifMeta = parseMeta(img.meta_json)
 
-  return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/95" onClick={onClose}>
-      <button onClick={onClose}
-        className="absolute top-4 right-4 w-9 h-9 rounded-full bg-zinc-800/80 hover:bg-zinc-700 flex items-center justify-center text-zinc-300 hover:text-white text-lg transition-colors">✕</button>
+  return createPortal(
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/90" onClick={onClose}>
+      {/* Nav arrows */}
       <button onClick={e => { e.stopPropagation(); onChange(idx - 1) }} disabled={idx === 0}
-        className="absolute left-4 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-zinc-800/70 hover:bg-zinc-700 disabled:opacity-20 flex items-center justify-center text-zinc-200 text-2xl transition-colors">‹</button>
-      <img src={api.imageViewUrl(img.id, 1800)} alt=""
-        className="max-w-[85vw] max-h-[85vh] object-contain rounded-lg shadow-2xl" onClick={e => e.stopPropagation()} />
+        className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-zinc-800/80 hover:bg-zinc-700 disabled:opacity-20 flex items-center justify-center text-zinc-200 text-2xl transition-colors z-10">‹</button>
       <button onClick={e => { e.stopPropagation(); onChange(idx + 1) }} disabled={idx === images.length - 1}
-        className="absolute right-4 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-zinc-800/70 hover:bg-zinc-700 disabled:opacity-20 flex items-center justify-center text-zinc-200 text-2xl transition-colors">›</button>
-      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1">
-        <span className="text-zinc-500 text-sm tabular-nums">{idx + 1} / {images.length}</span>
-        {img.exif_date && <span className="text-zinc-400 text-sm">{fmtDate(img.exif_date)}</span>}
-        <span className="text-zinc-600 text-xs truncate max-w-xs">{img.filename}</span>
+        className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-zinc-800/80 hover:bg-zinc-700 disabled:opacity-20 flex items-center justify-center text-zinc-200 text-2xl transition-colors z-10">›</button>
+
+      {/* Card */}
+      <div
+        className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col mx-16"
+        style={{ maxHeight: '92vh', width: 'min(860px, calc(100vw - 120px))' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Image area */}
+        <div className="bg-zinc-950 flex items-center justify-center overflow-hidden relative" style={{ maxHeight: '68vh', minHeight: 200 }}>
+          <img
+            key={img.id}
+            src={api.imageViewUrl(img.id, 1400)}
+            alt={img.filename}
+            className="max-w-full max-h-full object-contain"
+            style={{ maxHeight: '68vh' }}
+          />
+          <div className="absolute bottom-2 right-2 bg-black/60 rounded-lg px-2 py-0.5 text-xs text-zinc-400 tabular-nums">
+            {idx + 1} / {images.length}
+          </div>
+        </div>
+
+        {/* Metadata */}
+        <div className="px-5 py-4 flex items-start justify-between gap-4 overflow-y-auto">
+          <div className="min-w-0 flex-1 space-y-2">
+            <div>
+              <p className="font-semibold text-zinc-100 truncate" title={img.filename}>{img.filename}</p>
+              <p className="text-xs text-zinc-500 truncate mt-0.5" title={img.path}>{img.path}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+              {img.exif_date && (
+                <span className="flex items-center gap-1 text-zinc-300 font-medium">
+                  <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  {new Date(img.exif_date).toLocaleString('hu-HU')}
+                </span>
+              )}
+              {(exifMeta.make || exifMeta.model) && (
+                <span>{[exifMeta.make, exifMeta.model].filter(Boolean).join(' ')}</span>
+              )}
+              {exifMeta.width && exifMeta.height && (
+                <span>{exifMeta.width} × {exifMeta.height}</span>
+              )}
+            </div>
+            {persons.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-zinc-600">Személyek:</span>
+                {persons.map(p => (
+                  <button key={p.person_id}
+                    onClick={() => { onNavigateTo(p.person_id); onClose() }}
+                    className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 rounded-full text-xs text-zinc-300 transition-colors cursor-pointer">
+                    <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
+                      className="w-4 h-4 rounded-full object-cover shrink-0" />
+                    {p.person_name ?? '(névtelen)'}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button onClick={onClose}
+            className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors shrink-0">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
 // ── PhotoGallery ──────────────────────────────────────────────────────────────
-// State is lifted to PersonPanel so the Lightbox renders outside the transform div.
 
 function PhotoGallery({ images, onOpen }: { images: ImageItem[]; onOpen: (i: number) => void }) {
   return (
@@ -115,7 +323,7 @@ function PersonPicker({ persons, excludeIds, label, onSelect, onClose }: {
     if (creating || !name) return
     setCreating(true)
     try {
-      const newPerson = await api.persons.create(name)
+      const newPerson = await api.persons.create({ name })
       await qc.invalidateQueries({ queryKey: ['persons'] })
       onSelect(newPerson)
       onClose()
@@ -127,13 +335,9 @@ function PersonPicker({ persons, excludeIds, label, onSelect, onClose }: {
   if (mode === 'create') {
     return (
       <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
-        <div
-          className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-72 flex flex-col overflow-hidden"
-          onClick={e => e.stopPropagation()}
-        >
+        <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-72 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
           <div className="px-4 pt-3 pb-2 border-b border-zinc-700 flex items-center gap-2">
-            <button onClick={() => setMode('list')}
-              className="text-zinc-500 hover:text-zinc-200 text-lg leading-none transition-colors">‹</button>
+            <button onClick={() => setMode('list')} className="text-zinc-500 hover:text-zinc-200 text-lg leading-none transition-colors">‹</button>
             <p className="text-xs font-semibold text-zinc-300">New person — {label.toLowerCase()}</p>
           </div>
           <div className="px-4 py-4 space-y-3">
@@ -153,11 +357,7 @@ function PersonPicker({ persons, excludeIds, label, onSelect, onClose }: {
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
-      <div
-        className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-72 flex flex-col overflow-hidden"
-        style={{ maxHeight: 420 }}
-        onClick={e => e.stopPropagation()}
-      >
+      <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-72 flex flex-col overflow-hidden" style={{ maxHeight: 420 }} onClick={e => e.stopPropagation()}>
         <div className="px-4 pt-3 pb-2 border-b border-zinc-700">
           <p className="text-xs font-semibold text-zinc-300 mb-2">{label}</p>
           <input autoFocus value={search} onChange={e => setSearch(e.target.value)}
@@ -176,7 +376,6 @@ function PersonPicker({ persons, excludeIds, label, onSelect, onClose }: {
             </button>
           ))}
         </div>
-        {/* Dedicated create button — always at the bottom */}
         <div className="border-t border-zinc-700">
           <button onClick={() => setMode('create')}
             className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-zinc-700/60 transition-colors">
@@ -238,6 +437,277 @@ function RelRow({
   )
 }
 
+// ── DocUploadForm ─────────────────────────────────────────────────────────────
+
+function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => void }) {
+  const qc = useQueryClient()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [file, setFile] = useState<File | null>(null)
+  const [title, setTitle] = useState('')
+  const [docType, setDocType] = useState('other')
+  const [year, setYear] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setDragOver(false)
+    const f = e.dataTransfer.files[0]
+    if (f) setFile(f)
+  }
+
+  async function submit() {
+    if (!file || uploading) return
+    setUploading(true)
+    try {
+      await api.documents.upload(personId, file, {
+        title: title.trim() || undefined,
+        doc_type: docType,
+        year: year ? parseInt(year) : undefined,
+      })
+      qc.invalidateQueries({ queryKey: ['person-docs', personId] })
+      onDone()
+    } catch (e) {
+      alert(`Upload failed: ${e}`)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div className="bg-zinc-800/60 border border-zinc-700 rounded-xl p-3 mb-3 space-y-2.5">
+      {/* Drop zone */}
+      <div
+        onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        onClick={() => fileRef.current?.click()}
+        className={`border-2 border-dashed rounded-lg px-3 py-3 text-center cursor-pointer transition-colors ${dragOver ? 'border-brand-400 bg-brand-500/10' : 'border-zinc-700 hover:border-zinc-500'}`}
+      >
+        <input ref={fileRef} type="file" className="hidden" onChange={e => setFile(e.target.files?.[0] ?? null)} />
+        {file ? (
+          <p className="text-xs text-zinc-200 truncate">{file.name}</p>
+        ) : (
+          <p className="text-xs text-zinc-500">Húzd ide vagy <span className="text-brand-400">kattints</span> a fájl kiválasztásához</p>
+        )}
+      </div>
+
+      <input
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        placeholder="Cím (opcionális)"
+        className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
+      />
+      <div className="flex gap-2">
+        <select
+          value={docType}
+          onChange={e => setDocType(e.target.value)}
+          className="flex-1 bg-zinc-700 border border-zinc-600 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-brand-400"
+        >
+          {DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <input
+          type="number"
+          value={year}
+          onChange={e => setYear(e.target.value)}
+          placeholder="Év"
+          className="w-20 bg-zinc-700 border border-zinc-600 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
+        />
+      </div>
+      <div className="flex gap-2 pt-0.5">
+        <button
+          onClick={submit}
+          disabled={!file || uploading}
+          className="flex-1 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors"
+        >
+          {uploading ? 'Feltöltés…' : 'Feltöltés'}
+        </button>
+        <button
+          onClick={onDone}
+          className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-700 rounded-lg transition-colors"
+        >
+          Mégse
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── DocPreviewModal ───────────────────────────────────────────────────────────
+
+function DocPreviewModal({ doc, onClose }: { doc: PersonDocument; onClose: () => void }) {
+  const url = api.documents.fileUrl(doc.id)
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [onClose])
+
+  return createPortal(
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/95" onClick={onClose}>
+      <button onClick={onClose}
+        className="absolute top-4 right-4 w-9 h-9 rounded-full bg-zinc-800/80 hover:bg-zinc-700 flex items-center justify-center text-zinc-300 hover:text-white text-lg transition-colors">
+        ✕
+      </button>
+      {isImage(doc.mime_type) ? (
+        <img src={url} alt={doc.title || doc.filename}
+          className="max-w-[85vw] max-h-[85vh] object-contain rounded-lg shadow-2xl"
+          onClick={e => e.stopPropagation()} />
+      ) : isPdf(doc.mime_type) ? (
+        <iframe src={url} className="w-[85vw] h-[85vh] rounded-lg shadow-2xl border-0 bg-white"
+          title={doc.title || doc.filename} onClick={e => e.stopPropagation()} />
+      ) : null}
+      <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-3">
+        <span className="text-zinc-400 text-sm truncate max-w-xs">{doc.title || doc.filename}</span>
+        <a href={api.documents.fileUrl(doc.id, true)} onClick={e => e.stopPropagation()}
+          className="text-xs text-zinc-500 hover:text-zinc-200 transition-colors underline underline-offset-2">
+          Letöltés
+        </a>
+      </div>
+    </div>,
+    document.body
+  )
+}
+
+// ── DocRow ────────────────────────────────────────────────────────────────────
+
+function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }) {
+  const qc = useQueryClient()
+  const [editing, setEditing] = useState(false)
+  const [previewing, setPreviewing] = useState(false)
+  const [title, setTitle] = useState(doc.title ?? '')
+  const [docType, setDocType] = useState(doc.doc_type ?? 'other')
+  const [year, setYear] = useState(doc.year ? String(doc.year) : '')
+  const [saving, setSaving] = useState(false)
+  const canPreview = isImage(doc.mime_type) || isPdf(doc.mime_type)
+
+  async function save() {
+    setSaving(true)
+    try {
+      await api.documents.update(doc.id, {
+        title: title.trim() || undefined,
+        doc_type: docType,
+        year: year ? parseInt(year) : undefined,
+      })
+      qc.invalidateQueries({ queryKey: ['person-docs', doc.person_id] })
+      setEditing(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const displayName = doc.title || doc.filename
+  const typeLabel = DOC_TYPE_LABELS[doc.doc_type ?? ''] ?? doc.doc_type
+
+  if (editing) {
+    return (
+      <div className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-2.5 space-y-2">
+        <input
+          autoFocus
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          placeholder="Cím"
+          className="w-full bg-zinc-700 border border-zinc-600 rounded px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
+        />
+        <div className="flex gap-1.5">
+          <select
+            value={docType}
+            onChange={e => setDocType(e.target.value)}
+            className="flex-1 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-brand-400"
+          >
+            {DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <input
+            type="number"
+            value={year}
+            onChange={e => setYear(e.target.value)}
+            placeholder="Év"
+            className="w-16 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
+          />
+        </div>
+        <div className="flex gap-1.5">
+          <button onClick={save} disabled={saving}
+            className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded transition-colors">
+            {saving ? '…' : 'Mentés'}
+          </button>
+          <button onClick={() => setEditing(false)}
+            className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-700 rounded transition-colors">
+            Mégse
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {previewing && <DocPreviewModal doc={doc} onClose={() => setPreviewing(false)} />}
+      <div className="flex items-center gap-2.5 py-1.5 group">
+        {isImage(doc.mime_type) ? (
+          <button onClick={() => setPreviewing(true)} className="shrink-0 rounded overflow-hidden w-10 h-10 bg-zinc-800 border border-zinc-700">
+            <img src={api.documents.fileUrl(doc.id)} alt="" className="w-10 h-10 object-cover" />
+          </button>
+        ) : (
+          <DocIcon mime={doc.mime_type} />
+        )}
+        <div className="flex-1 min-w-0">
+          {canPreview ? (
+            <button onClick={() => setPreviewing(true)}
+              className="text-xs text-zinc-200 hover:text-brand-300 truncate block leading-snug transition-colors text-left w-full">
+              {displayName}
+            </button>
+          ) : (
+            <a
+              href={api.documents.fileUrl(doc.id)}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-zinc-200 hover:text-brand-300 truncate block leading-snug transition-colors"
+            >
+              {displayName}
+            </a>
+          )}
+          <p className="text-[10px] text-zinc-600 leading-snug">
+            {[typeLabel, doc.year].filter(Boolean).join(' · ')}
+          </p>
+        </div>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+          {canPreview && (
+            <button onClick={() => setPreviewing(true)} title="Előnézet"
+              className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                <circle cx="12" cy="12" r="3" strokeWidth={2} />
+              </svg>
+            </button>
+          )}
+          <a
+            href={api.documents.fileUrl(doc.id, true)}
+            title="Letöltés"
+            className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+          </a>
+          <button onClick={() => setEditing(true)} title="Szerkesztés"
+            className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
+            </svg>
+          </button>
+          <button onClick={onDelete} title="Törlés"
+            className="w-6 h-6 rounded flex items-center justify-center text-zinc-600 hover:text-red-400 hover:bg-zinc-700 transition-colors">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </>
+
+  )
+}
+
 // ── PersonPanel ───────────────────────────────────────────────────────────────
 
 interface Props {
@@ -248,29 +718,74 @@ interface Props {
   onNavigateTo: (id: number) => void
 }
 
+// blank details state derived from a person
+function detailsFromPerson(p: PersonFull) {
+  return {
+    sex: (p.sex ?? '') as '' | 'M' | 'F',
+    birth_place: p.birth_place ?? '',
+    christening_date: p.christening_date ?? (p.christening_year ? String(p.christening_year) : ''),
+    christening_place: p.christening_place ?? '',
+    death_place: p.death_place ?? '',
+    burial_date: p.burial_date ?? (p.burial_year ? String(p.burial_year) : ''),
+    burial_place: p.burial_place ?? '',
+    occupation: p.occupation ?? '',
+  }
+}
+
 export default function PersonPanel({ person, persons, relations, onClose, onNavigateTo }: Props) {
   const qc = useQueryClient()
   const [visible, setVisible] = useState(false)
+
+  // header editing
   const [editingHeader, setEditingHeader] = useState(false)
-  const [headerData, setHeaderData] = useState({ name: '', birth: '', death: '' })
+  const [headerData, setHeaderData] = useState({ name: '', birth_date: '', birth_place: '', death_date: '', death_place: '' })
+
+  // details section
+  const [editingDetails, setEditingDetails] = useState(false)
+  const [detailsData, setDetailsData] = useState(detailsFromPerson(person))
+
+  // notes
   const [editingNotes, setEditingNotes] = useState(false)
   const [notesVal, setNotesVal] = useState('')
+
+  // relations
   const [editingRelations, setEditingRelations] = useState(false)
   const [pickerMode, setPickerMode] = useState<PickerMode>(null)
+  const [expandedRelId, setExpandedRelId] = useState<number | null>(null)
+  const [marriageEdits, setMarriageEdits] = useState<Record<number, { marriage_year: string; marriage_place: string; divorce_year: string; divorce_place: string }>>({})
+
+  // photos
+  const [showAllPhotos, setShowAllPhotos] = useState(false)
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+
+  // cluster linking
   const [showClusterPicker, setShowClusterPicker] = useState(false)
   const [clusterSearch, setClusterSearch] = useState('')
   const [clusterLinking, setClusterLinking] = useState(false)
+
+  // documents
+  const [showUploadForm, setShowUploadForm] = useState(false)
 
   useEffect(() => {
     const t = requestAnimationFrame(() => setVisible(true))
     return () => cancelAnimationFrame(t)
   }, [])
 
+  // Reset details when person changes
+  useEffect(() => {
+    setDetailsData(detailsFromPerson(person))
+  }, [person.id])
+
   const { data: imagesPage, isLoading: loadingImgs } = useQuery({
     queryKey: ['person-images', person.id],
     queryFn: () => api.images.list(1, 60, 'all', '', 'exif_date_desc', [person.id]),
     staleTime: 60_000,
+  })
+
+  const { data: docs = [], isLoading: loadingDocs } = useQuery({
+    queryKey: ['person-docs', person.id],
+    queryFn: () => api.documents.list(person.id),
+    staleTime: 30_000,
   })
 
   const { data: unlinkedClusters = [] } = useQuery<LinkedCluster[]>({
@@ -308,7 +823,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     mutationFn: (patch: Parameters<typeof api.persons.update>[1]) => api.persons.update(person.id, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['persons'] })
-      setEditingHeader(false); setEditingNotes(false)
+      setEditingHeader(false)
+      setEditingDetails(false)
+      setEditingNotes(false)
     },
   })
 
@@ -323,6 +840,20 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     onSuccess: () => qc.invalidateQueries({ queryKey: ['relations'] }),
   })
 
+  const updateRelMut = useMutation({
+    mutationFn: ({ id, fields }: { id: number; fields: Parameters<typeof api.relations.update>[1] }) =>
+      api.relations.update(id, fields),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['relations'] })
+      setExpandedRelId(null)
+    },
+  })
+
+  const deleteDocMut = useMutation({
+    mutationFn: (id: number) => api.documents.delete(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['person-docs', person.id] }),
+  })
+
   const byId = new Map(persons.map(p => [p.id, p]))
 
   const parents = relations
@@ -331,10 +862,10 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   const children = relations
     .filter(r => r.type === 'parent' && r.person_a_id === person.id)
     .map(r => byId.get(r.person_b_id)).filter(Boolean) as PersonFull[]
-  const spouses = relations
+  const spouseRelations = relations
     .filter(r => r.type === 'spouse' && (r.person_a_id === person.id || r.person_b_id === person.id))
-    .map(r => byId.get(r.person_a_id === person.id ? r.person_b_id : r.person_a_id))
-    .filter(Boolean) as PersonFull[]
+    .map(r => ({ rel: r, p: byId.get(r.person_a_id === person.id ? r.person_b_id : r.person_a_id) }))
+    .filter(x => x.p != null) as { rel: Relation; p: PersonFull }[]
   const siblings = relations
     .filter(r => r.type === 'sibling' && (r.person_a_id === person.id || r.person_b_id === person.id))
     .map(r => byId.get(r.person_a_id === person.id ? r.person_b_id : r.person_a_id))
@@ -344,27 +875,15 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     person.id,
     ...parents.map(p => p.id),
     ...children.map(p => p.id),
-    ...spouses.map(p => p.id),
+    ...spouseRelations.map(x => x.p.id),
     ...siblings.map(p => p.id),
   ])
 
   function findRelationId(type: 'parent' | 'spouse' | 'sibling', otherPersonId: number): number | null {
     for (const r of relations) {
       if (r.type !== type) continue
-      if (type === 'parent') {
-        // parent: a=parent, b=child
-        // removing a parent: a=other, b=current
-        // removing a child: a=current, b=other
-        if ((r.person_a_id === otherPersonId && r.person_b_id === person.id) ||
-            (r.person_a_id === person.id && r.person_b_id === otherPersonId)) {
-          return r.id
-        }
-      } else {
-        if ((r.person_a_id === person.id && r.person_b_id === otherPersonId) ||
-            (r.person_a_id === otherPersonId && r.person_b_id === person.id)) {
-          return r.id
-        }
-      }
+      if ((r.person_a_id === person.id && r.person_b_id === otherPersonId) ||
+          (r.person_a_id === otherPersonId && r.person_b_id === person.id)) return r.id
     }
     return null
   }
@@ -384,29 +903,79 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     if (rid != null) delRelMut.mutate(rid)
   }
 
-  const span = person.birth_year
-    ? person.death_year ? `${person.birth_year}–${person.death_year}` : `* ${person.birth_year}`
-    : null
-  const images = imagesPage?.items ?? []
-
   function startHeaderEdit() {
-    setHeaderData({ name: person.name ?? '', birth: person.birth_year ? String(person.birth_year) : '', death: person.death_year ? String(person.death_year) : '' })
+    setHeaderData({
+      name: person.name ?? '',
+      birth_date: person.birth_date ?? (person.birth_year ? String(person.birth_year) : ''),
+      birth_place: person.birth_place ?? '',
+      death_date: person.death_date ?? (person.death_year ? String(person.death_year) : ''),
+      death_place: person.death_place ?? '',
+    })
     setEditingHeader(true)
   }
+
   function saveHeader() {
     saveMut.mutate({
       name: headerData.name.trim() || undefined,
-      birth_year: headerData.birth ? parseInt(headerData.birth) : null,
-      death_year: headerData.death ? parseInt(headerData.death) : null,
+      birth_date: headerData.birth_date || null,
+      birth_place: headerData.birth_place.trim() || null,
+      death_date: headerData.death_date || null,
+      death_place: headerData.death_place.trim() || null,
     })
   }
 
-  const pickerLabels: Record<NonNullable<PickerMode>, string> = {
-    parent:  'Add parent',
-    child:   'Add child',
-    spouse:  'Add spouse',
-    sibling: 'Add sibling',
+  function saveDetails() {
+    saveMut.mutate({
+      sex: (detailsData.sex || null) as 'M' | 'F' | null,
+      christening_date: detailsData.christening_date || null,
+      christening_place: detailsData.christening_place.trim() || null,
+      burial_date: detailsData.burial_date || null,
+      burial_place: detailsData.burial_place.trim() || null,
+      occupation: detailsData.occupation.trim() || null,
+    })
   }
+
+  function saveMarriage(relId: number) {
+    const e = marriageEdits[relId]
+    if (!e) return
+    updateRelMut.mutate({
+      id: relId,
+      fields: {
+        marriage_year: e.marriage_year ? parseInt(e.marriage_year) : null,
+        marriage_place: e.marriage_place.trim() || null,
+        divorce_year: e.divorce_year ? parseInt(e.divorce_year) : null,
+        divorce_place: e.divorce_place.trim() || null,
+      },
+    })
+  }
+
+  function openMarriage(rel: Relation) {
+    if (expandedRelId === rel.id) { setExpandedRelId(null); return }
+    setMarriageEdits(prev => ({
+      ...prev,
+      [rel.id]: {
+        marriage_year: rel.marriage_year ? String(rel.marriage_year) : '',
+        marriage_place: rel.marriage_place ?? '',
+        divorce_year: rel.divorce_year ? String(rel.divorce_year) : '',
+        divorce_place: rel.divorce_place ?? '',
+      },
+    }))
+    setExpandedRelId(rel.id)
+  }
+
+  const span = lifespan(person)
+  const images = imagesPage?.items ?? []
+  const visibleImages = showAllPhotos ? images : images.slice(0, PHOTOS_CAP)
+
+  // Details section visibility
+  const hasDetails = !!(person.sex || person.occupation || person.christening_date || person.christening_place ||
+    person.burial_date || person.burial_place)
+
+  const pickerLabels: Record<NonNullable<PickerMode>, string> = {
+    parent: 'Add parent', child: 'Add child', spouse: 'Add spouse', sibling: 'Add sibling',
+  }
+
+  const SEX_LABEL: Record<string, string> = { M: 'Férfi', F: 'Nő' }
 
   return (
     <>
@@ -434,22 +1003,36 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   placeholder="Name"
                   className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-2.5 py-1 text-base font-bold text-zinc-100 outline-none focus:border-brand-400 mb-2" />
               ) : (
-                <h2 className="text-lg font-bold text-zinc-100 leading-snug">{person.name ?? '(unnamed)'}</h2>
+                <h2 className="text-lg font-bold text-zinc-100 leading-snug">
+                  {person.name ?? '(unnamed)'}
+                  {person.sex && <span className="ml-1.5 text-sm font-normal text-zinc-500">{person.sex === 'M' ? '♂' : '♀'}</span>}
+                </h2>
               )}
               {editingHeader ? (
-                <div className="flex items-center gap-2">
-                  <input type="number" value={headerData.birth}
-                    onChange={e => setHeaderData(d => ({ ...d, birth: e.target.value }))} placeholder="Birth yr"
-                    className="w-24 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-zinc-200 outline-none focus:border-brand-400" />
-                  <span className="text-zinc-600">–</span>
-                  <input type="number" value={headerData.death}
-                    onChange={e => setHeaderData(d => ({ ...d, death: e.target.value }))} placeholder="Death yr"
-                    className="w-24 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-zinc-200 outline-none focus:border-brand-400" />
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-[10px] text-zinc-600 mb-1">Születés</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <DatePartPicker value={headerData.birth_date} onChange={v => setHeaderData(d => ({ ...d, birth_date: v }))} />
+                      <input value={headerData.birth_place}
+                        onChange={e => setHeaderData(d => ({ ...d, birth_place: e.target.value }))} placeholder="Hely"
+                        className="flex-1 min-w-20 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-zinc-600 mb-1">Halálozás</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <DatePartPicker value={headerData.death_date} onChange={v => setHeaderData(d => ({ ...d, death_date: v }))} />
+                      <input value={headerData.death_place}
+                        onChange={e => setHeaderData(d => ({ ...d, death_place: e.target.value }))} placeholder="Hely"
+                        className="flex-1 min-w-20 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <>
                   {span && <p className="text-sm text-zinc-400 mt-0.5">{span}</p>}
-                  <p className="text-xs text-zinc-600 mt-0.5">{person.face_count > 0 ? `${person.face_count} photos in app` : 'No photos in app'}</p>
+                  <p className="text-xs text-zinc-600 mt-0.5">{person.face_count > 0 ? `${person.face_count} fotó az appban` : 'Nincs fotó az appban'}</p>
                 </>
               )}
             </div>
@@ -458,13 +1041,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             {editingHeader ? (
               <>
                 <button onClick={saveHeader} disabled={saveMut.isPending}
-                  className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors">Save</button>
+                  className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors">Mentés</button>
                 <button onClick={() => setEditingHeader(false)}
-                  className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">Cancel</button>
+                  className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">Mégse</button>
               </>
             ) : (
               <button onClick={startHeaderEdit}
-                className="px-3 py-1 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors">Edit</button>
+                className="px-3 py-1 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors">Szerkesztés</button>
             )}
           </div>
         </div>
@@ -472,87 +1055,226 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
         {/* ── Scroll body ── */}
         <div className="flex-1 overflow-y-auto">
 
+          {/* Details */}
+          <section className="px-5 py-4 border-b border-zinc-800/80">
+            <div className="flex items-center justify-between mb-2.5">
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Részletek</h3>
+              {!editingDetails ? (
+                <button onClick={() => { setDetailsData(detailsFromPerson(person)); setEditingDetails(true) }}
+                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
+                  {hasDetails ? 'Szerkesztés' : '+ Hozzáadás'}
+                </button>
+              ) : (
+                <div className="flex gap-3">
+                  <button onClick={saveDetails} disabled={saveMut.isPending}
+                    className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Mentés</button>
+                  <button onClick={() => setEditingDetails(false)}
+                    className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Mégse</button>
+                </div>
+              )}
+            </div>
+
+            {editingDetails ? (
+              <div className="space-y-2">
+                {/* Sex */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">Nem</span>
+                  <div className="flex gap-1">
+                    {(['', 'M', 'F'] as const).map(v => (
+                      <button key={v} onClick={() => setDetailsData(d => ({ ...d, sex: v }))}
+                        className={`px-2.5 py-0.5 rounded text-xs transition-colors ${detailsData.sex === v ? 'bg-brand-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
+                        {v === '' ? '—' : v === 'M' ? 'Férfi' : 'Nő'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Occupation */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">Foglalkozás</span>
+                  <input value={detailsData.occupation} onChange={e => setDetailsData(d => ({ ...d, occupation: e.target.value }))}
+                    placeholder="pl. tanár, földműves…"
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                </div>
+                {/* Christening */}
+                <div>
+                  <span className="text-xs text-zinc-500 block mb-1">Keresztelő</span>
+                  <div className="flex items-center gap-1.5 flex-wrap pl-0">
+                    <DatePartPicker value={detailsData.christening_date} onChange={v => setDetailsData(d => ({ ...d, christening_date: v }))} />
+                    <input value={detailsData.christening_place} onChange={e => setDetailsData(d => ({ ...d, christening_place: e.target.value }))}
+                      placeholder="Hely"
+                      className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                  </div>
+                </div>
+                {/* Burial */}
+                <div>
+                  <span className="text-xs text-zinc-500 block mb-1">Temetés</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <DatePartPicker value={detailsData.burial_date} onChange={v => setDetailsData(d => ({ ...d, burial_date: v }))} />
+                    <input value={detailsData.burial_place} onChange={e => setDetailsData(d => ({ ...d, burial_place: e.target.value }))}
+                      placeholder="Hely"
+                      className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                  </div>
+                </div>
+              </div>
+            ) : hasDetails ? (
+              <dl className="space-y-1">
+                {person.sex && (
+                  <div className="flex gap-2 text-xs">
+                    <dt className="text-zinc-500 w-20 shrink-0">Nem</dt>
+                    <dd className="text-zinc-300">{SEX_LABEL[person.sex]}</dd>
+                  </div>
+                )}
+                {person.occupation && (
+                  <div className="flex gap-2 text-xs">
+                    <dt className="text-zinc-500 w-20 shrink-0">Foglalkozás</dt>
+                    <dd className="text-zinc-300">{person.occupation}</dd>
+                  </div>
+                )}
+                {(person.christening_date || person.christening_place) && (
+                  <div className="flex gap-2 text-xs">
+                    <dt className="text-zinc-500 w-20 shrink-0">Keresztelő</dt>
+                    <dd className="text-zinc-300">{[formatDateHu(person.christening_date, person.christening_year), person.christening_place].filter(Boolean).join(', ')}</dd>
+                  </div>
+                )}
+                {(person.burial_date || person.burial_place) && (
+                  <div className="flex gap-2 text-xs">
+                    <dt className="text-zinc-500 w-20 shrink-0">Temetés</dt>
+                    <dd className="text-zinc-300">{[formatDateHu(person.burial_date, person.burial_year), person.burial_place].filter(Boolean).join(', ')}</dd>
+                  </div>
+                )}
+              </dl>
+            ) : (
+              <p className="text-sm text-zinc-600 italic">Nincs részletes adat</p>
+            )}
+          </section>
+
           {/* Notes */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-2.5">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Notes</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Megjegyzések</h3>
               {!editingNotes ? (
                 <button onClick={() => { setNotesVal(person.notes ?? ''); setEditingNotes(true) }}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
-                  {person.notes ? 'Edit' : '+ Add'}
+                  {person.notes ? 'Szerkesztés' : '+ Hozzáadás'}
                 </button>
               ) : (
                 <div className="flex gap-3">
                   <button onClick={() => saveMut.mutate({ notes: notesVal.trim() || null })} disabled={saveMut.isPending}
-                    className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Save</button>
+                    className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Mentés</button>
                   <button onClick={() => setEditingNotes(false)}
-                    className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Cancel</button>
+                    className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Mégse</button>
                 </div>
               )}
             </div>
             {editingNotes ? (
               <textarea autoFocus value={notesVal} onChange={e => setNotesVal(e.target.value)} rows={3}
-                placeholder="Notes about this person..."
+                placeholder="Megjegyzések…"
                 className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400/60 resize-none leading-relaxed" />
             ) : person.notes ? (
               <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{person.notes}</p>
             ) : (
-              <p className="text-sm text-zinc-600 italic">No notes</p>
+              <p className="text-sm text-zinc-600 italic">Nincs megjegyzés</p>
             )}
           </section>
 
           {/* Relations */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Relations</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Kapcsolatok</h3>
               {!editingRelations ? (
                 <button onClick={() => setEditingRelations(true)}
-                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">Edit</button>
+                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">Szerkesztés</button>
               ) : (
                 <button onClick={() => setEditingRelations(false)}
-                  className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Done</button>
+                  className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Kész</button>
               )}
             </div>
             <div className="space-y-3.5">
-              <RelRow
-                label="Parents"
-                persons={parents}
-                editing={editingRelations}
-                onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('parent', p)}
-                addLabel="Parent"
-                onAdd={() => setPickerMode('parent')}
-                addDisabled={parents.length >= 2}
-              />
-              <RelRow
-                label="Spouse / Partner"
-                persons={spouses}
-                editing={editingRelations}
-                onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('spouse', p)}
-                addLabel="Spouse"
-                onAdd={() => setPickerMode('spouse')}
-              />
-              <RelRow
-                label="Children"
-                persons={children}
-                editing={editingRelations}
-                onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('parent', p)}
-                addLabel="Child"
-                onAdd={() => setPickerMode('child')}
-              />
-              <RelRow
-                label="Siblings"
-                persons={siblings}
-                editing={editingRelations}
-                onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('sibling', p)}
-                addLabel="Sibling"
-                onAdd={() => setPickerMode('sibling')}
-              />
-              {!editingRelations && parents.length === 0 && spouses.length === 0 && children.length === 0 && siblings.length === 0 && (
-                <p className="text-sm text-zinc-600 italic">No relations recorded</p>
+              <RelRow label="Szülők" persons={parents} editing={editingRelations} onNavigate={onNavigateTo}
+                onRemove={p => handleRemove('parent', p)} addLabel="Szülő" onAdd={() => setPickerMode('parent')} addDisabled={parents.length >= 2} />
+
+              {/* Spouses — rendered manually for marriage details */}
+              {(editingRelations || spouseRelations.length > 0) && (
+                <div>
+                  <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1.5">Házastárs / Partner</p>
+                  <div className="space-y-2">
+                    {spouseRelations.map(({ rel, p }) => (
+                      <div key={rel.id}>
+                        <div className="flex items-center gap-1.5">
+                          <div className="inline-flex items-center group">
+                            <button onClick={() => onNavigateTo(p.id)}
+                              className="inline-flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 hover:border-zinc-500 rounded-full transition-colors max-w-[160px]">
+                              <Avatar person={p} size={20} />
+                              <span className="text-xs text-zinc-200 truncate leading-none">{p.name ?? '(unnamed)'}</span>
+                            </button>
+                            {editingRelations && (
+                              <button onClick={() => handleRemove('spouse', p)}
+                                className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0"
+                                title="Eltávolítás">✕</button>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => openMarriage(rel)}
+                            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${expandedRelId === rel.id ? 'text-brand-400 bg-brand-500/10' : 'text-zinc-600 hover:text-zinc-300'}`}
+                          >
+                            {rel.marriage_year || rel.marriage_place
+                              ? `Házasság: ${[rel.marriage_year, rel.marriage_place].filter(Boolean).join(', ')}`
+                              : '+ házassági adat'}
+                          </button>
+                        </div>
+                        {expandedRelId === rel.id && (
+                          <div className="mt-2 ml-2 pl-3 border-l border-zinc-700 space-y-1.5">
+                            <div className="flex gap-1.5">
+                              <input type="number" placeholder="Házasság éve"
+                                value={marriageEdits[rel.id]?.marriage_year ?? ''}
+                                onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], marriage_year: e.target.value } }))}
+                                className="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                              <input placeholder="Helyszín"
+                                value={marriageEdits[rel.id]?.marriage_place ?? ''}
+                                onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], marriage_place: e.target.value } }))}
+                                className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                            </div>
+                            <div className="flex gap-1.5">
+                              <input type="number" placeholder="Válás éve"
+                                value={marriageEdits[rel.id]?.divorce_year ?? ''}
+                                onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], divorce_year: e.target.value } }))}
+                                className="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                              <input placeholder="Helyszín"
+                                value={marriageEdits[rel.id]?.divorce_place ?? ''}
+                                onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], divorce_place: e.target.value } }))}
+                                className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                            </div>
+                            <div className="flex gap-1.5 pt-0.5">
+                              <button onClick={() => saveMarriage(rel.id)} disabled={updateRelMut.isPending}
+                                className="px-3 py-0.5 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded transition-colors">
+                                Mentés
+                              </button>
+                              <button onClick={() => setExpandedRelId(null)}
+                                className="px-3 py-0.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+                                Mégse
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {editingRelations && (
+                      <button onClick={() => setPickerMode('spouse')}
+                        className="inline-flex items-center gap-1 h-7 px-2.5 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-dashed border-zinc-700 hover:border-zinc-500 rounded-full transition-colors">
+                        + Házastárs
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <RelRow label="Gyermekek" persons={children} editing={editingRelations} onNavigate={onNavigateTo}
+                onRemove={p => handleRemove('parent', p)} addLabel="Gyermek" onAdd={() => setPickerMode('child')} />
+              <RelRow label="Testvérek" persons={siblings} editing={editingRelations} onNavigate={onNavigateTo}
+                onRemove={p => handleRemove('sibling', p)} addLabel="Testvér" onAdd={() => setPickerMode('sibling')} />
+
+              {!editingRelations && parents.length === 0 && spouseRelations.length === 0 && children.length === 0 && siblings.length === 0 && (
+                <p className="text-sm text-zinc-600 italic">Nincs rögzített kapcsolat</p>
               )}
             </div>
           </section>
@@ -560,103 +1282,125 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {/* Clusters */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-2.5">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Photo clusters</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Fotóklaszterek</h3>
               {person.clusters.length === 0 && (
-                <button
-                  onClick={() => { setShowClusterPicker(p => !p); setClusterSearch('') }}
-                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
-                >
-                  + Assign cluster
-                </button>
+                <button onClick={() => { setShowClusterPicker(p => !p); setClusterSearch('') }}
+                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">+ Klaszter hozzáadása</button>
               )}
             </div>
             {person.clusters.length === 0 && !showClusterPicker && (
-              <p className="text-sm text-zinc-600 italic">No cluster assigned</p>
+              <p className="text-sm text-zinc-600 italic">Nincs hozzárendelt klaszter</p>
             )}
             {person.clusters.length > 0 && (
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-2">
                   {person.clusters.map(c => (
                     <div key={c.id} className="flex items-center gap-1.5 bg-zinc-800 border border-zinc-700 rounded-full pl-2.5 pr-1.5 py-1">
-                      <span className="text-xs text-zinc-300">
-                        Cluster {String(c.label).padStart(3, '0')}
-                      </span>
-                      <span className="text-xs text-zinc-600 tabular-nums">· {c.face_count} faces</span>
-                      <button
-                        onClick={() => handleUnlinkCluster(c.id)}
-                        title="Unlink"
-                        className="w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0"
-                      >✕</button>
+                      <span className="text-xs text-zinc-300">Klaszter {String(c.label).padStart(3, '0')}</span>
+                      <span className="text-xs text-zinc-600 tabular-nums">· {c.face_count} arc</span>
+                      <button onClick={() => handleUnlinkCluster(c.id)} title="Lekapcsolás"
+                        className="w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0">✕</button>
                     </div>
                   ))}
                 </div>
                 {person.clusters.length > 1 && (
-                  <p className="text-xs text-amber-600">
-                    Multiple clusters assigned — merge them in the Clusters tab.
-                  </p>
+                  <p className="text-xs text-amber-600">Több klaszter van hozzárendelve — egyesítsd őket a Clusters lapon.</p>
                 )}
               </div>
             )}
             {showClusterPicker && (
               <div className="mt-2 bg-zinc-800 border border-zinc-700 rounded-xl overflow-hidden">
                 <div className="p-2 border-b border-zinc-700">
-                  <input
-                    autoFocus
-                    type="search"
-                    value={clusterSearch}
-                    onChange={e => setClusterSearch(e.target.value)}
-                    placeholder="Search cluster…"
-                    className="w-full bg-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
-                  />
+                  <input autoFocus type="search" value={clusterSearch}
+                    onChange={e => setClusterSearch(e.target.value)} placeholder="Klaszter keresése…"
+                    className="w-full bg-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
                 </div>
                 <div className="max-h-52 overflow-y-auto">
-                  {unlinkedClusters
-                    .filter(c => String(c.label).includes(clusterSearch) || clusterSearch === '')
-                    .map(c => (
-                      <button
-                        key={c.id}
-                        onClick={() => handleLinkCluster(c)}
-                        disabled={clusterLinking}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left hover:bg-zinc-700 transition-colors"
-                      >
-                        <div className="flex gap-px shrink-0">
-                          {c.preview_face_ids?.slice(0, 2).map(fid => (
-                            <img key={fid} src={api.faceThumbnailUrl(fid, 32)} className="w-7 h-7 rounded object-cover" alt="" />
-                          )) ?? <div className="w-7 h-7 rounded bg-zinc-600" />}
-                        </div>
-                        <span className="text-zinc-200">Cluster {String(c.label).padStart(3, '0')}</span>
-                        <span className="ml-auto text-xs text-zinc-500 shrink-0 tabular-nums">{c.face_count} faces</span>
-                      </button>
-                    ))}
+                  {unlinkedClusters.filter(c => String(c.label).includes(clusterSearch) || clusterSearch === '').map(c => (
+                    <button key={c.id} onClick={() => handleLinkCluster(c)} disabled={clusterLinking}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left hover:bg-zinc-700 transition-colors">
+                      <div className="flex gap-px shrink-0">
+                        {c.preview_face_ids?.slice(0, 2).map(fid => (
+                          <img key={fid} src={api.faceThumbnailUrl(fid, 32)} className="w-7 h-7 rounded object-cover" alt="" />
+                        )) ?? <div className="w-7 h-7 rounded bg-zinc-600" />}
+                      </div>
+                      <span className="text-zinc-200">Klaszter {String(c.label).padStart(3, '0')}</span>
+                      <span className="ml-auto text-xs text-zinc-500 shrink-0 tabular-nums">{c.face_count} arc</span>
+                    </button>
+                  ))}
                   {unlinkedClusters.filter(c => String(c.label).includes(clusterSearch) || clusterSearch === '').length === 0 && (
-                    <p className="text-xs text-zinc-600 px-3 py-3">No unassigned clusters</p>
+                    <p className="text-xs text-zinc-600 px-3 py-3">Nincs szabad klaszter</p>
                   )}
                 </div>
                 <div className="border-t border-zinc-700 px-3 py-2">
-                  <button onClick={() => setShowClusterPicker(false)} className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Close</button>
+                  <button onClick={() => setShowClusterPicker(false)} className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Bezárás</button>
                 </div>
               </div>
             )}
           </section>
 
           {/* Photos */}
-          <section className="px-5 py-4">
-            <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3">
-              Photos{imagesPage ? ` (${imagesPage.total})` : ''}
-            </h3>
+          <section className="px-5 py-4 border-b border-zinc-800/80">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                Fényképek{imagesPage ? ` (${imagesPage.total})` : ''}
+              </h3>
+              {images.length > PHOTOS_CAP && (
+                <button onClick={() => setShowAllPhotos(s => !s)}
+                  className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+                  {showAllPhotos ? 'Kevesebb' : `Mind (${images.length})`}
+                </button>
+              )}
+            </div>
             {loadingImgs ? (
               <div className="grid grid-cols-3 gap-1.5">
-                {Array.from({ length: 6 }).map((_, i) => <div key={i} className="aspect-square rounded-lg bg-zinc-800 animate-pulse" />)}
+                {Array.from({ length: PHOTOS_CAP }).map((_, i) => <div key={i} className="aspect-square rounded-lg bg-zinc-800 animate-pulse" />)}
               </div>
             ) : images.length === 0 ? (
-              <p className="text-sm text-zinc-600 italic">No photos</p>
+              <p className="text-sm text-zinc-600 italic">Nincs fotó</p>
             ) : (
               <>
-                <PhotoGallery images={images} onOpen={setLightboxIdx} />
-                {imagesPage && imagesPage.total > images.length && (
-                  <p className="text-xs text-zinc-600 text-center mt-3">+ {imagesPage.total - images.length} more photos</p>
+                <PhotoGallery images={visibleImages} onOpen={setLightboxIdx} />
+                {!showAllPhotos && images.length > PHOTOS_CAP && (
+                  <button onClick={() => setShowAllPhotos(true)}
+                    className="mt-2 w-full text-xs text-zinc-500 hover:text-zinc-300 transition-colors py-1">
+                    + {images.length - PHOTOS_CAP} további fotó
+                  </button>
                 )}
               </>
+            )}
+          </section>
+
+          {/* Documents */}
+          <section className="px-5 py-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                Iratok{docs.length > 0 ? ` (${docs.length})` : ''}
+              </h3>
+              <button
+                onClick={() => setShowUploadForm(s => !s)}
+                className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
+              >
+                {showUploadForm ? 'Mégse' : '+ Feltöltés'}
+              </button>
+            </div>
+
+            {showUploadForm && (
+              <DocUploadForm personId={person.id} onDone={() => setShowUploadForm(false)} />
+            )}
+
+            {loadingDocs ? (
+              <div className="space-y-2">
+                {[1, 2].map(i => <div key={i} className="h-8 rounded bg-zinc-800 animate-pulse" />)}
+              </div>
+            ) : docs.length === 0 && !showUploadForm ? (
+              <p className="text-sm text-zinc-600 italic">Nincs csatolt irat</p>
+            ) : (
+              <div className="divide-y divide-zinc-800/60">
+                {docs.map(doc => (
+                  <DocRow key={doc.id} doc={doc} onDelete={() => deleteDocMut.mutate(doc.id)} />
+                ))}
+              </div>
             )}
           </section>
 
@@ -674,13 +1418,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
         />
       )}
 
-      {/* Lightbox rendered outside the transform div so fixed positioning works correctly */}
       {lightboxIdx !== null && (
         <Lightbox
           images={images}
           idx={lightboxIdx}
           onClose={() => setLightboxIdx(null)}
           onChange={setLightboxIdx}
+          onNavigateTo={id => { setLightboxIdx(null); onNavigateTo(id) }}
         />
       )}
     </>

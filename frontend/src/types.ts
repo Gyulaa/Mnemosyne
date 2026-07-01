@@ -128,8 +128,20 @@ export interface LinkedCluster {
 export interface PersonFull {
   id: number
   name: string | null
+  sex: 'M' | 'F' | null
   birth_year: number | null
+  birth_place: string | null
+  birth_date: string | null
+  christening_year: number | null
+  christening_place: string | null
+  christening_date: string | null
   death_year: number | null
+  death_place: string | null
+  death_date: string | null
+  burial_year: number | null
+  burial_place: string | null
+  burial_date: string | null
+  occupation: string | null
   notes: string | null
   thumbnail_face_id: number | null
   face_count: number
@@ -141,4 +153,21 @@ export interface Relation {
   type: 'parent' | 'spouse' | 'sibling'
   person_a_id: number
   person_b_id: number
+  marriage_year: number | null
+  marriage_place: string | null
+  divorce_year: number | null
+  divorce_place: string | null
+}
+
+export interface PersonDocument {
+  id: number
+  person_id: number
+  stored_name: string
+  filename: string
+  mime_type: string | null
+  title: string | null
+  doc_type: string | null
+  year: number | null
+  description: string | null
+  created_at: string | null
 }

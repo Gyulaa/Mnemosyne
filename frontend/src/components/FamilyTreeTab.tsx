@@ -199,7 +199,7 @@ function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const [deathYear, setDeathYear] = useState('')
   const qc = useQueryClient()
   const mut = useMutation({
-    mutationFn: () => api.persons.create(name.trim(), birthYear ? parseInt(birthYear) : null, deathYear ? parseInt(deathYear) : null),
+    mutationFn: () => api.persons.create({ name: name.trim(), birth_year: birthYear ? parseInt(birthYear) : null, death_year: deathYear ? parseInt(deathYear) : null }),
     onSuccess: p => { qc.invalidateQueries({ queryKey: ['persons'] }); onCreated(p) },
   })
 
@@ -246,9 +246,13 @@ function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated
 export default function FamilyTreeTab({
   onExportStart,
   onExportEnd,
+  navTarget,
+  onNavConsumed,
 }: {
   onExportStart?: () => void
   onExportEnd?: (error?: string) => void
+  navTarget?: { personId: number; key: number } | null
+  onNavConsumed?: () => void
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null)
@@ -259,6 +263,12 @@ export default function FamilyTreeTab({
     catch { return {} }
   })
   const [selectedId, setSelectedId] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!navTarget) return
+    setSelectedId(navTarget.personId)
+    onNavConsumed?.()
+  }, [navTarget?.key])
   const [showNew, setShowNew] = useState(false)
   const [search, setSearch] = useState('')
   const [showOnlyUnlinked, setShowOnlyUnlinked] = useState(false)

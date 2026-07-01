@@ -26,6 +26,7 @@ export default function App() {
   const [imageNavFilter, setImageNavFilter] = useState<{ personIds: number[]; key: number } | null>(null)
   const [imageOpenTarget, setImageOpenTarget] = useState<{ imageId: number; personIds: number[]; key: number } | null>(null)
   const [clusterNavTarget, setClusterNavTarget] = useState<{ clusterId: number; key: number } | null>(null)
+  const [genealogyNavTarget, setGenealogyNavTarget] = useState<{ personId: number; key: number } | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
 
@@ -42,6 +43,11 @@ export default function App() {
   function navToCluster(clusterId: number) {
     setTab('clusters')
     setClusterNavTarget({ clusterId, key: Date.now() })
+  }
+
+  function navToGenealogy(personId: number) {
+    setTab('genealogy')
+    setGenealogyNavTarget({ personId, key: Date.now() })
   }
 
   function onExportStart() {
@@ -95,11 +101,11 @@ export default function App() {
           tab === 'genealogy' ? 'overflow-hidden' : 'overflow-auto',
         ].join(' ')}>
           {tab === 'genealogy' ? (
-            <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} />
+            <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} />
           ) : (
             <div className={tab === 'connections' ? 'px-4 py-4' : 'max-w-6xl mx-auto px-6 py-8'}>
               {tab === 'scan'        ? <ScanTab /> :
-               tab === 'clusters'   ? <ClustersTab navTarget={clusterNavTarget} onNavToCluster={navToCluster} onNavToImage={navToImage} onNavConsumed={() => setClusterNavTarget(null)} onExportStart={onExportStart} onExportEnd={onExportEnd} /> :
+               tab === 'clusters'   ? <ClustersTab navTarget={clusterNavTarget} onNavToCluster={navToCluster} onNavToImage={navToImage} onNavConsumed={() => setClusterNavTarget(null)} onNavToGenealogy={navToGenealogy} onExportStart={onExportStart} onExportEnd={onExportEnd} /> :
                tab === 'images'     ? <ImagesTab navFilter={imageNavFilter} openImageTarget={imageOpenTarget} onImageTargetConsumed={() => setImageOpenTarget(null)} onNavToCluster={navToCluster} onExportStart={onExportStart} onExportEnd={onExportEnd} /> :
                <ConnectionsTab onEdgeClick={navToImages} onNodeClick={navToCluster} />}
             </div>

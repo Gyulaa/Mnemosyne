@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument } from './types'
 
 const BASE = '/api'
 
@@ -156,9 +156,9 @@ export const api = {
   },
   persons: {
     list: () => fetchJson<PersonFull[]>(`${BASE}/persons`),
-    create: (name: string, birth_year?: number | null, death_year?: number | null, notes?: string | null) =>
-      post<PersonFull>(`${BASE}/persons`, { name, birth_year, death_year, notes }),
-    update: (id: number, patch: Partial<Pick<PersonFull, 'name' | 'birth_year' | 'death_year' | 'notes'>>) =>
+    create: (fields: Partial<Omit<PersonFull, 'id' | 'thumbnail_face_id' | 'face_count' | 'clusters'>> & { name: string }) =>
+      post<PersonFull>(`${BASE}/persons`, fields),
+    update: (id: number, patch: Partial<Omit<PersonFull, 'id' | 'thumbnail_face_id' | 'face_count' | 'clusters'>>) =>
       fetchJson<PersonFull>(`${BASE}/persons/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -171,8 +171,30 @@ export const api = {
     list: () => fetchJson<Relation[]>(`${BASE}/relations`),
     create: (type: 'parent' | 'spouse' | 'sibling', person_a_id: number, person_b_id: number) =>
       post<Relation>(`${BASE}/relations`, { type, person_a_id, person_b_id }),
+    update: (id: number, fields: Partial<Pick<Relation, 'marriage_year' | 'marriage_place' | 'divorce_year' | 'divorce_place'>>) =>
+      patch<Relation>(`${BASE}/relations/${id}`, fields),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/relations/${id}`, { method: 'DELETE' }),
+  },
+  documents: {
+    list: (personId: number) => fetchJson<PersonDocument[]>(`${BASE}/persons/${personId}/documents`),
+    upload: async (personId: number, file: File, meta: { title?: string; doc_type?: string; year?: number; description?: string }): Promise<PersonDocument> => {
+      const fd = new FormData()
+      fd.append('file', file)
+      if (meta.title) fd.append('title', meta.title)
+      if (meta.doc_type) fd.append('doc_type', meta.doc_type)
+      if (meta.year != null) fd.append('year', String(meta.year))
+      if (meta.description) fd.append('description', meta.description)
+      const res = await fetch(`${BASE}/persons/${personId}/documents`, { method: 'POST', body: fd })
+      if (!res.ok) throw new Error(await res.text())
+      return res.json()
+    },
+    update: (id: number, fields: Partial<Pick<PersonDocument, 'title' | 'doc_type' | 'year' | 'description'>>) =>
+      patch<PersonDocument>(`${BASE}/documents/${id}`, fields),
+    delete: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/documents/${id}`, { method: 'DELETE' }),
+    fileUrl: (id: number, download = false) =>
+      `${BASE}/documents/${id}/file${download ? '?dl=1' : ''}`,
   },
   faceThumbnailUrl: (id: number, size = 160) =>
     `${BASE}/faces/${id}/thumbnail?size=${size}`,

@@ -13,6 +13,7 @@ export default function ClustersTab({
   onNavToCluster,
   onNavToImage,
   onNavConsumed,
+  onNavToGenealogy,
   onExportStart,
   onExportEnd,
 }: {
@@ -20,6 +21,7 @@ export default function ClustersTab({
   onNavToCluster?: (clusterId: number) => void
   onNavToImage?: (imageId: number, personIds: number[]) => void
   onNavConsumed?: () => void
+  onNavToGenealogy?: (personId: number) => void
   onExportStart?: () => void
   onExportEnd?: (error?: string) => void
 }) {
@@ -251,6 +253,7 @@ export default function ClustersTab({
           onNavToCluster={onNavToCluster}
           onNavToImage={onNavToImage}
           onOpenCluster={setSelected}
+          onNavToGenealogy={onNavToGenealogy}
         />
       )}
     </div>
@@ -334,6 +337,7 @@ function ClusterModal({
   onNavToCluster,
   onNavToImage,
   onOpenCluster,
+  onNavToGenealogy,
 }: {
   cluster: Cluster
   allClusters: Cluster[]
@@ -341,6 +345,7 @@ function ClusterModal({
   onNavToCluster?: (clusterId: number) => void
   onNavToImage?: (imageId: number, personIds: number[]) => void
   onOpenCluster?: (cluster: Cluster) => void
+  onNavToGenealogy?: (personId: number) => void
 }) {
   const queryClient = useQueryClient()
   const isNoise = cluster.label === -1
@@ -597,12 +602,26 @@ function ClusterModal({
                 )
               )}
             </div>
-            <button
-              onClick={onClose}
-              className="text-zinc-500 hover:text-zinc-200 text-xl leading-none p-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
-            >
-              ✕
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              {cluster.person_id != null && onNavToGenealogy && (
+                <button
+                  onClick={() => { onNavToGenealogy(cluster.person_id!); onClose() }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-brand-300 hover:text-brand-200 bg-brand-900/30 hover:bg-brand-900/50 border border-brand-700/50 rounded-lg transition-colors whitespace-nowrap"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 11l5-5m0 0l5 5m-5-5v12" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 20h18" />
+                  </svg>
+                  Show on tree
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                className="text-zinc-500 hover:text-zinc-200 text-xl leading-none p-1.5 rounded-lg hover:bg-zinc-800 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
           </div>
 
           {!isNoise && (
@@ -757,6 +776,7 @@ function ClusterModal({
               personId={cluster.person_id}
               allClusters={allClusters}
               onOpenCluster={onOpenCluster}
+              onNavToGenealogy={onNavToGenealogy}
             />
           ) : (
             <MergePanel cluster={cluster} otherClusters={otherClusters} onMerged={onClose} />
@@ -928,11 +948,16 @@ function RelativeRow({
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm text-zinc-100 truncate">{person.name ?? '(névtelen)'}</div>
-        {(person.birth_year || person.death_year) && (
-          <div className="text-xs text-zinc-500 tabular-nums">
-            {person.birth_year ?? '?'}–{person.death_year ?? ''}
-          </div>
-        )}
+        <div className="text-xs text-zinc-500 tabular-nums">
+          {(person.birth_date || person.birth_year) && (person.death_date || person.death_year)
+            ? `${person.birth_date?.split('-')[0] ?? person.birth_year}–${person.death_date?.split('-')[0] ?? person.death_year}`
+            : (person.birth_date || person.birth_year)
+            ? `* ${person.birth_date?.split('-')[0] ?? person.birth_year}`
+            : (person.death_date || person.death_year)
+            ? `† ${person.death_date?.split('-')[0] ?? person.death_year}`
+            : person.occupation ?? ''
+          }
+        </div>
       </div>
       {onNavigate && (
         <svg className="w-4 h-4 text-zinc-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -947,10 +972,12 @@ function GenealogyTab({
   personId,
   allClusters,
   onOpenCluster,
+  onNavToGenealogy,
 }: {
   personId: number
   allClusters: Cluster[]
   onOpenCluster?: (cluster: Cluster) => void
+  onNavToGenealogy?: (personId: number) => void
 }) {
   const { data: persons = [], isLoading: personsLoading } = useQuery<PersonFull[]>({
     queryKey: ['persons'],
@@ -1042,6 +1069,8 @@ function GenealogyTab({
     return <p className="text-center text-zinc-600 py-10 text-sm">Betöltés…</p>
   }
 
+  const mainPerson = byId.get(personId)
+
   const sections = [
     { label: 'Szülők',          persons: relatives.parents },
     { label: 'Testvérek',       persons: relatives.siblings },
@@ -1052,14 +1081,6 @@ function GenealogyTab({
   ]
 
   const hasAny = sections.some(s => s.persons.length > 0)
-  if (!hasAny) {
-    return (
-      <div className="py-12 text-center space-y-1">
-        <p className="text-zinc-500 text-sm">Nem találhatók hozzátartozók.</p>
-        <p className="text-zinc-600 text-xs">Adj hozzá kapcsolatokat a Genealogy fülön.</p>
-      </div>
-    )
-  }
 
   function navigateTo(person: PersonFull) {
     if (!onOpenCluster || !person.clusters.length) return undefined
@@ -1068,23 +1089,62 @@ function GenealogyTab({
     return () => onOpenCluster(cluster)
   }
 
+  function fmtYear(date: string | null | undefined, year: number | null | undefined) {
+    return date?.split('-')[0] ?? (year != null ? String(year) : null)
+  }
+
+  const bioRows: { label: string; value: string }[] = []
+  if (mainPerson) {
+    const birthY = fmtYear(mainPerson.birth_date, mainPerson.birth_year)
+    const deathY = fmtYear(mainPerson.death_date, mainPerson.death_year)
+    const christY = fmtYear(mainPerson.christening_date, mainPerson.christening_year)
+    const burialY = fmtYear(mainPerson.burial_date, mainPerson.burial_year)
+    if (birthY || mainPerson.birth_place) bioRows.push({ label: 'Születés', value: [birthY, mainPerson.birth_place].filter(Boolean).join(', ') })
+    if (christY || mainPerson.christening_place) bioRows.push({ label: 'Keresztelő', value: [christY, mainPerson.christening_place].filter(Boolean).join(', ') })
+    if (deathY || mainPerson.death_place) bioRows.push({ label: 'Halálozás', value: [deathY, mainPerson.death_place].filter(Boolean).join(', ') })
+    if (burialY || mainPerson.burial_place) bioRows.push({ label: 'Temetés', value: [burialY, mainPerson.burial_place].filter(Boolean).join(', ') })
+    if (mainPerson.occupation) bioRows.push({ label: 'Foglalkozás', value: mainPerson.occupation })
+    if (mainPerson.sex) bioRows.push({ label: 'Nem', value: mainPerson.sex === 'M' ? 'Férfi' : 'Nő' })
+  }
+
   return (
-    <div className="space-y-5 py-2">
-      {sections.map(({ label, persons }) => {
-        if (!persons.length) return null
-        return (
-          <div key={label}>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 px-3 pb-1">
-              {label}
-            </p>
-            <div>
-              {persons.map(p => (
-                <RelativeRow key={p.id} person={p} onNavigate={navigateTo(p)} />
-              ))}
+    <div className="space-y-4 py-2">
+      {/* Bio card */}
+      {bioRows.length > 0 && (
+        <div className="mx-3 bg-zinc-800/50 border border-zinc-700/60 rounded-xl px-4 py-3 space-y-1.5">
+          {bioRows.map(({ label, value }) => (
+            <div key={label} className="flex gap-2 text-xs">
+              <span className="text-zinc-500 w-20 shrink-0">{label}</span>
+              <span className="text-zinc-200">{value}</span>
             </div>
-          </div>
-        )
-      })}
+          ))}
+        </div>
+      )}
+
+      {!hasAny ? (
+        <div className="py-8 text-center space-y-1">
+          <p className="text-zinc-500 text-sm">Nem találhatók hozzátartozók.</p>
+          <p className="text-zinc-600 text-xs">Adj hozzá kapcsolatokat a Genealogy fülön.</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {sections.map(({ label, persons }) => {
+            if (!persons.length) return null
+            return (
+              <div key={label}>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 px-3 pb-1">
+                  {label}
+                </p>
+                <div>
+                  {persons.map(p => (
+                    <RelativeRow key={p.id} person={p} onNavigate={navigateTo(p)} />
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

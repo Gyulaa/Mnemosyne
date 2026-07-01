@@ -48,13 +48,26 @@ class Person(Base):
     __tablename__ = "persons"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=True)
+    sex = Column(String, nullable=True)               # 'M' | 'F'
     birth_year = Column(Integer, nullable=True)
+    birth_place = Column(String, nullable=True)
+    christening_year = Column(Integer, nullable=True)
+    christening_place = Column(String, nullable=True)
     death_year = Column(Integer, nullable=True)
+    death_place = Column(String, nullable=True)
+    burial_year = Column(Integer, nullable=True)
+    burial_place = Column(String, nullable=True)
+    occupation = Column(String, nullable=True)
+    birth_date = Column(String, nullable=True)        # "YYYY" | "YYYY-MM" | "YYYY-MM-DD"
+    death_date = Column(String, nullable=True)
+    christening_date = Column(String, nullable=True)
+    burial_date = Column(String, nullable=True)
     notes = Column(String, nullable=True)
     thumbnail_face_id = Column(Integer, nullable=True)
     clusters = relationship("Cluster", back_populates="person")
     relations_as_a = relationship("Relation", foreign_keys="Relation.person_a_id", back_populates="person_a", cascade="all, delete-orphan")
     relations_as_b = relationship("Relation", foreign_keys="Relation.person_b_id", back_populates="person_b", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="person", cascade="all, delete-orphan")
 
 
 class Relation(Base):
@@ -63,8 +76,27 @@ class Relation(Base):
     person_a_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
     person_b_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
     type = Column(String, nullable=False)  # 'parent' (a=szülő, b=gyerek) | 'spouse'
+    marriage_year = Column(Integer, nullable=True)
+    marriage_place = Column(String, nullable=True)
+    divorce_year = Column(Integer, nullable=True)
+    divorce_place = Column(String, nullable=True)
     person_a = relationship("Person", foreign_keys=[person_a_id], back_populates="relations_as_a")
     person_b = relationship("Person", foreign_keys=[person_b_id], back_populates="relations_as_b")
+
+
+class Document(Base):
+    __tablename__ = "documents"
+    id = Column(Integer, primary_key=True, index=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
+    stored_name = Column(String, nullable=False)   # UUID-alapú fájlnév a lemezen
+    filename = Column(String, nullable=False)       # eredeti fájlnév (megjelenítésre)
+    mime_type = Column(String, nullable=True)
+    title = Column(String, nullable=True)
+    doc_type = Column(String, nullable=True)        # birth_cert | death_cert | ...
+    year = Column(Integer, nullable=True)
+    description = Column(String, nullable=True)
+    created_at = Column(String, nullable=True)      # ISO timestamp
+    person = relationship("Person", back_populates="documents")
 
 
 def configure_engine(engine):
@@ -89,12 +121,59 @@ def init_db_schema(engine):
             "ALTER TABLE persons ADD COLUMN notes TEXT",
             "ALTER TABLE persons ADD COLUMN thumbnail_face_id INTEGER",
             "ALTER TABLE persons ADD COLUMN birth_year INTEGER",
+            # Phase 2: extended biographical fields
+            "ALTER TABLE persons ADD COLUMN sex TEXT",
+            "ALTER TABLE persons ADD COLUMN birth_place TEXT",
+            "ALTER TABLE persons ADD COLUMN christening_year INTEGER",
+            "ALTER TABLE persons ADD COLUMN christening_place TEXT",
+            "ALTER TABLE persons ADD COLUMN death_place TEXT",
+            "ALTER TABLE persons ADD COLUMN burial_year INTEGER",
+            "ALTER TABLE persons ADD COLUMN burial_place TEXT",
+            "ALTER TABLE persons ADD COLUMN occupation TEXT",
+            # Phase 3: full/partial dates stored as TEXT ("YYYY", "YYYY-MM", "YYYY-MM-DD")
+            "ALTER TABLE persons ADD COLUMN birth_date TEXT",
+            "ALTER TABLE persons ADD COLUMN death_date TEXT",
+            "ALTER TABLE persons ADD COLUMN christening_date TEXT",
+            "ALTER TABLE persons ADD COLUMN burial_date TEXT",
+            # Phase 2: marriage/divorce data on relations
+            "ALTER TABLE relations ADD COLUMN marriage_year INTEGER",
+            "ALTER TABLE relations ADD COLUMN marriage_place TEXT",
+            "ALTER TABLE relations ADD COLUMN divorce_year INTEGER",
+            "ALTER TABLE relations ADD COLUMN divorce_place TEXT",
         ]:
             try:
                 conn.execute(text(stmt))
                 conn.commit()
             except Exception:
                 pass  # column already exists
+
+        # Back-fill _date from _year for existing rows (idempotent: only sets NULL date cols)
+        for col in ("birth", "death", "christening", "burial"):
+            try:
+                conn.execute(text(
+                    f"UPDATE persons SET {col}_date = CAST({col}_year AS TEXT) "
+                    f"WHERE {col}_year IS NOT NULL AND {col}_date IS NULL"
+                ))
+                conn.commit()
+            except Exception:
+                pass
+
+        # Documents table (Phase 2)
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS documents (
+                id          INTEGER PRIMARY KEY,
+                person_id   INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+                stored_name TEXT NOT NULL,
+                filename    TEXT NOT NULL,
+                mime_type   TEXT,
+                title       TEXT,
+                doc_type    TEXT,
+                year        INTEGER,
+                description TEXT,
+                created_at  TEXT
+            )
+        """))
+        conn.commit()
 
         # Schema version tracking — used for future migrations.
         # Current version: 1 (baseline with all columns above).
