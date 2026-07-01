@@ -28,6 +28,11 @@ class ClusterResult(BaseModel):
 
 class ClusterNameRequest(BaseModel):
     person_name: str
+    title: Optional[str] = None
+    last_name: Optional[str] = None
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None
+    nickname: Optional[str] = None
 
 
 class FaceAssignRequest(BaseModel):

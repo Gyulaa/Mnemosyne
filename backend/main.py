@@ -551,12 +551,17 @@ def rename_cluster(cluster_id: int, req: ClusterNameRequest, db: Session = Depen
         db.commit()
         return {"ok": True, "person_id": None, "person_name": None}
 
+    name_kwargs = {k: getattr(req, k) for k in ("title", "last_name", "first_name", "middle_name", "nickname") if getattr(req, k) is not None}
+
     if cluster.person_id:
-        cluster.person.name = name
+        p = cluster.person
+        p.name = name
+        for k, v in name_kwargs.items():
+            setattr(p, k, v)
         person_id = cluster.person_id
     else:
         first_face_id = cluster.faces[0].id if cluster.faces else None
-        person = DBPerson(name=name, thumbnail_face_id=first_face_id)
+        person = DBPerson(name=name, thumbnail_face_id=first_face_id, **name_kwargs)
         db.add(person)
         db.flush()
         cluster.person_id = person.id
@@ -1129,6 +1134,11 @@ def _person_dict(p: "DBPerson", db: Session) -> dict:
     return {
         "id": p.id,
         "name": p.name,
+        "title": p.title,
+        "last_name": p.last_name,
+        "first_name": p.first_name,
+        "middle_name": p.middle_name,
+        "nickname": p.nickname,
         "sex": p.sex,
         "birth_year": p.birth_year,
         "birth_place": p.birth_place,
@@ -1194,6 +1204,7 @@ def list_persons(db: Session = Depends(get_db)):
 
 
 _PERSON_FIELDS = [
+    "title", "last_name", "first_name", "middle_name", "nickname",
     "sex", "birth_year", "birth_place", "birth_date",
     "christening_year", "christening_place", "christening_date",
     "death_year", "death_place", "death_date",
@@ -1211,9 +1222,15 @@ def _year_from_date(d: str | None) -> int | None:
     return None
 
 
+def _derive_display_name(title: str | None, last_name: str | None, first_name: str | None, middle_name: str | None = None) -> str | None:
+    parts = [p.strip() for p in [title, last_name, first_name, middle_name] if p and p.strip()]
+    return ' '.join(parts) or None
+
+
 @app.post("/api/persons", status_code=201)
 def create_person(body: dict, db: Session = Depends(get_db)):
-    name = (body.get("name") or "").strip()
+    derived = _derive_display_name(body.get("title"), body.get("last_name"), body.get("first_name"))
+    name = derived or (body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name required")
     p = DBPerson(name=name, **{f: body.get(f) for f in _PERSON_FIELDS if f in body})
@@ -1228,11 +1245,17 @@ def update_person(person_id: int, body: dict, db: Session = Depends(get_db)):
     p = db.get(DBPerson, person_id)
     if not p:
         raise HTTPException(404, "Person not found")
-    if "name" in body:
-        p.name = (body["name"] or "").strip() or p.name
     for f in _PERSON_FIELDS:
         if f in body:
             setattr(p, f, body[f])
+    # Auto-derive display name from name parts when any part is provided
+    name_parts_in_body = any(k in body for k in ("title", "last_name", "first_name", "middle_name"))
+    if name_parts_in_body:
+        derived = _derive_display_name(p.title, p.last_name, p.first_name, p.middle_name)
+        if derived:
+            p.name = derived
+    elif "name" in body:
+        p.name = (body["name"] or "").strip() or p.name
     # Auto-derive _year from _date so tree display stays in sync
     for prefix in ("birth", "death", "christening", "burial"):
         if f"{prefix}_date" in body:

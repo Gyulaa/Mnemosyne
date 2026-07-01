@@ -3,27 +3,27 @@ import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument } from '../types'
+import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const PHOTOS_CAP = 6
 
-const MONTHS_HU = ['január', 'február', 'március', 'április', 'május', 'június',
-  'július', 'augusztus', 'szeptember', 'október', 'november', 'december']
+const MONTHS_EN = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
 const DOC_TYPE_LABELS: Record<string, string> = {
-  birth_cert:    'Születési anyakönyv',
-  death_cert:    'Halotti anyakönyv',
-  marriage_cert: 'Házassági anyakönyv',
-  baptism:       'Keresztelési anyakönyv',
-  burial_record: 'Temetési bejegyzés',
-  passport:      'Útlevél / igazolvány',
-  military:      'Katonai irat',
-  land_record:   'Telekkönyv',
-  will:          'Végrendelet',
-  letter:        'Levél',
-  photo:         'Régi fotó',
-  other:         'Egyéb',
+  birth_cert:    'Birth certificate',
+  death_cert:    'Death certificate',
+  marriage_cert: 'Marriage certificate',
+  baptism:       'Baptism record',
+  burial_record: 'Burial record',
+  passport:      'Passport',
+  military:      'Military record',
+  land_record:   'Land record',
+  will:          'Will / Testament',
+  letter:        'Letter',
+  photo:         'Photograph',
+  other:         'Other',
 }
 
 const DOC_TYPES = Object.entries(DOC_TYPE_LABELS)
@@ -34,19 +34,19 @@ function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('hu-HU', { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-function formatDateHu(date: string | null | undefined, fallbackYear?: number | null): string | null {
+function formatDate(date: string | null | undefined, fallbackYear?: number | null): string | null {
   if (date) {
     const parts = date.split('-')
-    if (parts.length === 3) return `${parts[0]}. ${MONTHS_HU[parseInt(parts[1]) - 1]} ${parseInt(parts[2])}.`
-    if (parts.length === 2) return `${parts[0]}. ${MONTHS_HU[parseInt(parts[1]) - 1]}`
+    if (parts.length === 3) return `${parseInt(parts[2])} ${MONTHS_EN[parseInt(parts[1]) - 1]} ${parts[0]}`
+    if (parts.length === 2) return `${MONTHS_EN[parseInt(parts[1]) - 1]} ${parts[0]}`
     return parts[0]
   }
   return fallbackYear != null ? String(fallbackYear) : null
 }
 
 function lifespan(p: PersonFull) {
-  const b = [formatDateHu(p.birth_date, p.birth_year), p.birth_place].filter(Boolean).join(', ')
-  const d = [formatDateHu(p.death_date, p.death_year), p.death_place].filter(Boolean).join(', ')
+  const b = [formatDate(p.birth_date, p.birth_year), p.birth_place].filter(Boolean).join(', ')
+  const d = [formatDate(p.death_date, p.death_year), p.death_place].filter(Boolean).join(', ')
   if (!b && !d) return null
   if (p.death_year || p.death_place || p.death_date) return `${b || '?'} – ${d || '?'}`
   return b ? `* ${b}` : null
@@ -55,7 +55,7 @@ function lifespan(p: PersonFull) {
 // ── DatePartPicker ────────────────────────────────────────────────────────────
 // value: "" | "YYYY" | "YYYY-MM" | "YYYY-MM-DD"
 
-function DatePartPicker({ value, onChange, placeholder = 'Év' }: {
+function DatePartPicker({ value, onChange, placeholder = 'Year' }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
@@ -93,8 +93,8 @@ function DatePartPicker({ value, onChange, placeholder = 'Év' }: {
           onChange={e => update(yr, e.target.value, e.target.value ? dy : '')}
           className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-brand-400"
         >
-          <option value="">— hó —</option>
-          {MONTHS_HU.map((m, i) => (
+          <option value="">— month —</option>
+          {MONTHS_EN.map((m, i) => (
             <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>
           ))}
         </select>
@@ -105,7 +105,7 @@ function DatePartPicker({ value, onChange, placeholder = 'Év' }: {
           onChange={e => update(yr, mo, e.target.value)}
           className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-brand-400"
         >
-          <option value="">— nap —</option>
+          <option value="">— day —</option>
           {Array.from({ length: maxDays }, (_, i) => i + 1).map(d => (
             <option key={d} value={String(d).padStart(2, '0')}>{d}.</option>
           ))}
@@ -231,14 +231,14 @@ function Lightbox({ images, idx, onClose, onChange, onNavigateTo }: {
             </div>
             {persons.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-zinc-600">Személyek:</span>
+                <span className="text-xs text-zinc-600">Persons:</span>
                 {persons.map(p => (
                   <button key={p.person_id}
                     onClick={() => { onNavigateTo(p.person_id); onClose() }}
                     className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 rounded-full text-xs text-zinc-300 transition-colors cursor-pointer">
                     <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
                       className="w-4 h-4 rounded-full object-cover shrink-0" />
-                    {p.person_name ?? '(névtelen)'}
+                    {p.person_name ?? '(unnamed)'}
                   </button>
                 ))}
               </div>
@@ -488,14 +488,14 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
         {file ? (
           <p className="text-xs text-zinc-200 truncate">{file.name}</p>
         ) : (
-          <p className="text-xs text-zinc-500">Húzd ide vagy <span className="text-brand-400">kattints</span> a fájl kiválasztásához</p>
+          <p className="text-xs text-zinc-500">Drag here or <span className="text-brand-400">click</span> to select a file</p>
         )}
       </div>
 
       <input
         value={title}
         onChange={e => setTitle(e.target.value)}
-        placeholder="Cím (opcionális)"
+        placeholder="Title (optional)"
         className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
       />
       <div className="flex gap-2">
@@ -510,7 +510,7 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
           type="number"
           value={year}
           onChange={e => setYear(e.target.value)}
-          placeholder="Év"
+          placeholder="Year"
           className="w-20 bg-zinc-700 border border-zinc-600 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
         />
       </div>
@@ -520,13 +520,13 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
           disabled={!file || uploading}
           className="flex-1 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors"
         >
-          {uploading ? 'Feltöltés…' : 'Feltöltés'}
+          {uploading ? 'Uploading…' : 'Upload'}
         </button>
         <button
           onClick={onDone}
           className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-700 rounded-lg transition-colors"
         >
-          Mégse
+          Cancel
         </button>
       </div>
     </div>
@@ -561,7 +561,7 @@ function DocPreviewModal({ doc, onClose }: { doc: PersonDocument; onClose: () =>
         <span className="text-zinc-400 text-sm truncate max-w-xs">{doc.title || doc.filename}</span>
         <a href={api.documents.fileUrl(doc.id, true)} onClick={e => e.stopPropagation()}
           className="text-xs text-zinc-500 hover:text-zinc-200 transition-colors underline underline-offset-2">
-          Letöltés
+          Download
         </a>
       </div>
     </div>,
@@ -606,7 +606,7 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
           autoFocus
           value={title}
           onChange={e => setTitle(e.target.value)}
-          placeholder="Cím"
+          placeholder="Title"
           className="w-full bg-zinc-700 border border-zinc-600 rounded px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
         />
         <div className="flex gap-1.5">
@@ -621,18 +621,18 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
             type="number"
             value={year}
             onChange={e => setYear(e.target.value)}
-            placeholder="Év"
+            placeholder="Year"
             className="w-16 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
           />
         </div>
         <div className="flex gap-1.5">
           <button onClick={save} disabled={saving}
             className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded transition-colors">
-            {saving ? '…' : 'Mentés'}
+            {saving ? '…' : 'Save'}
           </button>
           <button onClick={() => setEditing(false)}
             className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-700 rounded transition-colors">
-            Mégse
+            Cancel
           </button>
         </div>
       </div>
@@ -672,7 +672,7 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
         </div>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
           {canPreview && (
-            <button onClick={() => setPreviewing(true)} title="Előnézet"
+            <button onClick={() => setPreviewing(true)} title="Preview"
               className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
@@ -682,20 +682,20 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
           )}
           <a
             href={api.documents.fileUrl(doc.id, true)}
-            title="Letöltés"
+            title="Download"
             className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
           </a>
-          <button onClick={() => setEditing(true)} title="Szerkesztés"
+          <button onClick={() => setEditing(true)} title="Edit"
             className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
             </svg>
           </button>
-          <button onClick={onDelete} title="Törlés"
+          <button onClick={onDelete} title="Delete"
             className="w-6 h-6 rounded flex items-center justify-center text-zinc-600 hover:text-red-400 hover:bg-zinc-700 transition-colors">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -738,7 +738,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
   // header editing
   const [editingHeader, setEditingHeader] = useState(false)
-  const [headerData, setHeaderData] = useState({ name: '', birth_date: '', birth_place: '', death_date: '', death_place: '' })
+  const [headerData, setHeaderData] = useState({ nameParts: { title: '', last_name: '', first_name: '', middle_name: '', nickname: '' } as NameParts, birth_date: '', birth_place: '', death_date: '', death_place: '' })
 
   // details section
   const [editingDetails, setEditingDetails] = useState(false)
@@ -905,7 +905,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
   function startHeaderEdit() {
     setHeaderData({
-      name: person.name ?? '',
+      nameParts: namePartsFromPerson(person),
       birth_date: person.birth_date ?? (person.birth_year ? String(person.birth_year) : ''),
       birth_place: person.birth_place ?? '',
       death_date: person.death_date ?? (person.death_year ? String(person.death_year) : ''),
@@ -915,8 +915,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   }
 
   function saveHeader() {
+    const { nameParts } = headerData
     saveMut.mutate({
-      name: headerData.name.trim() || undefined,
+      title: nameParts.title.trim() || null,
+      last_name: nameParts.last_name.trim() || null,
+      first_name: nameParts.first_name.trim() || null,
+      middle_name: nameParts.middle_name.trim() || null,
+      nickname: nameParts.nickname.trim() || null,
       birth_date: headerData.birth_date || null,
       birth_place: headerData.birth_place.trim() || null,
       death_date: headerData.death_date || null,
@@ -975,7 +980,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     parent: 'Add parent', child: 'Add child', spouse: 'Add spouse', sibling: 'Add sibling',
   }
 
-  const SEX_LABEL: Record<string, string> = { M: 'Férfi', F: 'Nő' }
+  const SEX_LABEL: Record<string, string> = { M: 'Male', F: 'Female' }
 
   return (
     <>
@@ -997,34 +1002,39 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             <Avatar person={person} size={72} />
             <div className="flex-1 min-w-0 pt-0.5">
               {editingHeader ? (
-                <input autoFocus value={headerData.name}
-                  onChange={e => setHeaderData(d => ({ ...d, name: e.target.value }))}
-                  onKeyDown={e => e.key === 'Enter' && saveHeader()}
-                  placeholder="Name"
-                  className="w-full bg-zinc-800 border border-zinc-600 rounded-lg px-2.5 py-1 text-base font-bold text-zinc-100 outline-none focus:border-brand-400 mb-2" />
+                <div className="mb-2">
+                  <NameEditor
+                    autoFocus
+                    value={headerData.nameParts}
+                    onChange={nameParts => setHeaderData(d => ({ ...d, nameParts }))}
+                  />
+                </div>
               ) : (
                 <h2 className="text-lg font-bold text-zinc-100 leading-snug">
                   {person.name ?? '(unnamed)'}
                   {person.sex && <span className="ml-1.5 text-sm font-normal text-zinc-500">{person.sex === 'M' ? '♂' : '♀'}</span>}
                 </h2>
               )}
+              {!editingHeader && person.nickname && (
+                <p className="text-sm text-zinc-500 mt-0.5">„{person.nickname}"</p>
+              )}
               {editingHeader ? (
                 <div className="space-y-2">
                   <div>
-                    <p className="text-[10px] text-zinc-600 mb-1">Születés</p>
+                    <p className="text-[10px] text-zinc-600 mb-1">Birth</p>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <DatePartPicker value={headerData.birth_date} onChange={v => setHeaderData(d => ({ ...d, birth_date: v }))} />
                       <input value={headerData.birth_place}
-                        onChange={e => setHeaderData(d => ({ ...d, birth_place: e.target.value }))} placeholder="Hely"
+                        onChange={e => setHeaderData(d => ({ ...d, birth_place: e.target.value }))} placeholder="Place"
                         className="flex-1 min-w-20 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400" />
                     </div>
                   </div>
                   <div>
-                    <p className="text-[10px] text-zinc-600 mb-1">Halálozás</p>
+                    <p className="text-[10px] text-zinc-600 mb-1">Death</p>
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <DatePartPicker value={headerData.death_date} onChange={v => setHeaderData(d => ({ ...d, death_date: v }))} />
                       <input value={headerData.death_place}
-                        onChange={e => setHeaderData(d => ({ ...d, death_place: e.target.value }))} placeholder="Hely"
+                        onChange={e => setHeaderData(d => ({ ...d, death_place: e.target.value }))} placeholder="Place"
                         className="flex-1 min-w-20 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400" />
                     </div>
                   </div>
@@ -1032,7 +1042,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               ) : (
                 <>
                   {span && <p className="text-sm text-zinc-400 mt-0.5">{span}</p>}
-                  <p className="text-xs text-zinc-600 mt-0.5">{person.face_count > 0 ? `${person.face_count} fotó az appban` : 'Nincs fotó az appban'}</p>
+                  <p className="text-xs text-zinc-600 mt-0.5">{person.face_count > 0 ? `${person.face_count} photo(s) in app` : 'No photos in app'}</p>
                 </>
               )}
             </div>
@@ -1041,13 +1051,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             {editingHeader ? (
               <>
                 <button onClick={saveHeader} disabled={saveMut.isPending}
-                  className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors">Mentés</button>
+                  className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors">Save</button>
                 <button onClick={() => setEditingHeader(false)}
-                  className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">Mégse</button>
+                  className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">Cancel</button>
               </>
             ) : (
               <button onClick={startHeaderEdit}
-                className="px-3 py-1 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors">Szerkesztés</button>
+                className="px-3 py-1 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors">Edit</button>
             )}
           </div>
         </div>
@@ -1058,18 +1068,18 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {/* Details */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-2.5">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Részletek</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Details</h3>
               {!editingDetails ? (
                 <button onClick={() => { setDetailsData(detailsFromPerson(person)); setEditingDetails(true) }}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
-                  {hasDetails ? 'Szerkesztés' : '+ Hozzáadás'}
+                  {hasDetails ? 'Edit' : '+ Add'}
                 </button>
               ) : (
                 <div className="flex gap-3">
                   <button onClick={saveDetails} disabled={saveMut.isPending}
-                    className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Mentés</button>
+                    className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Save</button>
                   <button onClick={() => setEditingDetails(false)}
-                    className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Mégse</button>
+                    className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Cancel</button>
                 </div>
               )}
             </div>
@@ -1078,40 +1088,40 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               <div className="space-y-2">
                 {/* Sex */}
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-500 w-20 shrink-0">Nem</span>
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">Sex</span>
                   <div className="flex gap-1">
                     {(['', 'M', 'F'] as const).map(v => (
                       <button key={v} onClick={() => setDetailsData(d => ({ ...d, sex: v }))}
                         className={`px-2.5 py-0.5 rounded text-xs transition-colors ${detailsData.sex === v ? 'bg-brand-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
-                        {v === '' ? '—' : v === 'M' ? 'Férfi' : 'Nő'}
+                        {v === '' ? '—' : v === 'M' ? 'Male' : 'Female'}
                       </button>
                     ))}
                   </div>
                 </div>
                 {/* Occupation */}
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-500 w-20 shrink-0">Foglalkozás</span>
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">Occupation</span>
                   <input value={detailsData.occupation} onChange={e => setDetailsData(d => ({ ...d, occupation: e.target.value }))}
-                    placeholder="pl. tanár, földműves…"
+                    placeholder="e.g. teacher, farmer…"
                     className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                 </div>
                 {/* Christening */}
                 <div>
-                  <span className="text-xs text-zinc-500 block mb-1">Keresztelő</span>
+                  <span className="text-xs text-zinc-500 block mb-1">Christening</span>
                   <div className="flex items-center gap-1.5 flex-wrap pl-0">
                     <DatePartPicker value={detailsData.christening_date} onChange={v => setDetailsData(d => ({ ...d, christening_date: v }))} />
                     <input value={detailsData.christening_place} onChange={e => setDetailsData(d => ({ ...d, christening_place: e.target.value }))}
-                      placeholder="Hely"
+                      placeholder="Place"
                       className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                 </div>
                 {/* Burial */}
                 <div>
-                  <span className="text-xs text-zinc-500 block mb-1">Temetés</span>
+                  <span className="text-xs text-zinc-500 block mb-1">Burial</span>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DatePartPicker value={detailsData.burial_date} onChange={v => setDetailsData(d => ({ ...d, burial_date: v }))} />
                     <input value={detailsData.burial_place} onChange={e => setDetailsData(d => ({ ...d, burial_place: e.target.value }))}
-                      placeholder="Hely"
+                      placeholder="Place"
                       className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                 </div>
@@ -1120,83 +1130,83 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               <dl className="space-y-1">
                 {person.sex && (
                   <div className="flex gap-2 text-xs">
-                    <dt className="text-zinc-500 w-20 shrink-0">Nem</dt>
+                    <dt className="text-zinc-500 w-20 shrink-0">Sex</dt>
                     <dd className="text-zinc-300">{SEX_LABEL[person.sex]}</dd>
                   </div>
                 )}
                 {person.occupation && (
                   <div className="flex gap-2 text-xs">
-                    <dt className="text-zinc-500 w-20 shrink-0">Foglalkozás</dt>
+                    <dt className="text-zinc-500 w-20 shrink-0">Occupation</dt>
                     <dd className="text-zinc-300">{person.occupation}</dd>
                   </div>
                 )}
                 {(person.christening_date || person.christening_place) && (
                   <div className="flex gap-2 text-xs">
-                    <dt className="text-zinc-500 w-20 shrink-0">Keresztelő</dt>
-                    <dd className="text-zinc-300">{[formatDateHu(person.christening_date, person.christening_year), person.christening_place].filter(Boolean).join(', ')}</dd>
+                    <dt className="text-zinc-500 w-20 shrink-0">Christening</dt>
+                    <dd className="text-zinc-300">{[formatDate(person.christening_date, person.christening_year), person.christening_place].filter(Boolean).join(', ')}</dd>
                   </div>
                 )}
                 {(person.burial_date || person.burial_place) && (
                   <div className="flex gap-2 text-xs">
-                    <dt className="text-zinc-500 w-20 shrink-0">Temetés</dt>
-                    <dd className="text-zinc-300">{[formatDateHu(person.burial_date, person.burial_year), person.burial_place].filter(Boolean).join(', ')}</dd>
+                    <dt className="text-zinc-500 w-20 shrink-0">Burial</dt>
+                    <dd className="text-zinc-300">{[formatDate(person.burial_date, person.burial_year), person.burial_place].filter(Boolean).join(', ')}</dd>
                   </div>
                 )}
               </dl>
             ) : (
-              <p className="text-sm text-zinc-600 italic">Nincs részletes adat</p>
+              <p className="text-sm text-zinc-600 italic">No details yet</p>
             )}
           </section>
 
           {/* Notes */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-2.5">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Megjegyzések</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Notes</h3>
               {!editingNotes ? (
                 <button onClick={() => { setNotesVal(person.notes ?? ''); setEditingNotes(true) }}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
-                  {person.notes ? 'Szerkesztés' : '+ Hozzáadás'}
+                  {person.notes ? 'Edit' : '+ Add'}
                 </button>
               ) : (
                 <div className="flex gap-3">
                   <button onClick={() => saveMut.mutate({ notes: notesVal.trim() || null })} disabled={saveMut.isPending}
-                    className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Mentés</button>
+                    className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Save</button>
                   <button onClick={() => setEditingNotes(false)}
-                    className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Mégse</button>
+                    className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Cancel</button>
                 </div>
               )}
             </div>
             {editingNotes ? (
               <textarea autoFocus value={notesVal} onChange={e => setNotesVal(e.target.value)} rows={3}
-                placeholder="Megjegyzések…"
+                placeholder="Notes…"
                 className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400/60 resize-none leading-relaxed" />
             ) : person.notes ? (
               <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{person.notes}</p>
             ) : (
-              <p className="text-sm text-zinc-600 italic">Nincs megjegyzés</p>
+              <p className="text-sm text-zinc-600 italic">No notes</p>
             )}
           </section>
 
           {/* Relations */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Kapcsolatok</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Relations</h3>
               {!editingRelations ? (
                 <button onClick={() => setEditingRelations(true)}
-                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">Szerkesztés</button>
+                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">Edit</button>
               ) : (
                 <button onClick={() => setEditingRelations(false)}
-                  className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Kész</button>
+                  className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Done</button>
               )}
             </div>
             <div className="space-y-3.5">
-              <RelRow label="Szülők" persons={parents} editing={editingRelations} onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('parent', p)} addLabel="Szülő" onAdd={() => setPickerMode('parent')} addDisabled={parents.length >= 2} />
+              <RelRow label="Parents" persons={parents} editing={editingRelations} onNavigate={onNavigateTo}
+                onRemove={p => handleRemove('parent', p)} addLabel="Parent" onAdd={() => setPickerMode('parent')} addDisabled={parents.length >= 2} />
 
               {/* Spouses — rendered manually for marriage details */}
               {(editingRelations || spouseRelations.length > 0) && (
                 <div>
-                  <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1.5">Házastárs / Partner</p>
+                  <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1.5">Spouse / Partner</p>
                   <div className="space-y-2">
                     {spouseRelations.map(({ rel, p }) => (
                       <div key={rel.id}>
@@ -1210,7 +1220,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                             {editingRelations && (
                               <button onClick={() => handleRemove('spouse', p)}
                                 className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0"
-                                title="Eltávolítás">✕</button>
+                                title="Remove">✕</button>
                             )}
                           </div>
                           <button
@@ -1218,28 +1228,28 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                             className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${expandedRelId === rel.id ? 'text-brand-400 bg-brand-500/10' : 'text-zinc-600 hover:text-zinc-300'}`}
                           >
                             {rel.marriage_year || rel.marriage_place
-                              ? `Házasság: ${[rel.marriage_year, rel.marriage_place].filter(Boolean).join(', ')}`
-                              : '+ házassági adat'}
+                              ? `Marriage: ${[rel.marriage_year, rel.marriage_place].filter(Boolean).join(', ')}`
+                              : '+ marriage details'}
                           </button>
                         </div>
                         {expandedRelId === rel.id && (
                           <div className="mt-2 ml-2 pl-3 border-l border-zinc-700 space-y-1.5">
                             <div className="flex gap-1.5">
-                              <input type="number" placeholder="Házasság éve"
+                              <input type="number" placeholder="Marriage year"
                                 value={marriageEdits[rel.id]?.marriage_year ?? ''}
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], marriage_year: e.target.value } }))}
                                 className="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
-                              <input placeholder="Helyszín"
+                              <input placeholder="Location"
                                 value={marriageEdits[rel.id]?.marriage_place ?? ''}
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], marriage_place: e.target.value } }))}
                                 className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                             </div>
                             <div className="flex gap-1.5">
-                              <input type="number" placeholder="Válás éve"
+                              <input type="number" placeholder="Divorce year"
                                 value={marriageEdits[rel.id]?.divorce_year ?? ''}
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], divorce_year: e.target.value } }))}
                                 className="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
-                              <input placeholder="Helyszín"
+                              <input placeholder="Location"
                                 value={marriageEdits[rel.id]?.divorce_place ?? ''}
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], divorce_place: e.target.value } }))}
                                 className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
@@ -1247,11 +1257,11 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                             <div className="flex gap-1.5 pt-0.5">
                               <button onClick={() => saveMarriage(rel.id)} disabled={updateRelMut.isPending}
                                 className="px-3 py-0.5 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded transition-colors">
-                                Mentés
+                                Save
                               </button>
                               <button onClick={() => setExpandedRelId(null)}
                                 className="px-3 py-0.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
-                                Mégse
+                                Cancel
                               </button>
                             </div>
                           </div>
@@ -1261,20 +1271,20 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                     {editingRelations && (
                       <button onClick={() => setPickerMode('spouse')}
                         className="inline-flex items-center gap-1 h-7 px-2.5 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-dashed border-zinc-700 hover:border-zinc-500 rounded-full transition-colors">
-                        + Házastárs
+                        + Spouse
                       </button>
                     )}
                   </div>
                 </div>
               )}
 
-              <RelRow label="Gyermekek" persons={children} editing={editingRelations} onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('parent', p)} addLabel="Gyermek" onAdd={() => setPickerMode('child')} />
-              <RelRow label="Testvérek" persons={siblings} editing={editingRelations} onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('sibling', p)} addLabel="Testvér" onAdd={() => setPickerMode('sibling')} />
+              <RelRow label="Children" persons={children} editing={editingRelations} onNavigate={onNavigateTo}
+                onRemove={p => handleRemove('parent', p)} addLabel="Child" onAdd={() => setPickerMode('child')} />
+              <RelRow label="Siblings" persons={siblings} editing={editingRelations} onNavigate={onNavigateTo}
+                onRemove={p => handleRemove('sibling', p)} addLabel="Sibling" onAdd={() => setPickerMode('sibling')} />
 
               {!editingRelations && parents.length === 0 && spouseRelations.length === 0 && children.length === 0 && siblings.length === 0 && (
-                <p className="text-sm text-zinc-600 italic">Nincs rögzített kapcsolat</p>
+                <p className="text-sm text-zinc-600 italic">No relations</p>
               )}
             </div>
           </section>
@@ -1282,29 +1292,29 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {/* Clusters */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-2.5">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Fotóklaszterek</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Photo Clusters</h3>
               {person.clusters.length === 0 && (
                 <button onClick={() => { setShowClusterPicker(p => !p); setClusterSearch('') }}
-                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">+ Klaszter hozzáadása</button>
+                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">+ Add cluster</button>
               )}
             </div>
             {person.clusters.length === 0 && !showClusterPicker && (
-              <p className="text-sm text-zinc-600 italic">Nincs hozzárendelt klaszter</p>
+              <p className="text-sm text-zinc-600 italic">No cluster assigned</p>
             )}
             {person.clusters.length > 0 && (
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-2">
                   {person.clusters.map(c => (
                     <div key={c.id} className="flex items-center gap-1.5 bg-zinc-800 border border-zinc-700 rounded-full pl-2.5 pr-1.5 py-1">
-                      <span className="text-xs text-zinc-300">Klaszter {String(c.label).padStart(3, '0')}</span>
-                      <span className="text-xs text-zinc-600 tabular-nums">· {c.face_count} arc</span>
-                      <button onClick={() => handleUnlinkCluster(c.id)} title="Lekapcsolás"
+                      <span className="text-xs text-zinc-300">Cluster {String(c.label).padStart(3, '0')}</span>
+                      <span className="text-xs text-zinc-600 tabular-nums">· {c.face_count} faces</span>
+                      <button onClick={() => handleUnlinkCluster(c.id)} title="Unlink"
                         className="w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0">✕</button>
                     </div>
                   ))}
                 </div>
                 {person.clusters.length > 1 && (
-                  <p className="text-xs text-amber-600">Több klaszter van hozzárendelve — egyesítsd őket a Clusters lapon.</p>
+                  <p className="text-xs text-amber-600">Multiple clusters assigned — merge them on the Clusters tab.</p>
                 )}
               </div>
             )}
@@ -1312,7 +1322,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               <div className="mt-2 bg-zinc-800 border border-zinc-700 rounded-xl overflow-hidden">
                 <div className="p-2 border-b border-zinc-700">
                   <input autoFocus type="search" value={clusterSearch}
-                    onChange={e => setClusterSearch(e.target.value)} placeholder="Klaszter keresése…"
+                    onChange={e => setClusterSearch(e.target.value)} placeholder="Search cluster…"
                     className="w-full bg-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
                 </div>
                 <div className="max-h-52 overflow-y-auto">
@@ -1324,16 +1334,16 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                           <img key={fid} src={api.faceThumbnailUrl(fid, 32)} className="w-7 h-7 rounded object-cover" alt="" />
                         )) ?? <div className="w-7 h-7 rounded bg-zinc-600" />}
                       </div>
-                      <span className="text-zinc-200">Klaszter {String(c.label).padStart(3, '0')}</span>
-                      <span className="ml-auto text-xs text-zinc-500 shrink-0 tabular-nums">{c.face_count} arc</span>
+                      <span className="text-zinc-200">Cluster {String(c.label).padStart(3, '0')}</span>
+                      <span className="ml-auto text-xs text-zinc-500 shrink-0 tabular-nums">{c.face_count} faces</span>
                     </button>
                   ))}
                   {unlinkedClusters.filter(c => String(c.label).includes(clusterSearch) || clusterSearch === '').length === 0 && (
-                    <p className="text-xs text-zinc-600 px-3 py-3">Nincs szabad klaszter</p>
+                    <p className="text-xs text-zinc-600 px-3 py-3">No free clusters</p>
                   )}
                 </div>
                 <div className="border-t border-zinc-700 px-3 py-2">
-                  <button onClick={() => setShowClusterPicker(false)} className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Bezárás</button>
+                  <button onClick={() => setShowClusterPicker(false)} className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Close</button>
                 </div>
               </div>
             )}
@@ -1343,12 +1353,12 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                Fényképek{imagesPage ? ` (${imagesPage.total})` : ''}
+                Photos{imagesPage ? ` (${imagesPage.total})` : ''}
               </h3>
               {images.length > PHOTOS_CAP && (
                 <button onClick={() => setShowAllPhotos(s => !s)}
                   className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
-                  {showAllPhotos ? 'Kevesebb' : `Mind (${images.length})`}
+                  {showAllPhotos ? 'Less' : `All (${images.length})`}
                 </button>
               )}
             </div>
@@ -1357,14 +1367,14 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 {Array.from({ length: PHOTOS_CAP }).map((_, i) => <div key={i} className="aspect-square rounded-lg bg-zinc-800 animate-pulse" />)}
               </div>
             ) : images.length === 0 ? (
-              <p className="text-sm text-zinc-600 italic">Nincs fotó</p>
+              <p className="text-sm text-zinc-600 italic">No photos</p>
             ) : (
               <>
                 <PhotoGallery images={visibleImages} onOpen={setLightboxIdx} />
                 {!showAllPhotos && images.length > PHOTOS_CAP && (
                   <button onClick={() => setShowAllPhotos(true)}
                     className="mt-2 w-full text-xs text-zinc-500 hover:text-zinc-300 transition-colors py-1">
-                    + {images.length - PHOTOS_CAP} további fotó
+                    + {images.length - PHOTOS_CAP} more photos
                   </button>
                 )}
               </>
@@ -1375,13 +1385,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           <section className="px-5 py-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                Iratok{docs.length > 0 ? ` (${docs.length})` : ''}
+                Documents{docs.length > 0 ? ` (${docs.length})` : ''}
               </h3>
               <button
                 onClick={() => setShowUploadForm(s => !s)}
                 className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
               >
-                {showUploadForm ? 'Mégse' : '+ Feltöltés'}
+                {showUploadForm ? 'Cancel' : '+ Upload'}
               </button>
             </div>
 
@@ -1394,7 +1404,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 {[1, 2].map(i => <div key={i} className="h-8 rounded bg-zinc-800 animate-pulse" />)}
               </div>
             ) : docs.length === 0 && !showUploadForm ? (
-              <p className="text-sm text-zinc-600 italic">Nincs csatolt irat</p>
+              <p className="text-sm text-zinc-600 italic">No documents attached</p>
             ) : (
               <div className="divide-y divide-zinc-800/60">
                 {docs.map(doc => (

@@ -39,10 +39,10 @@ export const api = {
       ),
     list:  () => fetchJson<Cluster[]>(`${BASE}/clusters`),
     faces: (id: number, sort = 'id_asc') => fetchJson<FaceInfo[]>(`${BASE}/clusters/${id}/faces?sort=${sort}`),
-    rename: (id: number, name: string) =>
+    rename: (id: number, name: string, parts?: { title?: string | null; last_name?: string | null; first_name?: string | null; middle_name?: string | null; nickname?: string | null }) =>
       patch<{ ok: boolean; person_id: number | null; person_name: string | null }>(
         `${BASE}/clusters/${id}`,
-        { person_name: name },
+        { person_name: name, ...parts },
       ),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/clusters/${id}`, { method: 'DELETE' }),

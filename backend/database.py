@@ -48,6 +48,11 @@ class Person(Base):
     __tablename__ = "persons"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=True)
+    title = Column(String, nullable=True)             # Dr., Prof., Sr., Jr., …
+    last_name = Column(String, nullable=True)
+    first_name = Column(String, nullable=True)
+    middle_name = Column(String, nullable=True)
+    nickname = Column(String, nullable=True)
     sex = Column(String, nullable=True)               # 'M' | 'F'
     birth_year = Column(Integer, nullable=True)
     birth_place = Column(String, nullable=True)
@@ -121,6 +126,12 @@ def init_db_schema(engine):
             "ALTER TABLE persons ADD COLUMN notes TEXT",
             "ALTER TABLE persons ADD COLUMN thumbnail_face_id INTEGER",
             "ALTER TABLE persons ADD COLUMN birth_year INTEGER",
+            # Name parts
+            "ALTER TABLE persons ADD COLUMN title TEXT",
+            "ALTER TABLE persons ADD COLUMN last_name TEXT",
+            "ALTER TABLE persons ADD COLUMN first_name TEXT",
+            "ALTER TABLE persons ADD COLUMN middle_name TEXT",
+            "ALTER TABLE persons ADD COLUMN nickname TEXT",
             # Phase 2: extended biographical fields
             "ALTER TABLE persons ADD COLUMN sex TEXT",
             "ALTER TABLE persons ADD COLUMN birth_place TEXT",

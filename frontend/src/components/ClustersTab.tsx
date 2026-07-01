@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import type { Cluster, ClusterConnection, FaceInfo, PersonFull, Relation, SimilarFaceInfo } from '../types'
 import ExportModal from './ExportModal'
+import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
 
 type ModalTab = 'faces' | 'photos' | 'merge' | 'connections' | 'genealogy'
 
@@ -351,6 +352,8 @@ function ClusterModal({
   const isNoise = cluster.label === -1
 
   const [tab, setTab] = useState<ModalTab>('faces')
+  const [editingName, setEditingName] = useState(!cluster.person_name)
+  const [nameParts, setNameParts] = useState<NameParts>({ title: '', last_name: '', first_name: '', middle_name: '', nickname: '' })
   const [personName, setPersonName] = useState(cluster.person_name ?? '')
   const [savedName, setSavedName] = useState(cluster.person_name ?? '')
   const [saving, setSaving] = useState(false)
@@ -376,9 +379,15 @@ function ClusterModal({
   const { data: allPersons = [] } = useQuery<PersonFull[]>({
     queryKey: ['persons'],
     queryFn: api.persons.list,
-    enabled: showPersonPicker,
+    enabled: showPersonPicker || cluster.person_id != null,
     staleTime: 30_000,
   })
+
+  // Init name parts from linked person data when it loads
+  const currentPerson = useMemo(() => allPersons.find(p => p.id === cluster.person_id) ?? null, [allPersons, cluster.person_id])
+  useEffect(() => {
+    if (currentPerson) setNameParts(namePartsFromPerson(currentPerson))
+  }, [currentPerson?.id])
 
   async function linkToPerson(person: PersonFull) {
     if (linking) return
@@ -447,15 +456,24 @@ function ClusterModal({
     staleTime: 60_000,
   })
 
-  const nameUnchanged = personName.trim() === savedName
+  // Derive display name from parts; fall back to freetext personName
+  const derivedName = deriveDisplayName(nameParts) || personName.trim()
+  const nameUnchanged = derivedName === savedName
   const isSaved = nameUnchanged && savedName !== ''
 
   async function saveName() {
-    if (saving || nameUnchanged) return
+    if (saving || !derivedName) return
     setSaving(true)
     try {
-      await api.cluster.rename(cluster.id, personName.trim())
-      setSavedName(personName.trim())
+      await api.cluster.rename(cluster.id, derivedName, {
+        title: nameParts.title.trim() || null,
+        last_name: nameParts.last_name.trim() || null,
+        first_name: nameParts.first_name.trim() || null,
+        middle_name: nameParts.middle_name.trim() || null,
+        nickname: nameParts.nickname.trim() || null,
+      })
+      setSavedName(derivedName)
+      setEditingName(false)
       queryClient.invalidateQueries({ queryKey: ['clusters'] })
     } finally {
       setSaving(false)
@@ -503,100 +521,101 @@ function ClusterModal({
                     <span className="text-sm text-zinc-400">
                       Move {cluster.face_count} faces to unclassified and delete this cluster?
                     </span>
-                    <button
-                      onClick={() => setDeleteConfirm(false)}
-                      className="px-3 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded-lg text-zinc-300 transition-colors"
-                    >
+                    <button onClick={() => setDeleteConfirm(false)}
+                      className="px-3 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded-lg text-zinc-300 transition-colors">
                       Cancel
                     </button>
-                    <button
-                      onClick={doDelete}
-                      disabled={deleting}
-                      className="px-3 py-1 text-xs bg-red-700 hover:bg-red-600 disabled:opacity-50 rounded-lg text-white transition-colors"
-                    >
+                    <button onClick={doDelete} disabled={deleting}
+                      className="px-3 py-1 text-xs bg-red-700 hover:bg-red-600 disabled:opacity-50 rounded-lg text-white transition-colors">
                       {deleting ? 'Deleting…' : 'Delete'}
                     </button>
                   </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={personName}
-                      onChange={e => setPersonName(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && saveName()}
-                      placeholder="Add a name…"
-                      className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400 focus:ring-1 focus:ring-brand-400"
-                    />
-                    <button
-                      onClick={saveName}
-                      disabled={saving || nameUnchanged}
-                      className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
-                        nameUnchanged
-                          ? 'bg-zinc-800 text-zinc-500 cursor-default'
-                          : 'bg-brand-500 hover:bg-brand-400 text-white'
-                      }`}
-                    >
-                      {saving ? 'Saving…' : isSaved ? 'Saved ✓' : 'Save'}
-                    </button>
-                    {/* Person picker dropdown */}
-                    <div className="relative" ref={personPickerRef}>
-                      <button
-                        onClick={() => { setShowPersonPicker(p => !p); setPersonSearch('') }}
-                        title="Assign to existing person"
-                        className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 border border-zinc-700 rounded-lg transition-colors whitespace-nowrap"
-                      >
-                        {cluster.person_id ? 'Change person' : 'Assign to person →'}
+                ) : editingName ? (
+                  /* ── Name editor (expanded) ── */
+                  <div className="space-y-2">
+                    <NameEditor value={nameParts} onChange={setNameParts} autoFocus />
+                    {derivedName && (
+                      <p className="text-xs text-zinc-500">
+                        Display name: <span className="text-zinc-300 font-medium">{derivedName}</span>
+                        {nameParts.nickname && <span className="text-zinc-500"> · "{nameParts.nickname}"</span>}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button onClick={saveName} disabled={saving || !derivedName}
+                        className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
+                          derivedName ? 'bg-brand-500 hover:bg-brand-400 text-white' : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+                        }`}>
+                        {saving ? 'Saving…' : 'Save'}
                       </button>
-                      {showPersonPicker && (
-                        <div className="absolute right-0 top-full mt-1 w-64 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 overflow-hidden">
-                          <div className="p-2 border-b border-zinc-800">
-                            <input
-                              autoFocus
-                              type="search"
-                              value={personSearch}
-                              onChange={e => setPersonSearch(e.target.value)}
-                              placeholder="Search person…"
-                              className="w-full bg-zinc-800 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
-                            />
-                          </div>
-                          <div className="max-h-56 overflow-y-auto">
-                            {(() => {
-                              const eligible = allPersons.filter(p =>
-                                p.clusters.length === 0 &&
-                                p.name?.toLowerCase().includes(personSearch.toLowerCase())
-                              )
-                              if (eligible.length === 0) {
-                                return (
+                      {savedName && (
+                        <button onClick={() => setEditingName(false)}
+                          className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">
+                          Cancel
+                        </button>
+                      )}
+                      {/* Person picker */}
+                      <div className="relative" ref={personPickerRef}>
+                        <button onClick={() => { setShowPersonPicker(p => !p); setPersonSearch('') }}
+                          className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 border border-zinc-700 rounded-lg transition-colors whitespace-nowrap">
+                          {cluster.person_id ? 'Change person' : 'Assign to person →'}
+                        </button>
+                        {showPersonPicker && (
+                          <div className="absolute left-0 top-full mt-1 w-64 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 overflow-hidden">
+                            <div className="p-2 border-b border-zinc-800">
+                              <input autoFocus type="search" value={personSearch}
+                                onChange={e => setPersonSearch(e.target.value)}
+                                placeholder="Search person…"
+                                className="w-full bg-zinc-800 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none" />
+                            </div>
+                            <div className="max-h-56 overflow-y-auto">
+                              {(() => {
+                                const eligible = allPersons.filter(p =>
+                                  p.clusters.length === 0 &&
+                                  p.name?.toLowerCase().includes(personSearch.toLowerCase())
+                                )
+                                if (!eligible.length) return (
                                   <p className="text-xs text-zinc-600 px-3 py-3">
                                     {allPersons.filter(p => p.clusters.length === 0).length === 0
-                                      ? 'All persons already have a cluster'
-                                      : 'No results'}
+                                      ? 'All persons already have a cluster' : 'No results'}
                                   </p>
                                 )
-                              }
-                              return eligible.map(p => (
-                                <button
-                                  key={p.id}
-                                  onClick={() => linkToPerson(p)}
-                                  disabled={linking}
-                                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-zinc-800 transition-colors"
-                                >
-                                  <div className="w-7 h-7 rounded-full bg-zinc-700 shrink-0 flex items-center justify-center text-xs text-zinc-400 font-bold">
-                                    {(p.name ?? '?').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2)}
-                                  </div>
-                                  <span className="truncate text-zinc-200">{p.name ?? '—'}</span>
-                                </button>
-                              ))
-                            })()}
+                                return eligible.map(p => (
+                                  <button key={p.id} onClick={() => linkToPerson(p)} disabled={linking}
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-zinc-800 transition-colors">
+                                    <div className="w-7 h-7 rounded-full bg-zinc-700 shrink-0 flex items-center justify-center text-xs text-zinc-400 font-bold">
+                                      {(p.name ?? '?').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2)}
+                                    </div>
+                                    <span className="truncate text-zinc-200">{p.name ?? '—'}</span>
+                                  </button>
+                                ))
+                              })()}
+                            </div>
                           </div>
-                        </div>
+                        )}
+                      </div>
+                      <button onClick={() => setDeleteConfirm(true)}
+                        className="px-3 py-1.5 text-xs text-zinc-600 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors whitespace-nowrap">
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* ── Name display (collapsed) ── */
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="min-w-0">
+                      <span className="text-base font-semibold text-zinc-100">{savedName}</span>
+                      {currentPerson?.nickname && (
+                        <span className="ml-2 text-sm text-zinc-500">"{currentPerson.nickname}"</span>
+                      )}
+                      {currentPerson?.title && (
+                        <span className="ml-2 text-xs text-zinc-600">{currentPerson.title}</span>
                       )}
                     </div>
-                    <button
-                      onClick={() => setDeleteConfirm(true)}
-                      className="px-3 py-1.5 text-xs text-zinc-600 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors whitespace-nowrap"
-                    >
-                      Delete
+                    <button onClick={() => setEditingName(true)} title="Edit name"
+                      className="shrink-0 p-1 rounded text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
+                      </svg>
                     </button>
                   </div>
                 )
@@ -1066,18 +1085,18 @@ function GenealogyTab({
   }, [maps, personId, byId])
 
   if (personsLoading || relsLoading) {
-    return <p className="text-center text-zinc-600 py-10 text-sm">Betöltés…</p>
+    return <p className="text-center text-zinc-600 py-10 text-sm">Loading…</p>
   }
 
   const mainPerson = byId.get(personId)
 
   const sections = [
-    { label: 'Szülők',          persons: relatives.parents },
-    { label: 'Testvérek',       persons: relatives.siblings },
-    { label: 'Gyerekek',        persons: relatives.children },
-    { label: 'Nagyszülők',      persons: relatives.grandparents },
-    { label: 'Unokatestvérek',  persons: relatives.cousins },
-    { label: 'Unokák',          persons: relatives.grandchildren },
+    { label: 'Parents',       persons: relatives.parents },
+    { label: 'Siblings',      persons: relatives.siblings },
+    { label: 'Children',      persons: relatives.children },
+    { label: 'Grandparents',  persons: relatives.grandparents },
+    { label: 'Cousins',       persons: relatives.cousins },
+    { label: 'Grandchildren', persons: relatives.grandchildren },
   ]
 
   const hasAny = sections.some(s => s.persons.length > 0)
@@ -1099,12 +1118,12 @@ function GenealogyTab({
     const deathY = fmtYear(mainPerson.death_date, mainPerson.death_year)
     const christY = fmtYear(mainPerson.christening_date, mainPerson.christening_year)
     const burialY = fmtYear(mainPerson.burial_date, mainPerson.burial_year)
-    if (birthY || mainPerson.birth_place) bioRows.push({ label: 'Születés', value: [birthY, mainPerson.birth_place].filter(Boolean).join(', ') })
-    if (christY || mainPerson.christening_place) bioRows.push({ label: 'Keresztelő', value: [christY, mainPerson.christening_place].filter(Boolean).join(', ') })
-    if (deathY || mainPerson.death_place) bioRows.push({ label: 'Halálozás', value: [deathY, mainPerson.death_place].filter(Boolean).join(', ') })
-    if (burialY || mainPerson.burial_place) bioRows.push({ label: 'Temetés', value: [burialY, mainPerson.burial_place].filter(Boolean).join(', ') })
-    if (mainPerson.occupation) bioRows.push({ label: 'Foglalkozás', value: mainPerson.occupation })
-    if (mainPerson.sex) bioRows.push({ label: 'Nem', value: mainPerson.sex === 'M' ? 'Férfi' : 'Nő' })
+    if (birthY || mainPerson.birth_place) bioRows.push({ label: 'Birth', value: [birthY, mainPerson.birth_place].filter(Boolean).join(', ') })
+    if (christY || mainPerson.christening_place) bioRows.push({ label: 'Christening', value: [christY, mainPerson.christening_place].filter(Boolean).join(', ') })
+    if (deathY || mainPerson.death_place) bioRows.push({ label: 'Death', value: [deathY, mainPerson.death_place].filter(Boolean).join(', ') })
+    if (burialY || mainPerson.burial_place) bioRows.push({ label: 'Burial', value: [burialY, mainPerson.burial_place].filter(Boolean).join(', ') })
+    if (mainPerson.occupation) bioRows.push({ label: 'Occupation', value: mainPerson.occupation })
+    if (mainPerson.sex) bioRows.push({ label: 'Sex', value: mainPerson.sex === 'M' ? 'Male' : 'Female' })
   }
 
   return (
@@ -1123,8 +1142,8 @@ function GenealogyTab({
 
       {!hasAny ? (
         <div className="py-8 text-center space-y-1">
-          <p className="text-zinc-500 text-sm">Nem találhatók hozzátartozók.</p>
-          <p className="text-zinc-600 text-xs">Adj hozzá kapcsolatokat a Genealogy fülön.</p>
+          <p className="text-zinc-500 text-sm">No relatives found.</p>
+          <p className="text-zinc-600 text-xs">Add relationships on the Genealogy tab.</p>
         </div>
       ) : (
         <div className="space-y-4">

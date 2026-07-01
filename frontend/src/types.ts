@@ -128,6 +128,11 @@ export interface LinkedCluster {
 export interface PersonFull {
   id: number
   name: string | null
+  title: string | null
+  last_name: string | null
+  first_name: string | null
+  middle_name: string | null
+  nickname: string | null
   sex: 'M' | 'F' | null
   birth_year: number | null
   birth_place: string | null
