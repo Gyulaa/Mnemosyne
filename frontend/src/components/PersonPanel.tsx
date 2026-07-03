@@ -2,8 +2,10 @@ import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument } from '../types'
+import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument, Source, Citation } from '../types'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
+import { NoteCard } from './NoteEditor'
+import NoteEditorComponent from './NoteEditor'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -123,6 +125,10 @@ function isPdf(mime: string | null) {
   return mime === 'application/pdf'
 }
 
+function isAudio(mime: string | null) {
+  return mime?.startsWith('audio/') ?? false
+}
+
 function DocIcon({ mime }: { mime: string | null }) {
   if (isImage(mime)) {
     return (
@@ -135,6 +141,13 @@ function DocIcon({ mime }: { mime: string | null }) {
     return (
       <svg className="w-4 h-4 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+      </svg>
+    )
+  }
+  if (isAudio(mime)) {
+    return (
+      <svg className="w-4 h-4 text-green-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
       </svg>
     )
   }
@@ -556,6 +569,11 @@ function DocPreviewModal({ doc, onClose }: { doc: PersonDocument; onClose: () =>
       ) : isPdf(doc.mime_type) ? (
         <iframe src={url} className="w-[85vw] h-[85vh] rounded-lg shadow-2xl border-0 bg-white"
           title={doc.title || doc.filename} onClick={e => e.stopPropagation()} />
+      ) : isAudio(doc.mime_type) ? (
+        <div className="flex flex-col items-center gap-4 px-8" onClick={e => e.stopPropagation()}>
+          <p className="text-zinc-300 text-sm font-medium">{doc.title || doc.filename}</p>
+          <audio controls src={url} className="w-[60vw] max-w-xl" />
+        </div>
       ) : null}
       <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-3">
         <span className="text-zinc-400 text-sm truncate max-w-xs">{doc.title || doc.filename}</span>
@@ -579,7 +597,19 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
   const [docType, setDocType] = useState(doc.doc_type ?? 'other')
   const [year, setYear] = useState(doc.year ? String(doc.year) : '')
   const [saving, setSaving] = useState(false)
-  const canPreview = isImage(doc.mime_type) || isPdf(doc.mime_type)
+  const [promoting, setPromoting] = useState(false)
+  const canPreview = isImage(doc.mime_type) || isPdf(doc.mime_type) || isAudio(doc.mime_type)
+
+  async function promote() {
+    setPromoting(true)
+    try {
+      await api.documents.promoteToSource(doc.id, doc.title || doc.filename)
+      qc.invalidateQueries({ queryKey: ['person-docs', doc.person_id] })
+      qc.invalidateQueries({ queryKey: ['sources'] })
+    } finally {
+      setPromoting(false)
+    }
+  }
 
   async function save() {
     setSaving(true)
@@ -647,6 +677,11 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
           <button onClick={() => setPreviewing(true)} className="shrink-0 rounded overflow-hidden w-10 h-10 bg-zinc-800 border border-zinc-700">
             <img src={api.documents.fileUrl(doc.id)} alt="" className="w-10 h-10 object-cover" />
           </button>
+        ) : isAudio(doc.mime_type) ? (
+          <button onClick={() => setPreviewing(true)}
+            className="shrink-0 w-10 h-10 rounded bg-zinc-800 border border-zinc-700 flex items-center justify-center">
+            <DocIcon mime={doc.mime_type} />
+          </button>
         ) : (
           <DocIcon mime={doc.mime_type} />
         )}
@@ -657,18 +692,21 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
               {displayName}
             </button>
           ) : (
-            <a
-              href={api.documents.fileUrl(doc.id)}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs text-zinc-200 hover:text-brand-300 truncate block leading-snug transition-colors"
-            >
+            <a href={api.documents.fileUrl(doc.id)} target="_blank" rel="noreferrer"
+              className="text-xs text-zinc-200 hover:text-brand-300 truncate block leading-snug transition-colors">
               {displayName}
             </a>
           )}
-          <p className="text-[10px] text-zinc-600 leading-snug">
-            {[typeLabel, doc.year].filter(Boolean).join(' · ')}
-          </p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-[10px] text-zinc-600 leading-snug">
+              {[typeLabel, doc.year].filter(Boolean).join(' · ')}
+            </p>
+            {doc.source_id != null && (
+              <span className="text-[9px] px-1 py-0.5 rounded bg-amber-900/40 text-amber-400 font-medium leading-none">
+                Source
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
           {canPreview && (
@@ -678,6 +716,21 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                 <circle cx="12" cy="12" r="3" strokeWidth={2} />
               </svg>
+            </button>
+          )}
+          {doc.source_id == null && (
+            <button onClick={promote} disabled={promoting} title="Add to source library"
+              className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-amber-400 hover:bg-zinc-700 transition-colors">
+              {promoting ? (
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={3} strokeOpacity={0.3} />
+                  <path fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a10 10 0 100 10h-2A8 8 0 014 12z" />
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                </svg>
+              )}
             </button>
           )}
           <a
@@ -705,6 +758,195 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
       </div>
     </>
 
+  )
+}
+
+// ── CitationsInline ───────────────────────────────────────────────────────────
+
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  register: 'Register', census: 'Census', book: 'Book',
+  audio: 'Audio', website: 'Website', oral: 'Oral history', other: 'Other',
+}
+
+const BookIcon = () => (
+  <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+  </svg>
+)
+
+function CitationsInline({
+  personId, fact, citations, sources, onMutated,
+}: {
+  personId: number
+  fact: string
+  citations: Citation[]
+  sources: Source[]
+  onMutated: () => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [selectedSourceId, setSelectedSourceId] = useState<number | ''>('')
+  const [detail, setDetail] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  async function addCitation() {
+    if (!selectedSourceId) return
+    setSaving(true)
+    try {
+      await api.citations.add(personId, {
+        source_id: selectedSourceId as number,
+        fact,
+        detail: detail.trim() || undefined,
+      })
+      onMutated()
+      setAdding(false)
+      setSelectedSourceId('')
+      setDetail('')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function removeCitation(id: number) {
+    await api.citations.delete(id)
+    onMutated()
+  }
+
+  const count = citations.length
+
+  return (
+    <div className="mt-1">
+      {/* ── collapsed trigger ── */}
+      {!expanded && (
+        <button
+          onClick={() => { setExpanded(true); if (count === 0) setAdding(true) }}
+          className={`inline-flex items-center gap-1 text-[10px] font-medium rounded-full px-2 py-0.5 border transition-colors ${
+            count > 0
+              ? 'border-amber-700/60 text-amber-400 bg-amber-900/20 hover:bg-amber-900/40'
+              : 'border-zinc-700 text-zinc-500 bg-transparent hover:border-zinc-500 hover:text-zinc-300'
+          }`}
+        >
+          <BookIcon />
+          {count > 0 ? `${count} source${count > 1 ? 's' : ''}` : 'Cite source'}
+        </button>
+      )}
+
+      {/* ── expanded panel ── */}
+      {expanded && (
+        <div className="mt-1 rounded-lg border border-zinc-700/60 bg-zinc-900/60 overflow-hidden">
+          {/* header */}
+          <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Sources</span>
+            <button onClick={() => { setExpanded(false); setAdding(false) }}
+              className="text-zinc-600 hover:text-zinc-300 transition-colors">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* citation list */}
+          <div className="px-3 py-2 space-y-2">
+            {citations.length === 0 && !adding && (
+              <p className="text-[10px] text-zinc-600 italic">No sources cited yet.</p>
+            )}
+            {citations.map(c => (
+              <div key={c.id} className="flex items-start gap-2 group/c">
+                <div className="flex-1 min-w-0 space-y-0.5">
+                  {/* source title — clickable if backed by a document */}
+                  {c.source_document_id != null ? (
+                    <a
+                      href={api.documents.fileUrl(c.source_document_id)}
+                      target="_blank" rel="noreferrer"
+                      className="text-[11px] text-amber-300 hover:text-amber-200 font-medium leading-snug underline underline-offset-2 truncate block transition-colors"
+                    >
+                      {c.source_title}
+                    </a>
+                  ) : (
+                    <p className="text-[11px] text-amber-300 font-medium leading-snug truncate">{c.source_title}</p>
+                  )}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {c.source_type && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-500 border border-zinc-700">
+                        {SOURCE_TYPE_LABELS[c.source_type] ?? c.source_type}
+                      </span>
+                    )}
+                    {c.source_year && (
+                      <span className="text-[9px] text-zinc-600">{c.source_year}</span>
+                    )}
+                    {c.source_author && (
+                      <span className="text-[9px] text-zinc-600">{c.source_author}</span>
+                    )}
+                  </div>
+                  {c.detail && (
+                    <p className="text-[10px] text-zinc-500 leading-snug">
+                      <span className="text-zinc-600">p. </span>{c.detail}
+                    </p>
+                  )}
+                  {c.source_document_id != null && (
+                    <a
+                      href={api.documents.fileUrl(c.source_document_id)}
+                      target="_blank" rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[9px] text-zinc-600 hover:text-zinc-300 transition-colors"
+                    >
+                      <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                      </svg>
+                      View document
+                    </a>
+                  )}
+                </div>
+                <button onClick={() => removeCitation(c.id)} title="Remove citation"
+                  className="shrink-0 mt-0.5 opacity-0 group-hover/c:opacity-100 text-zinc-600 hover:text-red-400 transition-all">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+
+            {/* add form */}
+            {adding ? (
+              <div className="space-y-1.5 pt-1 border-t border-zinc-800">
+                {sources.length === 0 ? (
+                  <p className="text-[10px] text-zinc-500 italic">
+                    No sources in library yet. Upload a document and use "Add to source library" to create one.
+                  </p>
+                ) : (
+                  <select value={selectedSourceId} onChange={e => setSelectedSourceId(Number(e.target.value) || '')}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-100 outline-none focus:border-amber-500">
+                    <option value="">— select source —</option>
+                    {sources.map(s => (
+                      <option key={s.id} value={s.id}>
+                        {s.title}{s.year ? ` (${s.year})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <input value={detail} onChange={e => setDetail(e.target.value)}
+                  placeholder="Page / entry / timestamp (optional)"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500" />
+                <div className="flex gap-1.5">
+                  <button onClick={addCitation} disabled={saving || !selectedSourceId || sources.length === 0}
+                    className="px-2.5 py-1 text-[10px] font-medium bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white rounded transition-colors">
+                    {saving ? '…' : 'Save'}
+                  </button>
+                  <button onClick={() => { setAdding(false); if (count === 0) setExpanded(false) }}
+                    className="px-2.5 py-1 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setAdding(true)}
+                className="text-[10px] text-zinc-500 hover:text-amber-400 transition-colors pt-0.5">
+                + Add citation
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -787,6 +1029,41 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     queryFn: () => api.documents.list(person.id),
     staleTime: 30_000,
   })
+
+  const { data: citations = [] } = useQuery({
+    queryKey: ['person-citations', person.id],
+    queryFn: () => api.citations.listForPerson(person.id),
+    staleTime: 30_000,
+  })
+
+  const { data: personNotes = [], refetch: refetchNotes } = useQuery({
+    queryKey: ['person-notes', person.id],
+    queryFn: () => api.notes.list(person.id),
+    staleTime: 30_000,
+  })
+
+  const [creatingNote, setCreatingNote] = useState(false)
+  const [newNoteShell, setNewNoteShell] = useState<import('../types').PersonNote | null>(null)
+
+  async function startNewNote() {
+    const shell = await api.notes.create(person.id, { content: '', sort_order: personNotes.length })
+    setNewNoteShell(shell)
+    setCreatingNote(true)
+  }
+
+  const { data: sources = [] } = useQuery({
+    queryKey: ['sources'],
+    queryFn: () => api.sources.list(),
+    staleTime: 60_000,
+  })
+
+  function citationsFor(fact: string) {
+    return citations.filter(c => c.fact === fact)
+  }
+
+  function invalidateCitations() {
+    qc.invalidateQueries({ queryKey: ['person-citations', person.id] })
+  }
 
   const { data: unlinkedClusters = [] } = useQuery<LinkedCluster[]>({
     queryKey: ['clusters-unlinked'],
@@ -1028,6 +1305,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                         onChange={e => setHeaderData(d => ({ ...d, birth_place: e.target.value }))} placeholder="Place"
                         className="flex-1 min-w-20 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400" />
                     </div>
+                    <CitationsInline personId={person.id} fact="birth" citations={citationsFor('birth')} sources={sources} onMutated={invalidateCitations} />
                   </div>
                   <div>
                     <p className="text-[10px] text-zinc-600 mb-1">Death</p>
@@ -1037,13 +1315,34 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                         onChange={e => setHeaderData(d => ({ ...d, death_place: e.target.value }))} placeholder="Place"
                         className="flex-1 min-w-20 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400" />
                     </div>
+                    <CitationsInline personId={person.id} fact="death" citations={citationsFor('death')} sources={sources} onMutated={invalidateCitations} />
                   </div>
                 </div>
               ) : (
-                <>
-                  {span && <p className="text-sm text-zinc-400 mt-0.5">{span}</p>}
-                  <p className="text-xs text-zinc-600 mt-0.5">{person.face_count > 0 ? `${person.face_count} photo(s) in app` : 'No photos in app'}</p>
-                </>
+                <div className="mt-1 space-y-0.5">
+                  {(person.birth_date || person.birth_year || person.birth_place) && (
+                    <div>
+                      <p className="text-xs text-zinc-400">
+                        <span className="text-zinc-600">*</span>{' '}
+                        {[formatDate(person.birth_date, person.birth_year), person.birth_place].filter(Boolean).join(', ')}
+                      </p>
+                      <CitationsInline personId={person.id} fact="birth" citations={citationsFor('birth')} sources={sources} onMutated={invalidateCitations} />
+                    </div>
+                  )}
+                  {(person.death_date || person.death_year || person.death_place) && (
+                    <div>
+                      <p className="text-xs text-zinc-400">
+                        <span className="text-zinc-600">†</span>{' '}
+                        {[formatDate(person.death_date, person.death_year), person.death_place].filter(Boolean).join(', ')}
+                      </p>
+                      <CitationsInline personId={person.id} fact="death" citations={citationsFor('death')} sources={sources} onMutated={invalidateCitations} />
+                    </div>
+                  )}
+                  {!person.birth_date && !person.birth_year && !person.birth_place && !person.death_date && !person.death_year && !person.death_place && span && (
+                    <p className="text-sm text-zinc-400">{span}</p>
+                  )}
+                  <p className="text-xs text-zinc-600">{person.face_count > 0 ? `${person.face_count} photo(s) in app` : 'No photos in app'}</p>
+                </div>
               )}
             </div>
           </div>
@@ -1099,11 +1398,14 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   </div>
                 </div>
                 {/* Occupation */}
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-500 w-20 shrink-0">Occupation</span>
-                  <input value={detailsData.occupation} onChange={e => setDetailsData(d => ({ ...d, occupation: e.target.value }))}
-                    placeholder="e.g. teacher, farmer…"
-                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-500 w-20 shrink-0">Occupation</span>
+                    <input value={detailsData.occupation} onChange={e => setDetailsData(d => ({ ...d, occupation: e.target.value }))}
+                      placeholder="e.g. teacher, farmer…"
+                      className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                  </div>
+                  <CitationsInline personId={person.id} fact="occupation" citations={citationsFor('occupation')} sources={sources} onMutated={invalidateCitations} />
                 </div>
                 {/* Christening */}
                 <div>
@@ -1114,6 +1416,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                       placeholder="Place"
                       className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
+                  <CitationsInline personId={person.id} fact="christening" citations={citationsFor('christening')} sources={sources} onMutated={invalidateCitations} />
                 </div>
                 {/* Burial */}
                 <div>
@@ -1124,35 +1427,51 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                       placeholder="Place"
                       className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
+                  <CitationsInline personId={person.id} fact="burial" citations={citationsFor('burial')} sources={sources} onMutated={invalidateCitations} />
                 </div>
               </div>
             ) : hasDetails ? (
-              <dl className="space-y-1">
+              <div className="space-y-1.5">
                 {person.sex && (
                   <div className="flex gap-2 text-xs">
-                    <dt className="text-zinc-500 w-20 shrink-0">Sex</dt>
-                    <dd className="text-zinc-300">{SEX_LABEL[person.sex]}</dd>
+                    <span className="text-zinc-500 w-20 shrink-0">Sex</span>
+                    <span className="text-zinc-300">{SEX_LABEL[person.sex]}</span>
                   </div>
                 )}
                 {person.occupation && (
-                  <div className="flex gap-2 text-xs">
-                    <dt className="text-zinc-500 w-20 shrink-0">Occupation</dt>
-                    <dd className="text-zinc-300">{person.occupation}</dd>
+                  <div>
+                    <div className="flex gap-2 text-xs">
+                      <span className="text-zinc-500 w-20 shrink-0">Occupation</span>
+                      <span className="text-zinc-300">{person.occupation}</span>
+                    </div>
+                    <div className="ml-0">
+                      <CitationsInline personId={person.id} fact="occupation" citations={citationsFor('occupation')} sources={sources} onMutated={invalidateCitations} />
+                    </div>
                   </div>
                 )}
                 {(person.christening_date || person.christening_place) && (
-                  <div className="flex gap-2 text-xs">
-                    <dt className="text-zinc-500 w-20 shrink-0">Christening</dt>
-                    <dd className="text-zinc-300">{[formatDate(person.christening_date, person.christening_year), person.christening_place].filter(Boolean).join(', ')}</dd>
+                  <div>
+                    <div className="flex gap-2 text-xs">
+                      <span className="text-zinc-500 w-20 shrink-0">Christening</span>
+                      <span className="text-zinc-300">{[formatDate(person.christening_date, person.christening_year), person.christening_place].filter(Boolean).join(', ')}</span>
+                    </div>
+                    <div className="ml-0">
+                      <CitationsInline personId={person.id} fact="christening" citations={citationsFor('christening')} sources={sources} onMutated={invalidateCitations} />
+                    </div>
                   </div>
                 )}
                 {(person.burial_date || person.burial_place) && (
-                  <div className="flex gap-2 text-xs">
-                    <dt className="text-zinc-500 w-20 shrink-0">Burial</dt>
-                    <dd className="text-zinc-300">{[formatDate(person.burial_date, person.burial_year), person.burial_place].filter(Boolean).join(', ')}</dd>
+                  <div>
+                    <div className="flex gap-2 text-xs">
+                      <span className="text-zinc-500 w-20 shrink-0">Burial</span>
+                      <span className="text-zinc-300">{[formatDate(person.burial_date, person.burial_year), person.burial_place].filter(Boolean).join(', ')}</span>
+                    </div>
+                    <div className="ml-0">
+                      <CitationsInline personId={person.id} fact="burial" citations={citationsFor('burial')} sources={sources} onMutated={invalidateCitations} />
+                    </div>
                   </div>
                 )}
-              </dl>
+              </div>
             ) : (
               <p className="text-sm text-zinc-600 italic">No details yet</p>
             )}
@@ -1162,29 +1481,39 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-2.5">
               <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Notes</h3>
-              {!editingNotes ? (
-                <button onClick={() => { setNotesVal(person.notes ?? ''); setEditingNotes(true) }}
-                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
-                  {person.notes ? 'Edit' : '+ Add'}
-                </button>
-              ) : (
-                <div className="flex gap-3">
-                  <button onClick={() => saveMut.mutate({ notes: notesVal.trim() || null })} disabled={saveMut.isPending}
-                    className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Save</button>
-                  <button onClick={() => setEditingNotes(false)}
-                    className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Cancel</button>
-                </div>
+              <button onClick={startNewNote}
+                className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
+                + Add
+              </button>
+            </div>
+            <div className="space-y-2">
+              {personNotes.map(note => (
+                <NoteCard
+                  key={note.id}
+                  note={note}
+                  sources={sources}
+                  onUpdated={() => refetchNotes()}
+                  onDeleted={() => refetchNotes()}
+                />
+              ))}
+              {creatingNote && newNoteShell && (
+                <NoteEditorComponent
+                  note={newNoteShell}
+                  sources={sources}
+                  onSaved={() => { refetchNotes(); setCreatingNote(false); setNewNoteShell(null) }}
+                  onDeleted={() => { refetchNotes(); setCreatingNote(false); setNewNoteShell(null) }}
+                  onCancel={async () => {
+                    await api.notes.delete(newNoteShell.id)
+                    setCreatingNote(false)
+                    setNewNoteShell(null)
+                  }}
+                  autoFocusContent
+                />
+              )}
+              {personNotes.length === 0 && !creatingNote && (
+                <p className="text-sm text-zinc-600 italic">No notes yet</p>
               )}
             </div>
-            {editingNotes ? (
-              <textarea autoFocus value={notesVal} onChange={e => setNotesVal(e.target.value)} rows={3}
-                placeholder="Notes…"
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400/60 resize-none leading-relaxed" />
-            ) : person.notes ? (
-              <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">{person.notes}</p>
-            ) : (
-              <p className="text-sm text-zinc-600 italic">No notes</p>
-            )}
           </section>
 
           {/* Relations */}
@@ -1254,6 +1583,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], divorce_place: e.target.value } }))}
                                 className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                             </div>
+                            <CitationsInline
+                              personId={person.id}
+                              fact={`marriage_${rel.id}`}
+                              citations={citationsFor(`marriage_${rel.id}`)}
+                              sources={sources}
+                              onMutated={invalidateCitations}
+                            />
                             <div className="flex gap-1.5 pt-0.5">
                               <button onClick={() => saveMarriage(rel.id)} disabled={updateRelMut.isPending}
                                 className="px-3 py-0.5 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded transition-colors">

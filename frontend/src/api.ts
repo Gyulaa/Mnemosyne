@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, Source, Citation, PersonNote, NoteCitation } from './types'
 
 const BASE = '/api'
 
@@ -195,6 +195,42 @@ export const api = {
       fetchJson<{ ok: boolean }>(`${BASE}/documents/${id}`, { method: 'DELETE' }),
     fileUrl: (id: number, download = false) =>
       `${BASE}/documents/${id}/file${download ? '?dl=1' : ''}`,
+    promoteToSource: (docId: number, title?: string, sourceType?: string) =>
+      post<Source>(`${BASE}/documents/${docId}/promote-to-source`, { title, source_type: sourceType }),
+  },
+  sources: {
+    list: () => fetchJson<Source[]>(`${BASE}/sources`),
+    create: (fields: { title: string; source_type?: string; author?: string; year?: number; publisher?: string; location?: string; url?: string; description?: string; document_id?: number }) =>
+      post<Source>(`${BASE}/sources`, fields),
+    update: (id: number, fields: Partial<Omit<Source, 'id' | 'created_at' | 'citation_count' | 'document_id'>>) =>
+      patch<Source>(`${BASE}/sources/${id}`, fields),
+    delete: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/sources/${id}`, { method: 'DELETE' }),
+  },
+  citations: {
+    listForPerson: (personId: number) =>
+      fetchJson<Citation[]>(`${BASE}/persons/${personId}/citations`),
+    add: (personId: number, fields: { source_id: number; fact?: string; detail?: string; notes?: string }) =>
+      post<Citation>(`${BASE}/persons/${personId}/citations`, fields),
+    update: (id: number, fields: Partial<Pick<Citation, 'fact' | 'detail' | 'notes'>>) =>
+      patch<Citation>(`${BASE}/citations/${id}`, fields),
+    delete: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/citations/${id}`, { method: 'DELETE' }),
+  },
+  notes: {
+    list: (personId: number) => fetchJson<PersonNote[]>(`${BASE}/persons/${personId}/notes`),
+    create: (personId: number, fields: { title?: string; content?: string; sort_order?: number }) =>
+      post<PersonNote>(`${BASE}/persons/${personId}/notes`, fields),
+    update: (id: number, fields: { title?: string | null; content?: string; sort_order?: number }) =>
+      patch<PersonNote>(`${BASE}/notes/${id}`, fields),
+    delete: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/notes/${id}`, { method: 'DELETE' }),
+    addCitation: (noteId: number, fields: { source_id: number; marker: number; detail?: string }) =>
+      post<NoteCitation>(`${BASE}/notes/${noteId}/citations`, fields),
+    updateCitation: (id: number, fields: { source_id?: number; marker?: number; detail?: string }) =>
+      patch<NoteCitation>(`${BASE}/note-citations/${id}`, fields),
+    deleteCitation: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/note-citations/${id}`, { method: 'DELETE' }),
   },
   faceThumbnailUrl: (id: number, size = 160) =>
     `${BASE}/faces/${id}/thumbnail?size=${size}`,

@@ -73,6 +73,8 @@ class Person(Base):
     relations_as_a = relationship("Relation", foreign_keys="Relation.person_a_id", back_populates="person_a", cascade="all, delete-orphan")
     relations_as_b = relationship("Relation", foreign_keys="Relation.person_b_id", back_populates="person_b", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="person", cascade="all, delete-orphan")
+    citations = relationship("Citation", back_populates="person", cascade="all, delete-orphan")
+    person_notes = relationship("PersonNote", back_populates="person", cascade="all, delete-orphan")
 
 
 class Relation(Base):
@@ -102,6 +104,60 @@ class Document(Base):
     description = Column(String, nullable=True)
     created_at = Column(String, nullable=True)      # ISO timestamp
     person = relationship("Person", back_populates="documents")
+    source = relationship("Source", back_populates="document", uselist=False)
+
+
+class PersonNote(Base):
+    __tablename__ = "person_notes"
+    id = Column(Integer, primary_key=True, index=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
+    title = Column(String, nullable=True)
+    content = Column(String, nullable=False, default='')
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(String, nullable=True)
+    updated_at = Column(String, nullable=True)
+    person = relationship("Person", back_populates="person_notes")
+    note_citations = relationship("NoteCitation", back_populates="note", cascade="all, delete-orphan")
+
+
+class NoteCitation(Base):
+    __tablename__ = "note_citations"
+    id = Column(Integer, primary_key=True, index=True)
+    note_id = Column(Integer, ForeignKey("person_notes.id"), nullable=False, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=False)
+    marker = Column(Integer, nullable=False)   # 1, 2, 3 … — the [n] in text
+    detail = Column(String, nullable=True)     # page / timestamp
+    note = relationship("PersonNote", back_populates="note_citations")
+    source = relationship("Source")
+
+
+class Source(Base):
+    __tablename__ = "sources"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    source_type = Column(String, nullable=True)    # register|census|book|audio|website|oral|other
+    author = Column(String, nullable=True)
+    year = Column(Integer, nullable=True)
+    publisher = Column(String, nullable=True)
+    location = Column(String, nullable=True)
+    url = Column(String, nullable=True)
+    description = Column(String, nullable=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(String, nullable=True)
+    document = relationship("Document", back_populates="source")
+    citations = relationship("Citation", back_populates="source", cascade="all, delete-orphan")
+
+
+class Citation(Base):
+    __tablename__ = "citations"
+    id = Column(Integer, primary_key=True, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=False, index=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
+    fact = Column(String, nullable=True)   # birth|christening|death|burial|occupation|general
+    detail = Column(String, nullable=True)  # page/entry/timestamp
+    notes = Column(String, nullable=True)
+    source = relationship("Source", back_populates="citations")
+    person = relationship("Person")
 
 
 def configure_engine(engine):
@@ -182,6 +238,72 @@ def init_db_schema(engine):
                 year        INTEGER,
                 description TEXT,
                 created_at  TEXT
+            )
+        """))
+        conn.commit()
+
+        # PersonNote + NoteCitation tables
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS person_notes (
+                id         INTEGER PRIMARY KEY,
+                person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+                title      TEXT,
+                content    TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT,
+                updated_at TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS note_citations (
+                id        INTEGER PRIMARY KEY,
+                note_id   INTEGER NOT NULL REFERENCES person_notes(id) ON DELETE CASCADE,
+                source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                marker    INTEGER NOT NULL,
+                detail    TEXT
+            )
+        """))
+        conn.commit()
+
+        # Migrate old Person.notes → first PersonNote entry (idempotent)
+        try:
+            rows = conn.execute(text(
+                "SELECT id, notes FROM persons WHERE notes IS NOT NULL AND notes != '' "
+                "AND id NOT IN (SELECT DISTINCT person_id FROM person_notes)"
+            )).fetchall()
+            for row in rows:
+                conn.execute(text(
+                    "INSERT INTO person_notes (person_id, title, content, sort_order, created_at, updated_at) "
+                    "VALUES (:pid, NULL, :content, 0, datetime('now'), datetime('now'))"
+                ), {"pid": row[0], "content": row[1]})
+            conn.commit()
+        except Exception:
+            pass
+
+        # Sources + Citations tables
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS sources (
+                id          INTEGER PRIMARY KEY,
+                title       TEXT NOT NULL,
+                source_type TEXT,
+                author      TEXT,
+                year        INTEGER,
+                publisher   TEXT,
+                location    TEXT,
+                url         TEXT,
+                description TEXT,
+                document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+                created_at  TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS citations (
+                id        INTEGER PRIMARY KEY,
+                source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+                person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+                fact      TEXT,
+                detail    TEXT,
+                notes     TEXT
             )
         """))
         conn.commit()

@@ -47,3 +47,56 @@ class BatchFaceAssignRequest(BaseModel):
 class CreateClusterRequest(BaseModel):
     face_ids: Optional[list[int]] = None
     person_name: Optional[str] = None
+
+
+class SourceCreate(BaseModel):
+    title: str
+    source_type: Optional[str] = None   # register|census|book|audio|website|oral|other
+    author: Optional[str] = None
+    year: Optional[int] = None
+    publisher: Optional[str] = None
+    location: Optional[str] = None
+    url: Optional[str] = None
+    description: Optional[str] = None
+    document_id: Optional[int] = None
+
+
+class SourceUpdate(BaseModel):
+    title: Optional[str] = None
+    source_type: Optional[str] = None
+    author: Optional[str] = None
+    year: Optional[int] = None
+    publisher: Optional[str] = None
+    location: Optional[str] = None
+    url: Optional[str] = None
+    description: Optional[str] = None
+
+
+class CitationCreate(BaseModel):
+    source_id: int
+    fact: Optional[str] = None    # birth|christening|death|burial|occupation|general
+    detail: Optional[str] = None  # page / entry / audio timestamp
+    notes: Optional[str] = None
+
+
+class PromoteToSourceRequest(BaseModel):
+    title: Optional[str] = None   # defaults to document filename/title
+    source_type: Optional[str] = None
+
+
+class NoteCreate(BaseModel):
+    title: Optional[str] = None
+    content: str = ''
+    sort_order: int = 0
+
+
+class NoteUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class NoteCitationCreate(BaseModel):
+    source_id: int
+    marker: int
+    detail: Optional[str] = None

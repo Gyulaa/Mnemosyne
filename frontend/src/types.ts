@@ -175,4 +175,58 @@ export interface PersonDocument {
   year: number | null
   description: string | null
   created_at: string | null
+  source_id: number | null
+}
+
+export interface Source {
+  id: number
+  title: string
+  source_type: string | null  // register|census|book|audio|website|oral|other
+  author: string | null
+  year: number | null
+  publisher: string | null
+  location: string | null
+  url: string | null
+  description: string | null
+  document_id: number | null
+  created_at: string | null
+  citation_count: number
+}
+
+export interface NoteCitation {
+  id: number
+  note_id: number
+  source_id: number
+  marker: number
+  detail: string | null
+  source_title: string | null
+  source_type: string | null
+  source_document_id: number | null
+  source_year: number | null
+  source_author: string | null
+}
+
+export interface PersonNote {
+  id: number
+  person_id: number
+  title: string | null
+  content: string
+  sort_order: number
+  created_at: string | null
+  updated_at: string | null
+  citations: NoteCitation[]
+}
+
+export interface Citation {
+  id: number
+  source_id: number
+  person_id: number
+  fact: string | null   // birth|christening|death|burial|occupation|general
+  detail: string | null
+  notes: string | null
+  source_title: string | null
+  source_type: string | null
+  source_document_id: number | null
+  source_year: number | null
+  source_author: string | null
 }

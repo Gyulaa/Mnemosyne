@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation
 from . import scanner as scanner_mod
 from . import clusterer
 from . import export_utils
@@ -29,6 +29,8 @@ from .schemas import (
     ClusterRunRequest, ClusterResult,
     ClusterNameRequest,
     FaceAssignRequest, BatchFaceAssignRequest, CreateClusterRequest,
+    SourceCreate, SourceUpdate, CitationCreate, PromoteToSourceRequest,
+    NoteCreate, NoteUpdate, NoteCitationCreate,
 )
 from .image_utils import load_image_bgr, crop_thumbnail
 
@@ -1185,6 +1187,40 @@ def _doc_dict(d: "DBDocument") -> dict:
         "year": d.year,
         "description": d.description,
         "created_at": d.created_at,
+        "source_id": d.source.id if d.source else None,
+    }
+
+
+def _source_dict(s: "DBSource") -> dict:
+    return {
+        "id": s.id,
+        "title": s.title,
+        "source_type": s.source_type,
+        "author": s.author,
+        "year": s.year,
+        "publisher": s.publisher,
+        "location": s.location,
+        "url": s.url,
+        "description": s.description,
+        "document_id": s.document_id,
+        "created_at": s.created_at,
+        "citation_count": len(s.citations),
+    }
+
+
+def _citation_dict(c: "DBCitation") -> dict:
+    return {
+        "id": c.id,
+        "source_id": c.source_id,
+        "person_id": c.person_id,
+        "fact": c.fact,
+        "detail": c.detail,
+        "notes": c.notes,
+        "source_title": c.source.title if c.source else None,
+        "source_type": c.source.source_type if c.source else None,
+        "source_document_id": c.source.document_id if c.source else None,
+        "source_year": c.source.year if c.source else None,
+        "source_author": c.source.author if c.source else None,
     }
 
 
@@ -1437,6 +1473,263 @@ def delete_document(doc_id: int, db: Session = Depends(get_db)):
     if path.exists():
         path.unlink(missing_ok=True)
     db.delete(d)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/sources")
+def list_sources(db: Session = Depends(get_db)):
+    sources = db.query(DBSource).order_by(DBSource.year, DBSource.title).all()
+    return [_source_dict(s) for s in sources]
+
+
+@app.post("/api/sources", status_code=201)
+def create_source(body: SourceCreate, db: Session = Depends(get_db)):
+    s = DBSource(
+        title=body.title,
+        source_type=body.source_type,
+        author=body.author,
+        year=body.year,
+        publisher=body.publisher,
+        location=body.location,
+        url=body.url,
+        description=body.description,
+        document_id=body.document_id,
+        created_at=datetime.now().isoformat(),
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return _source_dict(s)
+
+
+@app.patch("/api/sources/{source_id}")
+def update_source(source_id: int, body: SourceUpdate, db: Session = Depends(get_db)):
+    s = db.get(DBSource, source_id)
+    if not s:
+        raise HTTPException(404, "Source not found")
+    for field in ("title", "source_type", "author", "year", "publisher", "location", "url", "description"):
+        val = getattr(body, field)
+        if val is not None:
+            setattr(s, field, val)
+    db.commit()
+    return _source_dict(s)
+
+
+@app.delete("/api/sources/{source_id}")
+def delete_source(source_id: int, db: Session = Depends(get_db)):
+    s = db.get(DBSource, source_id)
+    if not s:
+        raise HTTPException(404, "Source not found")
+    db.delete(s)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/documents/{doc_id}/promote-to-source", status_code=201)
+def promote_document_to_source(doc_id: int, body: PromoteToSourceRequest, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if d.source:
+        return _source_dict(d.source)
+    # Infer source_type from mime_type
+    inferred_type = "other"
+    if d.mime_type:
+        if d.mime_type.startswith("audio/"):
+            inferred_type = "audio"
+        elif d.mime_type == "application/pdf" or d.mime_type.startswith("image/"):
+            inferred_type = "register"
+    s = DBSource(
+        title=body.title or d.title or d.filename,
+        source_type=body.source_type or inferred_type,
+        year=d.year,
+        document_id=doc_id,
+        created_at=datetime.now().isoformat(),
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return _source_dict(s)
+
+
+# ── Citations ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/persons/{person_id}/citations")
+def list_citations(person_id: int, db: Session = Depends(get_db)):
+    p = db.get(DBPerson, person_id)
+    if not p:
+        raise HTTPException(404, "Person not found")
+    citations = db.query(DBCitation).filter(DBCitation.person_id == person_id).all()
+    return [_citation_dict(c) for c in citations]
+
+
+@app.post("/api/persons/{person_id}/citations", status_code=201)
+def add_citation(person_id: int, body: CitationCreate, db: Session = Depends(get_db)):
+    p = db.get(DBPerson, person_id)
+    if not p:
+        raise HTTPException(404, "Person not found")
+    if not db.get(DBSource, body.source_id):
+        raise HTTPException(404, "Source not found")
+    c = DBCitation(
+        source_id=body.source_id,
+        person_id=person_id,
+        fact=body.fact,
+        detail=body.detail,
+        notes=body.notes,
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return _citation_dict(c)
+
+
+@app.patch("/api/citations/{citation_id}")
+def update_citation(citation_id: int, body: dict, db: Session = Depends(get_db)):
+    c = db.get(DBCitation, citation_id)
+    if not c:
+        raise HTTPException(404, "Citation not found")
+    for field in ("fact", "detail", "notes"):
+        if field in body:
+            setattr(c, field, body[field])
+    db.commit()
+    return _citation_dict(c)
+
+
+@app.delete("/api/citations/{citation_id}")
+def delete_citation(citation_id: int, db: Session = Depends(get_db)):
+    c = db.get(DBCitation, citation_id)
+    if not c:
+        raise HTTPException(404, "Citation not found")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Person Notes ──────────────────────────────────────────────────────────────
+
+def _note_citation_dict(nc: "DBNoteCitation") -> dict:
+    return {
+        "id": nc.id,
+        "note_id": nc.note_id,
+        "source_id": nc.source_id,
+        "marker": nc.marker,
+        "detail": nc.detail,
+        "source_title": nc.source.title if nc.source else None,
+        "source_type": nc.source.source_type if nc.source else None,
+        "source_document_id": nc.source.document_id if nc.source else None,
+        "source_year": nc.source.year if nc.source else None,
+        "source_author": nc.source.author if nc.source else None,
+    }
+
+
+def _note_dict(n: "DBPersonNote") -> dict:
+    return {
+        "id": n.id,
+        "person_id": n.person_id,
+        "title": n.title,
+        "content": n.content,
+        "sort_order": n.sort_order,
+        "created_at": n.created_at,
+        "updated_at": n.updated_at,
+        "citations": sorted([_note_citation_dict(nc) for nc in n.note_citations], key=lambda x: x["marker"]),
+    }
+
+
+@app.get("/api/persons/{person_id}/notes")
+def list_notes(person_id: int, db: Session = Depends(get_db)):
+    p = db.get(DBPerson, person_id)
+    if not p:
+        raise HTTPException(404, "Person not found")
+    notes = db.query(DBPersonNote).filter(DBPersonNote.person_id == person_id).order_by(DBPersonNote.sort_order, DBPersonNote.created_at).all()
+    return [_note_dict(n) for n in notes]
+
+
+@app.post("/api/persons/{person_id}/notes", status_code=201)
+def create_note(person_id: int, body: NoteCreate, db: Session = Depends(get_db)):
+    p = db.get(DBPerson, person_id)
+    if not p:
+        raise HTTPException(404, "Person not found")
+    now = datetime.now().isoformat()
+    n = DBPersonNote(
+        person_id=person_id,
+        title=body.title or None,
+        content=body.content,
+        sort_order=body.sort_order,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(n)
+    db.commit()
+    db.refresh(n)
+    return _note_dict(n)
+
+
+@app.patch("/api/notes/{note_id}")
+def update_note(note_id: int, body: NoteUpdate, db: Session = Depends(get_db)):
+    n = db.get(DBPersonNote, note_id)
+    if not n:
+        raise HTTPException(404, "Note not found")
+    if body.title is not None:
+        n.title = body.title or None
+    if body.content is not None:
+        n.content = body.content
+    if body.sort_order is not None:
+        n.sort_order = body.sort_order
+    n.updated_at = datetime.now().isoformat()
+    db.commit()
+    return _note_dict(n)
+
+
+@app.delete("/api/notes/{note_id}")
+def delete_note(note_id: int, db: Session = Depends(get_db)):
+    n = db.get(DBPersonNote, note_id)
+    if not n:
+        raise HTTPException(404, "Note not found")
+    db.delete(n)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/notes/{note_id}/citations", status_code=201)
+def add_note_citation(note_id: int, body: NoteCitationCreate, db: Session = Depends(get_db)):
+    n = db.get(DBPersonNote, note_id)
+    if not n:
+        raise HTTPException(404, "Note not found")
+    if not db.get(DBSource, body.source_id):
+        raise HTTPException(404, "Source not found")
+    nc = DBNoteCitation(
+        note_id=note_id,
+        source_id=body.source_id,
+        marker=body.marker,
+        detail=body.detail,
+    )
+    db.add(nc)
+    db.commit()
+    db.refresh(nc)
+    return _note_citation_dict(nc)
+
+
+@app.patch("/api/note-citations/{nc_id}")
+def update_note_citation(nc_id: int, body: dict, db: Session = Depends(get_db)):
+    nc = db.get(DBNoteCitation, nc_id)
+    if not nc:
+        raise HTTPException(404, "Note citation not found")
+    for field in ("source_id", "marker", "detail"):
+        if field in body:
+            setattr(nc, field, body[field])
+    db.commit()
+    return _note_citation_dict(nc)
+
+
+@app.delete("/api/note-citations/{nc_id}")
+def delete_note_citation(nc_id: int, db: Session = Depends(get_db)):
+    nc = db.get(DBNoteCitation, nc_id)
+    if not nc:
+        raise HTTPException(404, "Note citation not found")
+    db.delete(nc)
     db.commit()
     return {"ok": True}
 
