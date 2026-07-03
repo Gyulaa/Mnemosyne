@@ -249,11 +249,13 @@ export default function FamilyTreeTab({
   onExportEnd,
   navTarget,
   onNavConsumed,
+  onNavToEvent,
 }: {
   onExportStart?: () => void
   onExportEnd?: (error?: string) => void
   navTarget?: { personId: number; key: number } | null
   onNavConsumed?: () => void
+  onNavToEvent?: (eventId: number) => void
 }) {
   const [activeView, setActiveView] = useState<'tree' | 'stats'>('tree')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -316,13 +318,18 @@ export default function FamilyTreeTab({
 
   const unlinkedCount = persons.filter(p => !linkedIds.has(p.id)).length
 
-  async function handleTreeExport({ name }: { name: string; includeGenealogy: boolean }) {
+  async function handleTreeExport({ name, excludeLiving }: { name: string; includeGenealogy: boolean; excludeLiving: boolean }) {
     if (!activeGroup || exporting) return
     setShowExportModal(false)
     setExporting(true)
     onExportStart?.()
     try {
-      const personIds = activeGroup.persons.map(p => p.id)
+      let personIds = activeGroup.persons.map(p => p.id)
+      if (excludeLiving) {
+        personIds = activeGroup.persons
+          .filter(p => p.death_year != null || p.death_date != null)
+          .map(p => p.id)
+      }
       const blob = await api.project.exportZip(undefined, name, true, personIds)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -491,6 +498,7 @@ export default function FamilyTreeTab({
               relations={relations}
               onClose={() => setSelectedId(null)}
               onNavigateTo={id => setSelectedId(id)}
+              onNavToEvent={onNavToEvent}
             />
           )}
         </div>
@@ -508,6 +516,7 @@ export default function FamilyTreeTab({
           defaultName={groupNames[activeGroup.key] ?? activeGroup.autoName}
           subtitle={`${activeGroup.persons.length} person${activeGroup.persons.length !== 1 ? 's' : ''}`}
           hideGenealogyOption
+          persons={activeGroup.persons}
           onExport={handleTreeExport}
           onClose={() => setShowExportModal(false)}
         />

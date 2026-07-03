@@ -59,6 +59,7 @@ class SourceCreate(BaseModel):
     url: Optional[str] = None
     description: Optional[str] = None
     document_id: Optional[int] = None
+    event_id: Optional[int] = None
 
 
 class SourceUpdate(BaseModel):
@@ -100,3 +101,32 @@ class NoteCitationCreate(BaseModel):
     source_id: int
     marker: int
     detail: Optional[str] = None
+
+
+class EventCreate(BaseModel):
+    event_type: str = "custom"
+    title: Optional[str] = None
+    date: Optional[str] = None    # ISO partial
+    year: Optional[int] = None
+    place: Optional[str] = None
+    description: Optional[str] = None
+    person_id: Optional[int] = None   # primary person (optional for standalone events)
+    extra_person_ids: list[int] = []  # additional participants from photo detection
+
+
+class EventUpdate(BaseModel):
+    event_type: Optional[str] = None
+    title: Optional[str] = None
+    date: Optional[str] = None
+    year: Optional[int] = None
+    place: Optional[str] = None
+    description: Optional[str] = None
+
+
+class EventImageAdd(BaseModel):
+    image_id: int
+
+
+class EventPersonAdd(BaseModel):
+    person_id: int
+    role: str = "participant"

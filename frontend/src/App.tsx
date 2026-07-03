@@ -5,18 +5,20 @@ import ClustersTab from './components/ClustersTab'
 import ConnectionsTab from './components/ConnectionsTab'
 import ImagesTab from './components/ImagesTab'
 import FamilyTreeTab from './components/FamilyTreeTab'
+import EventsTab from './components/EventsTab'
 import ProjectSwitcher from './components/ProjectSwitcher'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 5_000 } },
 })
 
-type Tab = 'scan' | 'clusters' | 'images' | 'connections' | 'genealogy'
+type Tab = 'scan' | 'clusters' | 'images' | 'events' | 'connections' | 'genealogy'
 
 const TAB_LABELS: Record<Tab, string> = {
   scan: 'Scan',
   clusters: 'Clusters',
   images: 'Images',
+  events: 'Events',
   connections: 'Connections',
   genealogy: 'Genealogy',
 }
@@ -27,6 +29,7 @@ export default function App() {
   const [imageOpenTarget, setImageOpenTarget] = useState<{ imageId: number; personIds: number[]; key: number } | null>(null)
   const [clusterNavTarget, setClusterNavTarget] = useState<{ clusterId: number; key: number } | null>(null)
   const [genealogyNavTarget, setGenealogyNavTarget] = useState<{ personId: number; key: number } | null>(null)
+  const [eventNavTarget, setEventNavTarget] = useState<{ eventId: number; key: number } | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
 
@@ -48,6 +51,11 @@ export default function App() {
   function navToGenealogy(personId: number) {
     setTab('genealogy')
     setGenealogyNavTarget({ personId, key: Date.now() })
+  }
+
+  function navToEvent(eventId: number) {
+    setTab('events')
+    setEventNavTarget({ eventId, key: Date.now() })
   }
 
   function onExportStart() {
@@ -101,7 +109,9 @@ export default function App() {
           tab === 'genealogy' ? 'overflow-hidden' : 'overflow-auto',
         ].join(' ')}>
           {tab === 'genealogy' ? (
-            <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} />
+            <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} onNavToEvent={navToEvent} />
+          ) : tab === 'events' ? (
+            <EventsTab navTarget={eventNavTarget} onNavConsumed={() => setEventNavTarget(null)} />
           ) : (
             <div className={tab === 'connections' ? 'px-4 py-4' : 'max-w-6xl mx-auto px-6 py-8'}>
               {tab === 'scan'        ? <ScanTab /> :

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage
 from . import scanner as scanner_mod
 from . import clusterer
 from . import export_utils
@@ -31,6 +31,7 @@ from .schemas import (
     FaceAssignRequest, BatchFaceAssignRequest, CreateClusterRequest,
     SourceCreate, SourceUpdate, CitationCreate, PromoteToSourceRequest,
     NoteCreate, NoteUpdate, NoteCitationCreate,
+    EventCreate, EventUpdate, EventImageAdd, EventPersonAdd,
 )
 from .image_utils import load_image_bgr, crop_thumbnail
 
@@ -362,6 +363,23 @@ def list_images(
             for img in items
         ],
     }
+
+
+@app.get("/api/events")
+def list_events(has_photos: bool = Query(default=False), db: Session = Depends(get_db)):
+    """List all events, optionally filtered to those with at least one photo."""
+    q = db.query(DBEvent)
+    if has_photos:
+        q = q.filter(DBEvent.event_images.any())
+    events = q.order_by(DBEvent.year.desc().nulls_last(), DBEvent.id.desc()).all()
+    return [_event_dict(e) for e in events]
+
+
+@app.get("/api/images/with-events")
+def get_images_with_events(db: Session = Depends(get_db)):
+    """Return list of image IDs that are linked to at least one event."""
+    rows = db.query(DBEventImage.image_id).distinct().all()
+    return [r[0] for r in rows]
 
 
 @app.get("/api/images/export-zip")
@@ -1203,6 +1221,7 @@ def _source_dict(s: "DBSource") -> dict:
         "url": s.url,
         "description": s.description,
         "document_id": s.document_id,
+        "event_id": s.event_id,
         "created_at": s.created_at,
         "citation_count": len(s.citations),
     }
@@ -1497,6 +1516,7 @@ def create_source(body: SourceCreate, db: Session = Depends(get_db)):
         url=body.url,
         description=body.description,
         document_id=body.document_id,
+        event_id=body.event_id,
         created_at=datetime.now().isoformat(),
     )
     db.add(s)
@@ -1620,6 +1640,7 @@ def _note_citation_dict(nc: "DBNoteCitation") -> dict:
         "source_title": nc.source.title if nc.source else None,
         "source_type": nc.source.source_type if nc.source else None,
         "source_document_id": nc.source.document_id if nc.source else None,
+        "source_event_id": nc.source.event_id if nc.source else None,
         "source_year": nc.source.year if nc.source else None,
         "source_author": nc.source.author if nc.source else None,
     }
@@ -1747,6 +1768,180 @@ def face_thumbnail(face_id: int, size: int = 160, db: Session = Depends(get_db))
     thumb = crop_thumbnail(img, np.array(json.loads(face.bbox_json)), size)
     _, buf = cv2.imencode(".jpg", thumb)
     return Response(content=bytes(buf), media_type="image/jpeg")
+
+
+# ── Events ────────────────────────────────────────────────────────────────────
+
+def _event_person_dict(ep: DBEventPerson) -> dict:
+    p = ep.person
+    return {
+        "id": ep.id,
+        "person_id": ep.person_id,
+        "role": ep.role,
+        "person_name": p.name if p else None,
+        "thumbnail_face_id": p.thumbnail_face_id if p else None,
+    }
+
+
+def _event_image_dict(ei: DBEventImage) -> dict:
+    img = ei.image
+    return {
+        "id": ei.id,
+        "image_id": ei.image_id,
+        "image_path": img.path if img else None,
+        "first_face_id": img.faces[0].id if img and img.faces else None,
+    }
+
+
+def _event_dict(ev: DBEvent) -> dict:
+    return {
+        "id": ev.id,
+        "event_type": ev.event_type,
+        "title": ev.title,
+        "date": ev.date,
+        "year": ev.year,
+        "place": ev.place,
+        "description": ev.description,
+        "created_at": ev.created_at,
+        "updated_at": ev.updated_at,
+        "persons": [_event_person_dict(ep) for ep in ev.event_persons],
+        "images": [_event_image_dict(ei) for ei in ev.event_images],
+    }
+
+
+@app.get("/api/persons/{person_id}/events")
+def list_person_events(person_id: int, db: Session = Depends(get_db)):
+    eps = db.query(DBEventPerson).filter(DBEventPerson.person_id == person_id).all()
+    event_ids = [ep.event_id for ep in eps]
+    if not event_ids:
+        return []
+    events = db.query(DBEvent).filter(DBEvent.id.in_(event_ids)).all()
+    return [_event_dict(ev) for ev in events]
+
+
+@app.post("/api/events")
+def create_event(body: EventCreate, db: Session = Depends(get_db)):
+    now = datetime.utcnow().isoformat()
+    year = body.year
+    if not year and body.date:
+        try:
+            year = int(body.date.split("-")[0])
+        except Exception:
+            pass
+    ev = DBEvent(
+        event_type=body.event_type,
+        title=body.title,
+        date=body.date,
+        year=year,
+        place=body.place,
+        description=body.description,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(ev)
+    db.flush()
+    seen: set[int] = set()
+    if body.person_id is not None:
+        db.add(DBEventPerson(event_id=ev.id, person_id=body.person_id, role="primary"))
+        seen.add(body.person_id)
+    for pid in body.extra_person_ids:
+        if pid not in seen:
+            db.add(DBEventPerson(event_id=ev.id, person_id=pid, role="participant"))
+            seen.add(pid)
+    db.commit()
+    db.refresh(ev)
+    return _event_dict(ev)
+
+
+@app.patch("/api/events/{event_id}")
+def update_event(event_id: int, body: EventUpdate, db: Session = Depends(get_db)):
+    ev = db.get(DBEvent, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    for field, val in body.model_dump(exclude_none=True).items():
+        setattr(ev, field, val)
+    # Keep year in sync with date
+    if body.date is not None and body.year is None:
+        try:
+            ev.year = int(body.date.split("-")[0])
+        except Exception:
+            pass
+    ev.updated_at = datetime.utcnow().isoformat()
+    db.commit()
+    db.refresh(ev)
+    return _event_dict(ev)
+
+
+@app.delete("/api/events/{event_id}")
+def delete_event(event_id: int, db: Session = Depends(get_db)):
+    ev = db.get(DBEvent, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    db.delete(ev)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/events/{event_id}/images")
+def add_event_image(event_id: int, body: EventImageAdd, db: Session = Depends(get_db)):
+    ev = db.get(DBEvent, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    existing = db.query(DBEventImage).filter_by(event_id=event_id, image_id=body.image_id).first()
+    if existing:
+        return _event_dict(ev)
+    db.add(DBEventImage(event_id=event_id, image_id=body.image_id))
+    db.commit()
+    db.refresh(ev)
+    return _event_dict(ev)
+
+
+@app.delete("/api/event-images/{ei_id}")
+def remove_event_image(ei_id: int, db: Session = Depends(get_db)):
+    ei = db.get(DBEventImage, ei_id)
+    if not ei:
+        raise HTTPException(404, "Not found")
+    event_id = ei.event_id
+    db.delete(ei)
+    db.commit()
+    ev = db.get(DBEvent, event_id)
+    return _event_dict(ev) if ev else {"ok": True}
+
+
+@app.post("/api/events/{event_id}/persons")
+def add_event_person(event_id: int, body: EventPersonAdd, db: Session = Depends(get_db)):
+    ev = db.get(DBEvent, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    existing = db.query(DBEventPerson).filter_by(event_id=event_id, person_id=body.person_id).first()
+    if existing:
+        return _event_dict(ev)
+    db.add(DBEventPerson(event_id=event_id, person_id=body.person_id, role=body.role))
+    db.commit()
+    db.refresh(ev)
+    return _event_dict(ev)
+
+
+@app.delete("/api/event-persons/{ep_id}")
+def remove_event_person(ep_id: int, db: Session = Depends(get_db)):
+    ep = db.get(DBEventPerson, ep_id)
+    if not ep:
+        raise HTTPException(404, "Not found")
+    event_id = ep.event_id
+    db.delete(ep)
+    db.commit()
+    ev = db.get(DBEvent, event_id)
+    return _event_dict(ev) if ev else {"ok": True}
+
+
+@app.get("/api/images/{image_id}/events")
+def list_image_events(image_id: int, db: Session = Depends(get_db)):
+    eis = db.query(DBEventImage).filter(DBEventImage.image_id == image_id).all()
+    event_ids = [ei.event_id for ei in eis]
+    if not event_ids:
+        return []
+    events = db.query(DBEvent).filter(DBEvent.id.in_(event_ids)).all()
+    return [_event_dict(ev) for ev in events]
 
 
 # ── Static frontend (production build) ────────────────────────────────────────

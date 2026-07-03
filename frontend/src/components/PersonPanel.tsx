@@ -6,6 +6,7 @@ import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, Perso
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
 import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
+import EventTimeline from './EventTimeline'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -958,6 +959,7 @@ interface Props {
   relations: Relation[]
   onClose: () => void
   onNavigateTo: (id: number) => void
+  onNavToEvent?: (eventId: number) => void
 }
 
 // blank details state derived from a person
@@ -974,7 +976,7 @@ function detailsFromPerson(p: PersonFull) {
   }
 }
 
-export default function PersonPanel({ person, persons, relations, onClose, onNavigateTo }: Props) {
+export default function PersonPanel({ person, persons, relations, onClose, onNavigateTo, onNavToEvent }: Props) {
   const qc = useQueryClient()
   const [visible, setVisible] = useState(false)
 
@@ -1005,6 +1007,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   const [clusterSearch, setClusterSearch] = useState('')
   const [clusterLinking, setClusterLinking] = useState(false)
 
+  // tab
+  const [activeTab, setActiveTab] = useState<'bio' | 'events' | 'documents' | 'notes'>('bio')
+
   // documents
   const [showUploadForm, setShowUploadForm] = useState(false)
 
@@ -1013,9 +1018,10 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     return () => cancelAnimationFrame(t)
   }, [])
 
-  // Reset details when person changes
+  // Reset details and tab when person changes
   useEffect(() => {
     setDetailsData(detailsFromPerson(person))
+    setActiveTab('bio')
   }, [person.id])
 
   const { data: imagesPage, isLoading: loadingImgs } = useQuery({
@@ -1361,8 +1367,28 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           </div>
         </div>
 
+        {/* ── Tab bar ── */}
+        <div className="shrink-0 flex border-b border-zinc-800">
+          {(['bio', 'events', 'documents', 'notes'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`flex-1 py-2 text-[11px] font-medium transition-colors capitalize ${
+                activeTab === tab
+                  ? 'text-zinc-100 border-b-2 border-brand-400 -mb-px'
+                  : 'text-zinc-500 hover:text-zinc-300'
+              }`}
+            >
+              {tab === 'bio' ? 'Bio' : tab === 'events' ? 'Events' : tab === 'documents' ? `Docs${docs.length > 0 ? ` (${docs.length})` : ''}` : `Notes${personNotes.length > 0 ? ` (${personNotes.length})` : ''}`}
+            </button>
+          ))}
+        </div>
+
         {/* ── Scroll body ── */}
         <div className="flex-1 overflow-y-auto">
+
+          {/* ── Bio tab ── */}
+          {activeTab === 'bio' && <>
 
           {/* Details */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
@@ -1475,45 +1501,6 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             ) : (
               <p className="text-sm text-zinc-600 italic">No details yet</p>
             )}
-          </section>
-
-          {/* Notes */}
-          <section className="px-5 py-4 border-b border-zinc-800/80">
-            <div className="flex items-center justify-between mb-2.5">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Notes</h3>
-              <button onClick={startNewNote}
-                className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
-                + Add
-              </button>
-            </div>
-            <div className="space-y-2">
-              {personNotes.map(note => (
-                <NoteCard
-                  key={note.id}
-                  note={note}
-                  sources={sources}
-                  onUpdated={() => refetchNotes()}
-                  onDeleted={() => refetchNotes()}
-                />
-              ))}
-              {creatingNote && newNoteShell && (
-                <NoteEditorComponent
-                  note={newNoteShell}
-                  sources={sources}
-                  onSaved={() => { refetchNotes(); setCreatingNote(false); setNewNoteShell(null) }}
-                  onDeleted={() => { refetchNotes(); setCreatingNote(false); setNewNoteShell(null) }}
-                  onCancel={async () => {
-                    await api.notes.delete(newNoteShell.id)
-                    setCreatingNote(false)
-                    setNewNoteShell(null)
-                  }}
-                  autoFocusContent
-                />
-              )}
-              {personNotes.length === 0 && !creatingNote && (
-                <p className="text-sm text-zinc-600 italic">No notes yet</p>
-              )}
-            </div>
           </section>
 
           {/* Relations */}
@@ -1717,7 +1704,21 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             )}
           </section>
 
-          {/* Documents */}
+          </> /* end bio tab */}
+
+          {/* ── Events tab ── */}
+          {activeTab === 'events' && (
+            <EventTimeline
+              person={person}
+              relations={relations}
+              persons={persons}
+              onNavigateToBio={() => setActiveTab('bio')}
+              onNavToEvent={onNavToEvent}
+            />
+          )}
+
+          {/* ── Documents tab ── */}
+          {activeTab === 'documents' && (
           <section className="px-5 py-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
@@ -1749,6 +1750,50 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               </div>
             )}
           </section>
+          )}
+
+          {/* ── Notes tab ── */}
+          {activeTab === 'notes' && (
+          <section className="px-5 py-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Notes</h3>
+              <button onClick={startNewNote}
+                className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
+                + Add
+              </button>
+            </div>
+            <div className="space-y-3">
+              {personNotes.map(note => (
+                <NoteCard
+                  key={note.id}
+                  note={note}
+                  sources={sources}
+                  onUpdated={() => refetchNotes()}
+                  onDeleted={() => refetchNotes()}
+                  onNavToEvent={onNavToEvent}
+                  personId={person.id}
+                />
+              ))}
+              {creatingNote && newNoteShell && (
+                <NoteEditorComponent
+                  note={newNoteShell}
+                  sources={sources}
+                  onSaved={() => { refetchNotes(); setCreatingNote(false); setNewNoteShell(null) }}
+                  onDeleted={() => { refetchNotes(); setCreatingNote(false); setNewNoteShell(null) }}
+                  onCancel={async () => {
+                    await api.notes.delete(newNoteShell.id)
+                    setCreatingNote(false)
+                    setNewNoteShell(null)
+                  }}
+                  autoFocusContent
+                />
+              )}
+              {personNotes.length === 0 && !creatingNote && (
+                <p className="text-sm text-zinc-600 italic">No notes yet</p>
+              )}
+            </div>
+          </section>
+          )}
 
           <div className="h-8" />
         </div>

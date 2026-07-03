@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, Source, Citation, PersonNote, NoteCitation } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, Source, Citation, PersonNote, NoteCitation, PersonEvent } from './types'
 
 const BASE = '/api'
 
@@ -148,6 +148,8 @@ export const api = {
       post<{ ok: boolean; count: number }>(`${BASE}/images/bulk-delete`, { image_ids: ids }),
     persons: (id: number) =>
       fetchJson<ImagePerson[]>(`${BASE}/images/${id}/persons`),
+    withEvents: () =>
+      fetchJson<number[]>(`${BASE}/images/with-events`),
   },
   stats: () => fetchJson<Stats>(`${BASE}/stats`),
   fs: {
@@ -200,7 +202,7 @@ export const api = {
   },
   sources: {
     list: () => fetchJson<Source[]>(`${BASE}/sources`),
-    create: (fields: { title: string; source_type?: string; author?: string; year?: number; publisher?: string; location?: string; url?: string; description?: string; document_id?: number }) =>
+    create: (fields: { title: string; source_type?: string; author?: string; year?: number; publisher?: string; location?: string; url?: string; description?: string; document_id?: number; event_id?: number }) =>
       post<Source>(`${BASE}/sources`, fields),
     update: (id: number, fields: Partial<Omit<Source, 'id' | 'created_at' | 'citation_count' | 'document_id'>>) =>
       patch<Source>(`${BASE}/sources/${id}`, fields),
@@ -231,6 +233,30 @@ export const api = {
       patch<NoteCitation>(`${BASE}/note-citations/${id}`, fields),
     deleteCitation: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/note-citations/${id}`, { method: 'DELETE' }),
+  },
+  events: {
+    list: (hasPhotos = false) =>
+      fetchJson<PersonEvent[]>(`${BASE}/events?has_photos=${hasPhotos}`),
+    listForPerson: (personId: number) =>
+      fetchJson<PersonEvent[]>(`${BASE}/persons/${personId}/events`),
+    create: (fields: {
+      event_type?: string; title?: string; date?: string; year?: number
+      place?: string; description?: string; person_id?: number; extra_person_ids?: number[]
+    }) => post<PersonEvent>(`${BASE}/events`, fields),
+    update: (id: number, fields: Partial<Pick<PersonEvent, 'event_type' | 'title' | 'date' | 'year' | 'place' | 'description'>>) =>
+      patch<PersonEvent>(`${BASE}/events/${id}`, fields),
+    delete: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/events/${id}`, { method: 'DELETE' }),
+    addImage: (eventId: number, imageId: number) =>
+      post<PersonEvent>(`${BASE}/events/${eventId}/images`, { image_id: imageId }),
+    removeImage: (eventImageId: number) =>
+      fetchJson<PersonEvent | { ok: boolean }>(`${BASE}/event-images/${eventImageId}`, { method: 'DELETE' }),
+    addPerson: (eventId: number, personId: number, role = 'participant') =>
+      post<PersonEvent>(`${BASE}/events/${eventId}/persons`, { person_id: personId, role }),
+    removePerson: (eventPersonId: number) =>
+      fetchJson<PersonEvent | { ok: boolean }>(`${BASE}/event-persons/${eventPersonId}`, { method: 'DELETE' }),
+    listForImage: (imageId: number) =>
+      fetchJson<PersonEvent[]>(`${BASE}/images/${imageId}/events`),
   },
   faceThumbnailUrl: (id: number, size = 160) =>
     `${BASE}/faces/${id}/thumbnail?size=${size}`,

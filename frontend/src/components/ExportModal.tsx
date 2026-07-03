@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
+import type { PersonFull } from '../types'
 
 export type ExportSettings = {
   name: string
   includeGenealogy: boolean
   includeFaceless: boolean
+  excludeLiving: boolean
 }
 
 type Props = {
@@ -12,14 +14,28 @@ type Props = {
   subtitle?: string
   hideGenealogyOption?: boolean
   showFacelessOption?: boolean
+  persons?: PersonFull[]
   onExport: (settings: ExportSettings) => void
   onClose: () => void
 }
 
-export default function ExportModal({ defaultName, clusterCount, subtitle, hideGenealogyOption, showFacelessOption, onExport, onClose }: Props) {
+function isLiving(p: PersonFull) {
+  return p.death_year == null && p.death_date == null
+}
+
+export default function ExportModal({ defaultName, clusterCount, subtitle, hideGenealogyOption, showFacelessOption, persons, onExport, onClose }: Props) {
   const [name, setName] = useState(defaultName)
   const [includeGenealogy, setIncludeGenealogy] = useState(true)
   const [includeFaceless, setIncludeFaceless] = useState(true)
+  const [excludeLiving, setExcludeLiving] = useState(false)
+
+  const { livingCount, deceasedCount } = useMemo(() => {
+    if (!persons) return { livingCount: 0, deceasedCount: 0 }
+    const living = persons.filter(isLiving).length
+    return { livingCount: living, deceasedCount: persons.length - living }
+  }, [persons])
+
+  const showExcludeLivingOption = livingCount > 0 && deceasedCount > 0
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -27,6 +43,7 @@ export default function ExportModal({ defaultName, clusterCount, subtitle, hideG
       name: name.trim() || defaultName,
       includeGenealogy: hideGenealogyOption ? true : includeGenealogy,
       includeFaceless: showFacelessOption ? includeFaceless : true,
+      excludeLiving: showExcludeLivingOption ? excludeLiving : false,
     })
   }
 
@@ -83,6 +100,21 @@ export default function ExportModal({ defaultName, clusterCount, subtitle, hideG
               <div>
                 <p className="text-sm text-zinc-200">Include images without faces</p>
                 <p className="text-xs text-zinc-500">Photos where no face was detected</p>
+              </div>
+            </label>
+          )}
+
+          {showExcludeLivingOption && (
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={excludeLiving}
+                onChange={e => setExcludeLiving(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-brand-500 shrink-0"
+              />
+              <div>
+                <p className="text-sm text-zinc-200">Exclude living persons</p>
+                <p className="text-xs text-zinc-500">{livingCount} living · {deceasedCount} deceased in this export</p>
               </div>
             </label>
           )}

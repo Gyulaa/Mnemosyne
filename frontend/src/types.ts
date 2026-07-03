@@ -189,6 +189,7 @@ export interface Source {
   url: string | null
   description: string | null
   document_id: number | null
+  event_id: number | null
   created_at: string | null
   citation_count: number
 }
@@ -202,6 +203,7 @@ export interface NoteCitation {
   source_title: string | null
   source_type: string | null
   source_document_id: number | null
+  source_event_id: number | null
   source_year: number | null
   source_author: string | null
 }
@@ -229,4 +231,33 @@ export interface Citation {
   source_document_id: number | null
   source_year: number | null
   source_author: string | null
+}
+
+export interface EventPerson {
+  id: number           // event_persons.id
+  person_id: number
+  role: string         // primary | participant
+  person_name: string | null
+  thumbnail_face_id: number | null
+}
+
+export interface EventImage {
+  id: number           // event_images.id
+  image_id: number
+  image_path: string | null
+  first_face_id: number | null
+}
+
+export interface PersonEvent {
+  id: number
+  event_type: string   // custom|military|education|emigration|immigration|occupation|award|religious|travel
+  title: string | null
+  date: string | null  // ISO partial
+  year: number | null
+  place: string | null
+  description: string | null
+  created_at: string | null
+  updated_at: string | null
+  persons: EventPerson[]
+  images: EventImage[]
 }

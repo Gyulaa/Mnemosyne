@@ -1,7 +1,9 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { createPortal } from 'react-dom'
 import { api } from '../api'
-import type { Cluster, ImageItem, ImagePerson } from '../types'
+import type { Cluster, ImageItem, ImagePerson, PersonEvent } from '../types'
+import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
 
 type FilterType = 'all' | 'done' | 'no_face' | 'error' | 'pending'
 type SortOrder = 'id_desc' | 'exif_date_desc' | 'exif_date_asc' | 'filename_asc'
@@ -50,6 +52,8 @@ export default function ImagesTab({
   const [excludePersonIds, setExcludePersonIds] = useState<Set<number>>(new Set())
   const [includeMode, setIncludeMode] = useState<'or' | 'and'>('or')
   const [showPersonFilter, setShowPersonFilter] = useState(false)
+  const [personFilterSearch, setPersonFilterSearch] = useState('')
+  const [showAttachModal, setShowAttachModal] = useState(false)
 
   // Apply external navigation filter (e.g. from Connections edge click → AND mode)
   const prevNavKey = useRef<number | null>(null)
@@ -114,6 +118,13 @@ export default function ImagesTab({
     staleTime: 10_000,
     placeholderData: prev => prev,
   })
+
+  const { data: imagesWithEventsRaw = [] } = useQuery({
+    queryKey: ['images-with-events'],
+    queryFn: () => api.images.withEvents(),
+    staleTime: 30_000,
+  })
+  const imagesWithEvents = new Set(imagesWithEventsRaw)
 
   function invalidate() {
     qc.invalidateQueries({ queryKey: ['images'] })
@@ -396,6 +407,14 @@ export default function ImagesTab({
             <p className="text-xs text-zinc-500 flex-1 min-w-0">
               Click once to <span className="text-green-400">include</span>, again to <span className="text-red-400">exclude</span>, third time to clear.
             </p>
+            {namedClusters.length > 6 && (
+              <input
+                value={personFilterSearch}
+                onChange={e => setPersonFilterSearch(e.target.value)}
+                placeholder="Search by name…"
+                className="w-40 bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400 transition-colors"
+              />
+            )}
 
             {/* AND / OR toggle — only shown when persons are included */}
             {includePersonIds.size > 1 && (
@@ -429,7 +448,9 @@ export default function ImagesTab({
 
           {/* Person chips */}
           <div className="flex flex-wrap gap-1.5">
-            {namedClusters.map(c => {
+            {namedClusters.filter(c =>
+              !personFilterSearch || (c.person_name ?? '').toLowerCase().includes(personFilterSearch.toLowerCase())
+            ).map(c => {
               const pid = c.person_id!
               const isInc = includePersonIds.has(pid)
               const isExc = excludePersonIds.has(pid)
@@ -497,6 +518,7 @@ export default function ImagesTab({
                   key={img.id}
                   img={img}
                   selected={selected.has(img.id)}
+                  hasEvent={imagesWithEvents.has(img.id)}
                   onToggle={() => toggleItem(img.id)}
                   onDelete={() => deleteSingle(img.id)}
                   onPreview={() => setPreviewIdx(i)}
@@ -520,6 +542,7 @@ export default function ImagesTab({
                 key={img.id}
                 img={img}
                 selected={selected.has(img.id)}
+                hasEvent={imagesWithEvents.has(img.id)}
                 onToggle={() => toggleItem(img.id)}
                 onDelete={() => deleteSingle(img.id)}
                 onPreview={() => setPreviewIdx(i)}
@@ -555,6 +578,16 @@ export default function ImagesTab({
           <span className="text-sm text-zinc-200 font-semibold tabular-nums">{selected.size} selected</span>
           <div className="w-px h-5 bg-zinc-700 shrink-0" />
           <button
+            onClick={() => setShowAttachModal(true)}
+            disabled={bulkDeleting || exportingSelected}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Add to event
+          </button>
+          <button
             onClick={exportSelected}
             disabled={exportingSelected || bulkDeleting}
             className="flex items-center gap-1.5 px-4 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 disabled:cursor-wait text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
@@ -580,6 +613,14 @@ export default function ImagesTab({
         </div>
       )}
 
+      {showAttachModal && (
+        <AttachToEventModal
+          imageIds={[...selected]}
+          onClose={() => setShowAttachModal(false)}
+          onDone={() => { setShowAttachModal(false); setSelected(new Set()) }}
+        />
+      )}
+
       {previewIdx !== null && (
         <ImagePreviewModal
           images={pageItems}
@@ -599,12 +640,14 @@ export default function ImagesTab({
 function ImageCard({
   img,
   selected,
+  hasEvent,
   onToggle,
   onDelete,
   onPreview,
 }: {
   img: ImageItem
   selected: boolean
+  hasEvent: boolean
   onToggle: () => void
   onDelete: () => void
   onPreview: () => void
@@ -641,6 +684,15 @@ function ImageCard({
           className="w-4 h-4 rounded accent-brand-400 cursor-pointer"
         />
       </div>
+
+      {/* Event badge */}
+      {hasEvent && (
+        <div className="absolute top-2 right-5 w-4 h-4 rounded-full bg-brand-500/90 flex items-center justify-center" title="Linked to an event">
+          <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        </div>
+      )}
 
       {/* Status dot */}
       <div className={`absolute top-2 right-2 w-2 h-2 rounded-full ${
@@ -706,6 +758,12 @@ function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster }: {
     enabled: img.face_count > 0,
   })
 
+  const { data: linkedEvents = [] } = useQuery<PersonEvent[]>({
+    queryKey: ['image-events', img.id],
+    queryFn: () => api.events.listForImage(img.id),
+    staleTime: 30_000,
+  })
+
   const meta = STATUS_META[img.scan_status]
   const exifMeta = parseMeta(img.meta_json)
 
@@ -766,6 +824,23 @@ function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster }: {
               )}
             </div>
 
+            {/* Linked events */}
+            {linkedEvents.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-zinc-600">Events:</span>
+                {linkedEvents.map(ev => (
+                  <span key={ev.id}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-brand-900/40 border border-brand-700/50 rounded-full text-xs text-brand-300">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    {ev.title ?? ev.event_type}
+                    {ev.year ? ` (${ev.year})` : ''}
+                  </span>
+                ))}
+              </div>
+            )}
+
             {/* Persons in image */}
             {persons.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
@@ -817,12 +892,14 @@ function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster }: {
 function ImageRow({
   img,
   selected,
+  hasEvent,
   onToggle,
   onDelete,
   onPreview,
 }: {
   img: ImageItem
   selected: boolean
+  hasEvent: boolean
   onToggle: () => void
   onDelete: () => void
   onPreview: () => void
@@ -859,9 +936,19 @@ function ImageRow({
 
       {/* Filename + folder + date */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-zinc-200 truncate" title={img.path}>
-          {img.filename}
-        </p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm font-medium text-zinc-200 truncate" title={img.path}>
+            {img.filename}
+          </p>
+          {hasEvent && (
+            <span className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-brand-900/60 text-brand-400 border border-brand-700/50" title="Linked to an event">
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Event
+            </span>
+          )}
+        </div>
         <p className="text-xs text-zinc-600 truncate" title={img.folder}>
           {img.folder}
         </p>
@@ -905,5 +992,301 @@ function ImageRow({
         </button>
       </div>
     </div>
+  )
+}
+
+// ── AttachToEventModal ────────────────────────────────────────────────────────
+
+function AttachToEventModal({ imageIds, onClose, onDone }: {
+  imageIds: number[]
+  onClose: () => void
+  onDone: () => void
+}) {
+  const qc = useQueryClient()
+  const [search, setSearch] = useState('')
+  const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
+  const [attaching, setAttaching] = useState(false)
+  const [step, setStep] = useState<'select' | 'persons' | 'success'>('select')
+  const [attachedCount, setAttachedCount] = useState(0)
+  const [candidatePersons, setCandidatePersons] = useState<ImagePerson[]>([])
+  const [includedPersonIds, setIncludedPersonIds] = useState<Set<number>>(new Set())
+  const [showCreate, setShowCreate] = useState(false)
+
+  const { data: events = [], refetch: refetchEvents } = useQuery<PersonEvent[]>({
+    queryKey: ['events-all'],
+    queryFn: () => api.events.list(false),
+    staleTime: 10_000,
+  })
+
+  const filtered = events.filter(ev => {
+    const q = search.toLowerCase()
+    if (!q) return true
+    const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ''
+    return (ev.title ?? '').toLowerCase().includes(q)
+      || typeLabel.toLowerCase().includes(q)
+      || (ev.place ?? '').toLowerCase().includes(q)
+  })
+
+  const selectedEvent = events.find(e => e.id === selectedEventId)
+
+  async function handleAttach() {
+    if (!selectedEventId || attaching) return
+    setAttaching(true)
+
+    // 1. Attach images
+    let count = 0
+    for (const imgId of imageIds) {
+      try { await api.events.addImage(selectedEventId, imgId); count++ } catch { /* skip dupes */ }
+    }
+    setAttachedCount(count)
+    qc.invalidateQueries({ queryKey: ['events'] })
+    qc.invalidateQueries({ queryKey: ['images-with-events'] })
+
+    // 2. Discover persons in these images not already in the event
+    const existingPersonIds = new Set(selectedEvent?.persons.map(ep => ep.person_id) ?? [])
+    const personMap = new Map<number, ImagePerson>()
+    await Promise.all(imageIds.map(async imgId => {
+      try {
+        const persons = await api.images.persons(imgId)
+        for (const p of persons) {
+          if (!existingPersonIds.has(p.person_id) && !personMap.has(p.person_id)) {
+            personMap.set(p.person_id, p)
+          }
+        }
+      } catch { /* ignore */ }
+    }))
+
+    setAttaching(false)
+    const candidates = [...personMap.values()]
+    if (candidates.length > 0) {
+      setCandidatePersons(candidates)
+      setIncludedPersonIds(new Set(candidates.map(p => p.person_id)))
+      setStep('persons')
+    } else {
+      setStep('success')
+      setTimeout(onDone, 1400)
+    }
+  }
+
+  async function handleConfirmPersons() {
+    if (!selectedEventId) return
+    setAttaching(true)
+    for (const pid of includedPersonIds) {
+      try { await api.events.addPerson(selectedEventId, pid, 'participant') } catch { /* ignore dupes */ }
+    }
+    qc.invalidateQueries({ queryKey: ['events'] })
+    setAttaching(false)
+    setStep('success')
+    setTimeout(onDone, 1400)
+  }
+
+  function togglePerson(pid: number) {
+    setIncludedPersonIds(prev => {
+      const next = new Set(prev)
+      next.has(pid) ? next.delete(pid) : next.add(pid)
+      return next
+    })
+  }
+
+  function handleCreated(ev: PersonEvent) {
+    setShowCreate(false)
+    setSelectedEventId(ev.id)
+    refetchEvents()
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70" onClick={onClose}>
+      <div
+        className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl flex flex-col"
+        style={{ width: 520, maxHeight: '80vh' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-zinc-800 shrink-0">
+          <div>
+            <p className="text-sm font-semibold text-zinc-100">
+              {step === 'persons' ? 'Who else was there?' : 'Add to event'}
+            </p>
+            <p className="text-[10px] text-zinc-500 mt-0.5">
+              {step === 'persons'
+                ? `${attachedCount} photo${attachedCount !== 1 ? 's' : ''} attached — add participants?`
+                : `${imageIds.length} photo${imageIds.length !== 1 ? 's' : ''} selected`}
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* ── Success ── */}
+        {step === 'success' && (
+          <div className="flex-1 flex flex-col items-center justify-center py-16 gap-3">
+            <div className="w-14 h-14 rounded-full bg-green-900/40 border border-green-700/50 flex items-center justify-center">
+              <svg className="w-7 h-7 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <p className="text-sm font-medium text-zinc-200">
+              {attachedCount} photo{attachedCount !== 1 ? 's' : ''} added
+            </p>
+            {selectedEvent && (
+              <p className="text-xs text-zinc-500">
+                {selectedEvent.title ?? (EVENT_TYPE_OPTIONS.find(o => o.value === selectedEvent.event_type)?.label ?? selectedEvent.event_type)}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ── Who else was there? ── */}
+        {step === 'persons' && (
+          <>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 min-h-0">
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                These people appear in the attached photos. Add them to the event as participants?
+              </p>
+              <div className="space-y-1">
+                {candidatePersons.map(p => {
+                  const included = includedPersonIds.has(p.person_id)
+                  return (
+                    <label key={p.person_id} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-zinc-800 cursor-pointer transition-colors">
+                      <input type="checkbox" checked={included} onChange={() => togglePerson(p.person_id)}
+                        className="w-4 h-4 accent-brand-500 shrink-0" />
+                      <img src={api.faceThumbnailUrl(p.face_id, 48)} alt=""
+                        className="w-8 h-8 rounded-full object-cover shrink-0 border border-zinc-700" />
+                      <span className="text-sm text-zinc-200">{p.person_name ?? '(unnamed)'}</span>
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="shrink-0 flex gap-2 px-5 py-3.5 border-t border-zinc-800">
+              <button
+                onClick={() => { setStep('success'); setTimeout(onDone, 1400) }}
+                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+              >
+                Skip
+              </button>
+              <button
+                onClick={handleConfirmPersons}
+                disabled={attaching}
+                className="flex-1 px-3 py-1.5 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded-lg transition-colors"
+              >
+                {attaching
+                  ? 'Adding…'
+                  : includedPersonIds.size > 0
+                    ? `Add ${includedPersonIds.size} participant${includedPersonIds.size !== 1 ? 's' : ''}`
+                    : 'Confirm (none selected)'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* ── Select event ── */}
+        {step === 'select' && (
+          <>
+            <div className="px-5 pt-4 pb-3 space-y-3 shrink-0">
+              <div className="flex gap-2">
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search events…"
+                  autoFocus
+                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400"
+                />
+                <button
+                  onClick={() => { setShowCreate(s => !s); setSearch('') }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                    showCreate
+                      ? 'bg-brand-500/20 border-brand-500/40 text-brand-300'
+                      : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
+                  }`}
+                >
+                  + New event
+                </button>
+              </div>
+
+              {showCreate && (
+                <div className="border border-zinc-700/60 rounded-xl p-3 bg-zinc-800/30">
+                  <p className="text-[10px] text-zinc-500 mb-2">Create and select a new event</p>
+                  <EventEditor
+                    event={null}
+                    persons={[]}
+                    onSaved={handleCreated}
+                    onCancel={() => setShowCreate(false)}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-1 min-h-0">
+              {filtered.length === 0 ? (
+                <p className="text-sm text-zinc-600 italic text-center py-8">
+                  {search ? `No events match "${search}"` : 'No events yet. Create one above.'}
+                </p>
+              ) : filtered.map(ev => {
+                const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
+                const dateStr = formatEventDate(ev.date, ev.year)
+                const isSelected = ev.id === selectedEventId
+                return (
+                  <button
+                    key={ev.id}
+                    onClick={() => setSelectedEventId(isSelected ? null : ev.id)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all ${
+                      isSelected
+                        ? 'bg-brand-500/20 border border-brand-500/40'
+                        : 'border border-transparent hover:border-zinc-700 hover:bg-zinc-800/50'
+                    }`}
+                  >
+                    <div className="shrink-0"><EventIcon type={ev.event_type} /></div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-zinc-100 truncate">{ev.title || typeLabel}</p>
+                      {ev.title && <p className="text-[10px] text-zinc-500">{typeLabel}</p>}
+                      {(dateStr || ev.place) && (
+                        <p className="text-[10px] text-zinc-500 truncate">{[dateStr, ev.place].filter(Boolean).join(' · ')}</p>
+                      )}
+                    </div>
+                    {ev.images.length > 0 && (
+                      <span className="text-[10px] text-zinc-600 shrink-0 tabular-nums">
+                        {ev.images.length} photo{ev.images.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                    {isSelected && (
+                      <div className="w-5 h-5 rounded-full bg-brand-500 flex items-center justify-center shrink-0">
+                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </div>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="shrink-0 flex gap-2 px-5 py-3.5 border-t border-zinc-800">
+              <button
+                onClick={onClose}
+                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAttach}
+                disabled={!selectedEventId || attaching}
+                className="flex-1 px-3 py-1.5 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+              >
+                {attaching
+                  ? 'Attaching…'
+                  : selectedEventId
+                    ? `Attach ${imageIds.length} photo${imageIds.length !== 1 ? 's' : ''}`
+                    : 'Select an event above'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
   )
 }

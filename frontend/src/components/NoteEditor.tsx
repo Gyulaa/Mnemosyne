@@ -1,7 +1,8 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import type { PersonNote, NoteCitation, Source } from '../types'
+import type { PersonNote, NoteCitation, Source, PersonEvent } from '../types'
 import { api } from '../api'
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
@@ -88,6 +89,7 @@ export default function NoteEditor({ note, sources, onSaved, onDeleted, onCancel
       source_title: source.title,
       source_type: source.source_type,
       source_document_id: source.document_id,
+      source_event_id: source.event_id,
       source_year: source.year,
       source_author: source.author,
     }
@@ -339,13 +341,52 @@ interface CardProps {
   sources: Source[]
   onUpdated: (n: PersonNote) => void
   onDeleted: () => void
+  onNavToEvent?: (eventId: number) => void
+  personId?: number
 }
 
-export function NoteCard({ note, sources, onUpdated, onDeleted }: CardProps) {
+export function NoteCard({ note, sources, onUpdated, onDeleted, onNavToEvent, personId }: CardProps) {
   const [editing, setEditing] = useState(false)
+  const qc = useQueryClient()
 
   const html = renderMarkdown(note.content, note.citations)
-  const preview = note.content.slice(0, 120).replace(/[#*_~`>\-]/g, '').trim()
+
+  function navigateCitation(citation: NoteCitation) {
+    if (citation.source_event_id != null && onNavToEvent) {
+      onNavToEvent(citation.source_event_id)
+      return
+    }
+    if (citation.source_type === 'event' && onNavToEvent && personId != null) {
+      // try cache first, then fetch — match by title for sources created before event_id was stored
+      const cached = qc.getQueryData<PersonEvent[]>(['person-events', personId])
+      const find = (events: PersonEvent[]) => events.find(e => e.title === citation.source_title)
+      if (cached) {
+        const match = find(cached)
+        if (match) { onNavToEvent(match.id); return }
+      }
+      api.events.listForPerson(personId).then(events => {
+        const match = find(events)
+        if (match) onNavToEvent(match.id)
+      })
+      return
+    }
+    if (citation.source_document_id != null) {
+      window.open(api.documents.fileUrl(citation.source_document_id, false), '_blank')
+    }
+  }
+
+  function handleContentClick(e: React.MouseEvent<HTMLDivElement>) {
+    const anchor = (e.target as Element).closest('a.note-ref')
+    if (!anchor) return
+    e.preventDefault()
+    e.stopPropagation()
+    const href = (anchor as HTMLAnchorElement).getAttribute('href') ?? ''
+    const match = href.match(/note-ref-(\d+)$/)
+    if (!match) return
+    const citationId = parseInt(match[1])
+    const citation = note.citations.find(c => c.id === citationId)
+    if (citation) navigateCitation(citation)
+  }
 
   if (editing) {
     return (
@@ -360,40 +401,95 @@ export function NoteCard({ note, sources, onUpdated, onDeleted }: CardProps) {
     )
   }
 
+  const editedAt = note.updated_at
+    ? new Date(note.updated_at).toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' })
+    : null
+
   return (
     <div
-      className="group bg-zinc-800/30 border border-zinc-700/40 hover:border-zinc-600/60 rounded-xl px-4 py-3 cursor-pointer transition-colors"
+      className="group bg-zinc-800/30 border border-zinc-700/40 hover:border-zinc-600/60 rounded-xl overflow-hidden cursor-pointer transition-colors"
       onClick={() => setEditing(true)}
     >
-      <div className="flex items-start justify-between gap-2">
+      {/* Header + content */}
+      <div className="flex items-start justify-between gap-2 px-5 pt-4 pb-3">
         <div className="flex-1 min-w-0">
-          {note.title && (
-            <p className="text-xs font-semibold text-zinc-200 mb-1 truncate">{note.title}</p>
-          )}
+          <div className="flex items-baseline gap-2 mb-2">
+            {note.title && (
+              <p className="text-sm font-semibold text-zinc-200 truncate">{note.title}</p>
+            )}
+            {editedAt && (
+              <span className="text-xs text-zinc-600 shrink-0 ml-auto">{editedAt}</span>
+            )}
+          </div>
           {note.content ? (
             <div
-              className="note-preview text-xs text-zinc-400 leading-relaxed line-clamp-3"
+              className="note-preview text-sm text-zinc-400 leading-relaxed line-clamp-4"
               dangerouslySetInnerHTML={{ __html: html }}
+              onClick={handleContentClick}
             />
           ) : (
-            <p className="text-xs text-zinc-600 italic">Empty note</p>
-          )}
-          {note.citations.length > 0 && (
-            <p className="text-[10px] text-amber-700 mt-1">
-              {note.citations.length} source{note.citations.length > 1 ? 's' : ''} cited
-            </p>
+            <p className="text-sm text-zinc-600 italic">Empty note</p>
           )}
         </div>
         <button
           onClick={e => { e.stopPropagation(); setEditing(true) }}
-          className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-all"
+          className="shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-all"
           title="Edit"
         >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
           </svg>
         </button>
       </div>
+
+      {/* Citations panel */}
+      {note.citations.length > 0 && (
+        <div
+          className="border-t border-zinc-800 bg-zinc-900/40 px-4 py-2 space-y-0.5"
+          onClick={e => e.stopPropagation()}
+        >
+          {[...note.citations].sort((a, b) => a.marker - b.marker).map(c => {
+            const isEvent = (c.source_event_id != null || c.source_type === 'event') && !!onNavToEvent
+            const isDoc = c.source_document_id != null
+            const canNav = isEvent || isDoc
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => navigateCitation(c)}
+                disabled={!canNav}
+                className={[
+                  'flex items-center gap-2 w-full text-left rounded-lg px-2 py-2 transition-colors text-xs',
+                  canNav
+                    ? 'text-amber-500 hover:text-amber-300 hover:bg-zinc-800/70 cursor-pointer'
+                    : 'text-amber-900 cursor-default',
+                ].join(' ')}
+              >
+                <span className="font-mono shrink-0 w-6 text-right text-zinc-600">[{c.marker}]</span>
+                {isEvent ? (
+                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                ) : isDoc ? (
+                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                  </svg>
+                )}
+                <span className="truncate">{c.source_title ?? '—'}</span>
+                {canNav && (
+                  <svg className="w-3 h-3 shrink-0 ml-auto opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

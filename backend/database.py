@@ -143,6 +143,7 @@ class Source(Base):
     url = Column(String, nullable=True)
     description = Column(String, nullable=True)
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
+    event_id = Column(Integer, ForeignKey("events.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(String, nullable=True)
     document = relationship("Document", back_populates="source")
     citations = relationship("Citation", back_populates="source", cascade="all, delete-orphan")
@@ -158,6 +159,40 @@ class Citation(Base):
     notes = Column(String, nullable=True)
     source = relationship("Source", back_populates="citations")
     person = relationship("Person")
+
+
+class Event(Base):
+    __tablename__ = "events"
+    id = Column(Integer, primary_key=True, index=True)
+    event_type = Column(String, nullable=False, default="custom")
+    title = Column(String, nullable=True)
+    date = Column(String, nullable=True)   # ISO partial: "YYYY" | "YYYY-MM" | "YYYY-MM-DD"
+    year = Column(Integer, nullable=True)
+    place = Column(String, nullable=True)
+    description = Column(String, nullable=True)
+    created_at = Column(String, nullable=True)
+    updated_at = Column(String, nullable=True)
+    event_persons = relationship("EventPerson", back_populates="event", cascade="all, delete-orphan")
+    event_images = relationship("EventImage", back_populates="event", cascade="all, delete-orphan")
+
+
+class EventPerson(Base):
+    __tablename__ = "event_persons"
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(Integer, ForeignKey("events.id"), nullable=False, index=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
+    role = Column(String, nullable=False, default="participant")  # primary | participant
+    event = relationship("Event", back_populates="event_persons")
+    person = relationship("Person")
+
+
+class EventImage(Base):
+    __tablename__ = "event_images"
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(Integer, ForeignKey("events.id"), nullable=False, index=True)
+    image_id = Column(Integer, ForeignKey("images.id"), nullable=False, index=True)
+    event = relationship("Event", back_populates="event_images")
+    image = relationship("Image")
 
 
 def configure_engine(engine):
@@ -308,6 +343,39 @@ def init_db_schema(engine):
         """))
         conn.commit()
 
+        # Events + participants + linked images
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS events (
+                id          INTEGER PRIMARY KEY,
+                event_type  TEXT NOT NULL DEFAULT 'custom',
+                title       TEXT,
+                date        TEXT,
+                year        INTEGER,
+                place       TEXT,
+                description TEXT,
+                created_at  TEXT,
+                updated_at  TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS event_persons (
+                id        INTEGER PRIMARY KEY,
+                event_id  INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+                role      TEXT NOT NULL DEFAULT 'participant',
+                UNIQUE(event_id, person_id)
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS event_images (
+                id       INTEGER PRIMARY KEY,
+                event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+                UNIQUE(event_id, image_id)
+            )
+        """))
+        conn.commit()
+
         # Schema version tracking — used for future migrations.
         # Current version: 1 (baseline with all columns above).
         conn.execute(text(
@@ -317,3 +385,13 @@ def init_db_schema(engine):
         if row is None:
             conn.execute(text("INSERT INTO schema_version VALUES (1)"))
         conn.commit()
+
+        # v1 → v2: add event_id to sources
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 2:
+            try:
+                conn.execute(text("ALTER TABLE sources ADD COLUMN event_id INTEGER REFERENCES events(id) ON DELETE SET NULL"))
+            except Exception:
+                pass
+            conn.execute(text("UPDATE schema_version SET version = 2"))
+            conn.commit()
