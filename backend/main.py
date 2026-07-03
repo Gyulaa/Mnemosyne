@@ -160,6 +160,48 @@ def export_project(
     )
 
 
+@app.get("/api/export/gedcom")
+def export_gedcom(
+    photo_mode: str = Query("primary", regex="^(none|primary|all)$"),
+    include_documents: bool = Query(True),
+    include_events: bool = Query(True),
+    include_sources: bool = Query(True),
+    include_notes: bool = Query(True),
+):
+    """Export all genealogy data as a GEDCOM 5.5.1 ZIP (family.ged + media/)."""
+    from . import gedcom_export
+
+    project_id = project_manager.active_id
+    if not project_id:
+        raise HTTPException(404, "No active project")
+
+    project_dir = PROJECTS_DIR / project_id
+    db_path = project_dir / "photo_organizer.db"
+    docs_dir = project_dir / "documents"
+
+    project_info = _read_project_json(project_dir / "project.json")
+    project_name = project_info.get("name", "family")
+
+    buf = gedcom_export.build_gedcom_zip(
+        db_path, docs_dir,
+        photo_mode=photo_mode,
+        include_documents=include_documents,
+        include_events=include_events,
+        include_sources=include_sources,
+        include_notes=include_notes,
+    )
+
+    ascii_name = unicodedata.normalize("NFD", project_name).encode("ascii", "ignore").decode("ascii")
+    filename = f"{ascii_name.replace(' ', '_') or 'family'}_gedcom.zip"
+    filename_utf8 = quote(f"{project_name.replace(' ', '_')}_gedcom.zip")
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{filename_utf8}"},
+    )
+
+
 @app.post("/api/projects/import")
 async def import_project(file: UploadFile = File(...)):
     """Import a project ZIP archive and activate it."""
@@ -1375,6 +1417,16 @@ def create_relation(body: dict, db: Session = Depends(get_db)):
         ).scalar() or 0
         if parent_count >= 2:
             raise HTTPException(400, "A személynek már van 2 szülője")
+    # Infer sex from spouse pairing: if one is known, set the other to opposite.
+    if rel_type == "spouse":
+        pa = db.get(DBPerson, a_id)
+        pb = db.get(DBPerson, b_id)
+        if pa and pb:
+            if pa.sex and not pb.sex:
+                pb.sex = 'F' if pa.sex == 'M' else 'M'
+            elif pb.sex and not pa.sex:
+                pa.sex = 'F' if pb.sex == 'M' else 'M'
+
     r = DBRelation(type=rel_type, person_a_id=a_id, person_b_id=b_id)
     db.add(r)
     db.commit()

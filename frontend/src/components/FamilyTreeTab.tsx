@@ -7,6 +7,111 @@ import PersonPanel from './PersonPanel'
 import ExportModal from './ExportModal'
 import StatisticsView from './StatisticsView'
 
+// ── GEDCOM export modal ───────────────────────────────────────────────────────
+
+type GedcomOpts = {
+  photoMode: 'none' | 'primary' | 'all'
+  includeDocuments: boolean
+  includeEvents: boolean
+  includeSources: boolean
+  includeNotes: boolean
+}
+
+function GedcomExportModal({ onExport, onClose }: { onExport: (opts: GedcomOpts) => void; onClose: () => void }) {
+  const [photoMode, setPhotoMode] = useState<GedcomOpts['photoMode']>('primary')
+  const [includeDocuments, setIncludeDocuments] = useState(true)
+  const [includeEvents, setIncludeEvents] = useState(true)
+  const [includeSources, setIncludeSources] = useState(true)
+  const [includeNotes, setIncludeNotes] = useState(true)
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault()
+    onExport({ photoMode, includeDocuments, includeEvents, includeSources, includeNotes })
+  }
+
+  const radioBase = 'w-4 h-4 accent-brand-500 shrink-0'
+  const optionLabel = 'flex items-start gap-3 cursor-pointer'
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <form
+        onSubmit={submit}
+        className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="text-sm font-semibold text-zinc-100 mb-1">GEDCOM export settings</h2>
+        <p className="text-xs text-zinc-500 mb-5">Exports a ZIP with <code>family.ged</code> and a <code>media/</code> folder.</p>
+
+        <div className="space-y-4">
+          {/* Photo mode */}
+          <div>
+            <p className="text-xs text-zinc-400 mb-2">Photos</p>
+            <div className="space-y-2">
+              {([
+                ['none',    'No photos',              'Skip photos entirely'],
+                ['primary', 'Primary photo only',     'One thumbnail photo per person'],
+                ['all',     'All photos',             'Every photo the person appears in'],
+              ] as const).map(([val, label, desc]) => (
+                <label key={val} className={optionLabel}>
+                  <input
+                    type="radio"
+                    name="photoMode"
+                    value={val}
+                    checked={photoMode === val}
+                    onChange={() => setPhotoMode(val)}
+                    className={`mt-0.5 ${radioBase}`}
+                  />
+                  <div>
+                    <p className="text-sm text-zinc-200">{label}</p>
+                    <p className="text-xs text-zinc-500">{desc}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Content toggles */}
+          <div className="border-t border-zinc-800 pt-4 space-y-3">
+            <p className="text-xs text-zinc-400">Include</p>
+            {([
+              ['Documents',  includeDocuments, setIncludeDocuments] as const,
+              ['Events',     includeEvents,    setIncludeEvents]    as const,
+              ['Sources',    includeSources,   setIncludeSources]   as const,
+              ['Notes',      includeNotes,     setIncludeNotes]     as const,
+            ]).map(([label, checked, setter]) => (
+              <label key={label} className={optionLabel}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={e => setter(e.target.checked)}
+                  className={`mt-0.5 ${radioBase}`}
+                />
+                <p className="text-sm text-zinc-200">{label}</p>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex gap-3 mt-6">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="flex-1 px-4 py-2 text-sm font-medium text-white bg-brand-500 hover:bg-brand-400 rounded-lg transition-colors"
+          >
+            Export
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function initials(name: string | null) {
@@ -262,6 +367,8 @@ export default function FamilyTreeTab({
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [exportingGedcom, setExportingGedcom] = useState(false)
+  const [showGedcomModal, setShowGedcomModal] = useState(false)
   const [groupNames, setGroupNames] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem('mnemosyne_group_names') ?? '{}') }
     catch { return {} }
@@ -345,6 +452,33 @@ export default function FamilyTreeTab({
     }
   }
 
+  async function handleGedcomExport(opts: GedcomOpts) {
+    setShowGedcomModal(false)
+    if (exportingGedcom) return
+    setExportingGedcom(true)
+    onExportStart?.()
+    try {
+      const blob = await api.project.exportGedcom({
+        photoMode: opts.photoMode,
+        includeDocuments: opts.includeDocuments,
+        includeEvents: opts.includeEvents,
+        includeSources: opts.includeSources,
+        includeNotes: opts.includeNotes,
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'family_gedcom.zip'
+      a.click()
+      URL.revokeObjectURL(url)
+      onExportEnd?.()
+    } catch (e) {
+      onExportEnd?.(String(e))
+    } finally {
+      setExportingGedcom(false)
+    }
+  }
+
   return (
     <div className="h-full flex flex-col bg-zinc-950">
 
@@ -394,6 +528,18 @@ export default function FamilyTreeTab({
             title="Export this family tree with linked clusters and photos"
           >
             {exporting ? 'Exporting…' : 'Export tree'}
+          </button>
+        )}
+
+        {/* GEDCOM export — always available when there are persons */}
+        {persons.length > 0 && (
+          <button
+            onClick={() => setShowGedcomModal(true)}
+            disabled={exportingGedcom}
+            className="h-7 px-3 text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-600 rounded-full transition-colors shrink-0 disabled:opacity-40"
+            title="Export GEDCOM 5.5.1 + media ZIP"
+          >
+            {exportingGedcom ? 'Exporting…' : 'GEDCOM ↓'}
           </button>
         )}
 
@@ -519,6 +665,13 @@ export default function FamilyTreeTab({
           persons={activeGroup.persons}
           onExport={handleTreeExport}
           onClose={() => setShowExportModal(false)}
+        />
+      )}
+
+      {showGedcomModal && (
+        <GedcomExportModal
+          onExport={handleGedcomExport}
+          onClose={() => setShowGedcomModal(false)}
         />
       )}
 

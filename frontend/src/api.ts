@@ -107,6 +107,24 @@ export const api = {
       if (!res.ok) throw new Error(await res.text())
       return res.blob()
     },
+    exportGedcom: async (opts?: {
+      photoMode?: 'none' | 'primary' | 'all'
+      includeDocuments?: boolean
+      includeEvents?: boolean
+      includeSources?: boolean
+      includeNotes?: boolean
+    }): Promise<Blob> => {
+      const p = new URLSearchParams()
+      if (opts?.photoMode) p.set('photo_mode', opts.photoMode)
+      if (opts?.includeDocuments === false) p.set('include_documents', 'false')
+      if (opts?.includeEvents === false) p.set('include_events', 'false')
+      if (opts?.includeSources === false) p.set('include_sources', 'false')
+      if (opts?.includeNotes === false) p.set('include_notes', 'false')
+      const qs = p.toString()
+      const res = await fetch(`${BASE}/export/gedcom${qs ? `?${qs}` : ''}`)
+      if (!res.ok) throw new Error(await res.text())
+      return res.blob()
+    },
     importZip: async (file: File): Promise<Project> => {
       const fd = new FormData()
       fd.append('file', file)

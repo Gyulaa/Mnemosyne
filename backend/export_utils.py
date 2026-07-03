@@ -158,6 +158,12 @@ def build_export_db(
             )
             conn.commit()
 
+        # Remove events whose participants were all removed during filtering.
+        conn.execute(
+            "DELETE FROM events WHERE id NOT IN (SELECT DISTINCT event_id FROM event_persons)"
+        )
+        conn.commit()
+
         rows = conn.execute("SELECT id, path FROM images").fetchall()
         path_map: dict[int, tuple[str, str]] = {}
         for img_id, orig_path in rows:
@@ -182,8 +188,10 @@ def create_project_zip(
     person_ids: list[int] | None = None,
     include_faceless: bool = True,
 ) -> io.BytesIO:
-    """Build a self-contained project ZIP (DB + images) and return it as a BytesIO."""
+    """Build a self-contained project ZIP (DB + images + documents) and return it as a BytesIO."""
     import tempfile
+
+    docs_dir = source_db_path.parent / "documents"
 
     buf = io.BytesIO()
     # ignore_cleanup_errors=True: on Windows the SQLite file may still have a
@@ -193,16 +201,36 @@ def create_project_zip(
         tmp_db = Path(tmpdir) / "project.db"
         path_map = build_export_db(source_db_path, tmp_db, cluster_ids, include_genealogy, person_ids, include_faceless)
 
+        # Collect document files that are still referenced in the exported DB.
+        doc_stored_names: list[str] = []
+        if docs_dir.exists():
+            doc_conn = sqlite3.connect(str(tmp_db))
+            try:
+                doc_stored_names = [
+                    r[0] for r in doc_conn.execute("SELECT stored_name FROM documents").fetchall()
+                ]
+            finally:
+                doc_conn.close()
+                gc.collect()
+
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
             zf.writestr(
                 "project.json",
                 json.dumps(project_info, ensure_ascii=False, indent=2),
             )
             zf.write(str(tmp_db), "project.db")
+
+            # Images
             for _img_id, (orig_path, new_rel) in path_map.items():
                 p = Path(orig_path)
                 if p.exists():
                     zf.write(str(p), new_rel)
+
+            # Documents — only files still referenced in the exported DB
+            for stored_name in doc_stored_names:
+                doc_file = docs_dir / stored_name
+                if doc_file.exists():
+                    zf.write(str(doc_file), f"documents/{stored_name}")
 
     buf.seek(0)
     return buf
