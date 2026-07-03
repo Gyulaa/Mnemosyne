@@ -5,6 +5,7 @@ import type { PersonFull, Relation } from '../types'
 import TreeView from './TreeView'
 import PersonPanel from './PersonPanel'
 import ExportModal from './ExportModal'
+import StatisticsView from './StatisticsView'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -254,6 +255,7 @@ export default function FamilyTreeTab({
   navTarget?: { personId: number; key: number } | null
   onNavConsumed?: () => void
 }) {
+  const [activeView, setActiveView] = useState<'tree' | 'stats'>('tree')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
@@ -388,6 +390,23 @@ export default function FamilyTreeTab({
           </button>
         )}
 
+        {/* View toggle */}
+        {persons.length > 0 && (
+          <>
+            <div className="w-px h-5 bg-zinc-700 shrink-0" />
+            <div className="flex rounded-lg border border-zinc-700 overflow-hidden shrink-0">
+              <button
+                onClick={() => setActiveView('tree')}
+                className={`h-7 px-3 text-xs font-medium transition-colors ${activeView === 'tree' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
+              >Tree</button>
+              <button
+                onClick={() => setActiveView('stats')}
+                className={`h-7 px-3 text-xs font-medium transition-colors ${activeView === 'stats' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
+              >Statistics</button>
+            </div>
+          </>
+        )}
+
         {/* Stats */}
         <div className="ml-auto text-xs text-zinc-600 shrink-0 tabular-nums">
           {displayPersons.length} persons · {displayRelations.length} relations
@@ -398,7 +417,7 @@ export default function FamilyTreeTab({
       <div className="flex flex-1 min-h-0">
 
         {/* Sidebar */}
-        <div className={`bg-zinc-900 border-r border-zinc-800 flex flex-col overflow-hidden transition-all duration-300 shrink-0 ${sidebarOpen ? 'w-56' : 'w-0'}`}>
+        <div className={`bg-zinc-900 border-r border-zinc-800 flex flex-col overflow-hidden transition-all duration-300 shrink-0 ${sidebarOpen && activeView === 'tree' ? 'w-56' : 'w-0'}`}>
           <div className="p-2 border-b border-zinc-800 space-y-1.5">
             <input
               value={search}
@@ -440,9 +459,11 @@ export default function FamilyTreeTab({
           </div>
         </div>
 
-        {/* Tree + panel */}
+        {/* Tree + panel  /  Statistics */}
         <div className="flex-1 relative min-w-0 overflow-hidden">
-          {displayPersons.length === 0 && !isLoading ? (
+          {activeView === 'stats' ? (
+            <StatisticsView persons={displayPersons} relations={displayRelations} />
+          ) : displayPersons.length === 0 && !isLoading ? (
             <div className="h-full flex flex-col items-center justify-center gap-3 text-center">
               <div className="text-5xl opacity-15">🌳</div>
               <p className="text-zinc-500 text-sm">No persons yet</p>
@@ -462,7 +483,7 @@ export default function FamilyTreeTab({
             />
           )}
 
-          {selectedId && selected && (
+          {activeView === 'tree' && selectedId && selected && (
             <PersonPanel
               key={selectedId}
               person={selected}
