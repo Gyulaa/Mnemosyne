@@ -907,7 +907,7 @@ export default function TreeView({
   const [probandId,       setProbandId]       = useState<number | null>(null)
   const [ancestorDepth,   setAncestorDepth]   = useState(3)
   const [descendantDepth, setDescendantDepth] = useState(3)
-  const [lateralDepth,    setLateralDepth]    = useState(1)
+  const lateralDepth = 1
   const [collapsedIds,    setCollapsedIds]    = useState<Set<number>>(new Set())
 
   // Auto-set proband when selection changes
@@ -1054,14 +1054,6 @@ export default function TreeView({
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
               <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{descendantDepth}</span>
               <button onClick={() => setDescendantDepth(d => Math.min(6, d + 1))}
-                className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
-            </div>
-            <div className="flex items-center gap-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7" title="0=direct line only, 1=siblings, 2=first cousins, 3=second cousins">
-              <span className="text-[10px] text-zinc-500">Cousins</span>
-              <button onClick={() => setLateralDepth(d => Math.max(0, d - 1))}
-                className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
-              <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{lateralDepth}</span>
-              <button onClick={() => setLateralDepth(d => Math.min(3, d + 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
             </div>
           </div>
