@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
@@ -314,9 +314,18 @@ function Avatar({ person, size }: { person: PersonFull; size: number }) {
 
 // ── PersonPicker ──────────────────────────────────────────────────────────────
 
-function PersonPicker({ persons, excludeIds, label, onSelect, onClose }: {
+function _personLifespan(p: PersonFull): string {
+  const by = p.birth_date ? parseInt(p.birth_date) : (p.birth_year ?? null)
+  const dy = p.death_date ? parseInt(p.death_date) : (p.death_year ?? null)
+  const years = [by, dy].filter(v => v != null).join('–')
+  if (years && p.birth_place) return `${years} · ${p.birth_place}`
+  return years || p.birth_place || ''
+}
+
+function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose }: {
   persons: PersonFull[]
   excludeIds: Set<number>
+  relations: Relation[]
   label: string
   onSelect: (p: PersonFull) => void
   onClose: () => void
@@ -326,6 +335,33 @@ function PersonPicker({ persons, excludeIds, label, onSelect, onClose }: {
   const [mode, setMode] = useState<'list' | 'create'>('list')
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
+
+  const personById = useMemo(() => new Map(persons.map(p => [p.id, p])), [persons])
+
+  const parentsOf = useMemo(() => {
+    const map = new Map<number, string[]>()
+    for (const rel of relations) {
+      if (rel.type !== 'parent') continue
+      const name = personById.get(rel.person_a_id)?.name
+      if (!name) continue
+      const list = map.get(rel.person_b_id) ?? []
+      list.push(name)
+      map.set(rel.person_b_id, list)
+    }
+    return map
+  }, [relations, personById])
+
+  const spousesOf = useMemo(() => {
+    const map = new Map<number, string[]>()
+    for (const rel of relations) {
+      if (rel.type !== 'spouse') continue
+      const nameA = personById.get(rel.person_a_id)?.name
+      const nameB = personById.get(rel.person_b_id)?.name
+      if (nameA) { const l = map.get(rel.person_b_id) ?? []; l.push(nameA); map.set(rel.person_b_id, l) }
+      if (nameB) { const l = map.get(rel.person_a_id) ?? []; l.push(nameB); map.set(rel.person_a_id, l) }
+    }
+    return map
+  }, [relations, personById])
 
   const filtered = persons
     .filter(p => !excludeIds.has(p.id))
@@ -349,7 +385,7 @@ function PersonPicker({ persons, excludeIds, label, onSelect, onClose }: {
   if (mode === 'create') {
     return (
       <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
-        <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-72 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-96 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
           <div className="px-4 pt-3 pb-2 border-b border-zinc-700 flex items-center gap-2">
             <button onClick={() => setMode('list')} className="text-zinc-500 hover:text-zinc-200 text-lg leading-none transition-colors">‹</button>
             <p className="text-xs font-semibold text-zinc-300">New person — {label.toLowerCase()}</p>
@@ -371,7 +407,7 @@ function PersonPicker({ persons, excludeIds, label, onSelect, onClose }: {
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
-      <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-72 flex flex-col overflow-hidden" style={{ maxHeight: 420 }} onClick={e => e.stopPropagation()}>
+      <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-96 flex flex-col overflow-hidden" style={{ maxHeight: 480 }} onClick={e => e.stopPropagation()}>
         <div className="px-4 pt-3 pb-2 border-b border-zinc-700">
           <p className="text-xs font-semibold text-zinc-300 mb-2">{label}</p>
           <input autoFocus value={search} onChange={e => setSearch(e.target.value)}
@@ -381,19 +417,39 @@ function PersonPicker({ persons, excludeIds, label, onSelect, onClose }: {
         <div className="overflow-y-auto flex-1">
           {filtered.length === 0 ? (
             <p className="text-sm text-zinc-500 text-center py-4 italic">No results</p>
-          ) : filtered.map(p => (
-            <button key={p.id} onClick={() => { onSelect(p); onClose() }}
-              className="w-full flex items-center gap-2.5 px-3.5 py-2 text-left hover:bg-zinc-700 transition-colors">
-              <Avatar person={p} size={28} />
-              <span className="text-sm text-zinc-200 truncate flex-1">{p.name ?? '(unnamed)'}</span>
-              {p.birth_year && <span className="text-xs text-zinc-500 shrink-0">* {p.birth_year}</span>}
-            </button>
-          ))}
+          ) : filtered.map(p => {
+            const lifespan = _personLifespan(p)
+            const parents  = parentsOf.get(p.id) ?? []
+            const spouses  = spousesOf.get(p.id) ?? []
+            return (
+              <button key={p.id} onClick={() => { onSelect(p); onClose() }}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-zinc-700 transition-colors border-b border-zinc-700/40 last:border-0">
+                <div className="shrink-0"><Avatar person={p} size={32} /></div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm text-zinc-200 truncate">{p.name ?? '(unnamed)'}</span>
+                    {p.sex && <span className="text-[10px] text-zinc-600 shrink-0">{p.sex === 'M' ? '♂' : '♀'}</span>}
+                  </div>
+                  {lifespan && <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{lifespan}</p>}
+                  {parents.length > 0 && (
+                    <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                      <span className="text-zinc-700">Parents: </span>{parents.join(', ')}
+                    </p>
+                  )}
+                  {spouses.length > 0 && (
+                    <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                      <span className="text-zinc-700">Spouse: </span>{spouses.join(', ')}
+                    </p>
+                  )}
+                </div>
+              </button>
+            )
+          })}
         </div>
         <div className="border-t border-zinc-700">
           <button onClick={() => setMode('create')}
             className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-zinc-700/60 transition-colors">
-            <div className="w-7 h-7 rounded-full bg-brand-700 flex items-center justify-center shrink-0 text-white text-base font-bold">+</div>
+            <div className="w-8 h-8 rounded-full bg-brand-700 flex items-center justify-center shrink-0 text-white text-base font-bold">+</div>
             <span className="text-sm text-brand-300 font-medium">Create new person</span>
           </button>
         </div>
@@ -960,29 +1016,37 @@ interface Props {
   onClose: () => void
   onNavigateTo: (id: number) => void
   onNavToEvent?: (eventId: number) => void
+  onDeleted?: () => void
 }
 
 // blank details state derived from a person
 function detailsFromPerson(p: PersonFull) {
   return {
-    sex: (p.sex ?? '') as '' | 'M' | 'F',
+    birth_date: p.birth_date ?? (p.birth_year ? String(p.birth_year) : ''),
     birth_place: p.birth_place ?? '',
+    death_date: p.death_date ?? (p.death_year ? String(p.death_year) : ''),
+    death_place: p.death_place ?? '',
+    sex: (p.sex ?? '') as '' | 'M' | 'F',
+    occupation: p.occupation ?? '',
     christening_date: p.christening_date ?? (p.christening_year ? String(p.christening_year) : ''),
     christening_place: p.christening_place ?? '',
-    death_place: p.death_place ?? '',
     burial_date: p.burial_date ?? (p.burial_year ? String(p.burial_year) : ''),
     burial_place: p.burial_place ?? '',
-    occupation: p.occupation ?? '',
   }
 }
 
-export default function PersonPanel({ person, persons, relations, onClose, onNavigateTo, onNavToEvent }: Props) {
+export default function PersonPanel({ person, persons, relations, onClose, onNavigateTo, onNavToEvent, onDeleted }: Props) {
   const qc = useQueryClient()
   const [visible, setVisible] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [mergePickerOpen, setMergePickerOpen] = useState(false)
+  const [mergePending, setMergePending] = useState<PersonFull | null>(null)
+  const [merging, setMerging] = useState(false)
 
   // header editing
   const [editingHeader, setEditingHeader] = useState(false)
-  const [headerData, setHeaderData] = useState({ nameParts: { title: '', last_name: '', first_name: '', middle_name: '', nickname: '' } as NameParts, birth_date: '', birth_place: '', death_date: '', death_place: '' })
+  const [headerData, setHeaderData] = useState({ nameParts: { title: '', last_name: '', first_name: '', middle_name: '', nickname: '' } as NameParts })
 
   // details section
   const [editingDetails, setEditingDetails] = useState(false)
@@ -1009,6 +1073,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
   // tab
   const [activeTab, setActiveTab] = useState<'bio' | 'events' | 'documents' | 'notes'>('bio')
+  const [autoPhotoEventType, setAutoPhotoEventType] = useState<string | null>(null)
 
   // documents
   const [showUploadForm, setShowUploadForm] = useState(false)
@@ -1186,14 +1251,41 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     if (rid != null) delRelMut.mutate(rid)
   }
 
+  async function handleDeletePerson() {
+    if (deleting) return
+    setDeleting(true)
+    try {
+      await api.persons.delete(person.id)
+      qc.invalidateQueries({ queryKey: ['persons'] })
+      qc.invalidateQueries({ queryKey: ['relations'] })
+      onDeleted?.()
+      onClose()
+    } catch (e) {
+      setDeleting(false)
+      setConfirmDelete(false)
+      alert(String(e))
+    }
+  }
+
+  async function handleMergePerson() {
+    if (!mergePending || merging) return
+    setMerging(true)
+    try {
+      const surviving = await api.persons.mergeInto(person.id, mergePending.id)
+      qc.invalidateQueries({ queryKey: ['persons'] })
+      qc.invalidateQueries({ queryKey: ['relations'] })
+      qc.invalidateQueries({ queryKey: ['events'] })
+      setMergePending(null)
+      onClose()
+      onNavigateTo(surviving.id)
+    } catch (e) {
+      setMerging(false)
+      alert(String(e))
+    }
+  }
+
   function startHeaderEdit() {
-    setHeaderData({
-      nameParts: namePartsFromPerson(person),
-      birth_date: person.birth_date ?? (person.birth_year ? String(person.birth_year) : ''),
-      birth_place: person.birth_place ?? '',
-      death_date: person.death_date ?? (person.death_year ? String(person.death_year) : ''),
-      death_place: person.death_place ?? '',
-    })
+    setHeaderData({ nameParts: namePartsFromPerson(person) })
     setEditingHeader(true)
   }
 
@@ -1205,21 +1297,21 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
       first_name: nameParts.first_name.trim() || null,
       middle_name: nameParts.middle_name.trim() || null,
       nickname: nameParts.nickname.trim() || null,
-      birth_date: headerData.birth_date || null,
-      birth_place: headerData.birth_place.trim() || null,
-      death_date: headerData.death_date || null,
-      death_place: headerData.death_place.trim() || null,
     })
   }
 
   function saveDetails() {
     saveMut.mutate({
+      birth_date: detailsData.birth_date || null,
+      birth_place: detailsData.birth_place.trim() || null,
+      death_date: detailsData.death_date || null,
+      death_place: detailsData.death_place.trim() || null,
       sex: (detailsData.sex || null) as 'M' | 'F' | null,
+      occupation: detailsData.occupation.trim() || null,
       christening_date: detailsData.christening_date || null,
       christening_place: detailsData.christening_place.trim() || null,
       burial_date: detailsData.burial_date || null,
       burial_place: detailsData.burial_place.trim() || null,
-      occupation: detailsData.occupation.trim() || null,
     })
   }
 
@@ -1256,8 +1348,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   const visibleImages = showAllPhotos ? images : images.slice(0, PHOTOS_CAP)
 
   // Details section visibility
-  const hasDetails = !!(person.sex || person.occupation || person.christening_date || person.christening_place ||
-    person.burial_date || person.burial_place)
+  const hasDetails = !!(
+    person.birth_date || person.birth_year || person.birth_place ||
+    person.death_date || person.death_year || person.death_place ||
+    person.sex || person.occupation ||
+    person.christening_date || person.christening_place ||
+    person.burial_date || person.burial_place
+  )
 
   const pickerLabels: Record<NonNullable<PickerMode>, string> = {
     parent: 'Add parent', child: 'Add child', spouse: 'Add spouse', sibling: 'Add sibling',
@@ -1278,6 +1375,68 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
       >
         <button onClick={onClose}
           className="absolute top-3 right-3 z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-300 hover:text-white transition-colors text-sm">✕</button>
+
+        {/* Merge button — always visible (useful even with clusters) */}
+        <button onClick={() => setMergePickerOpen(true)} title="Merge with another person"
+          className="absolute top-3 right-[5.25rem] z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+          </svg>
+        </button>
+
+        {person.clusters.length === 0 && (
+          <button onClick={() => setConfirmDelete(true)} title="Delete person"
+            className="absolute top-3 right-12 z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        )}
+
+        {confirmDelete && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 rounded-none">
+            <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 shadow-2xl w-64 text-center">
+              <p className="text-zinc-100 font-medium mb-1 text-sm">Töröljük a személyt?</p>
+              <p className="text-zinc-400 text-xs mb-4 leading-relaxed">{person.name ?? '(névtelen)'} véglegesen törlődik az összes kapcsolatával együtt.</p>
+              <div className="flex gap-2 justify-center">
+                <button onClick={() => setConfirmDelete(false)}
+                  className="px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-300 text-xs hover:bg-zinc-600 transition-colors">
+                  Mégsem
+                </button>
+                <button onClick={handleDeletePerson} disabled={deleting}
+                  className="px-3 py-1.5 rounded-lg bg-red-700 text-white text-xs hover:bg-red-600 transition-colors disabled:opacity-50">
+                  {deleting ? 'Törlés…' : 'Törlés'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mergePending && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 rounded-none">
+            <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 shadow-2xl w-72 text-center">
+              <p className="text-zinc-100 font-medium mb-1 text-sm">Összevonás megerősítése</p>
+              <p className="text-zinc-400 text-xs mb-1 leading-relaxed">
+                <span className="text-zinc-200">{person.name ?? '(névtelen)'}</span>
+                {' '}adatai beolvadnak ide:
+              </p>
+              <p className="text-zinc-200 text-sm font-medium mb-1">{mergePending.name ?? '(névtelen)'}</p>
+              <p className="text-zinc-600 text-[10px] mb-4 leading-relaxed">
+                Az alapadatok (amelyek már kitöltöttek) megmaradnak. A kapcsolatok, események és dokumentumok átkerülnek. A forrásszemély törlődik.
+              </p>
+              <div className="flex gap-2 justify-center">
+                <button onClick={() => setMergePending(null)}
+                  className="px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-300 text-xs hover:bg-zinc-600 transition-colors">
+                  Mégsem
+                </button>
+                <button onClick={handleMergePerson} disabled={merging}
+                  className="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs hover:bg-brand-500 transition-colors disabled:opacity-50">
+                  {merging ? 'Összevonás…' : 'Összevon'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Header ── */}
         <div className="shrink-0 px-5 pt-5 pb-4 border-b border-zinc-800">
@@ -1301,52 +1460,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               {!editingHeader && person.nickname && (
                 <p className="text-sm text-zinc-500 mt-0.5">„{person.nickname}"</p>
               )}
-              {editingHeader ? (
-                <div className="space-y-2">
-                  <div>
-                    <p className="text-[10px] text-zinc-600 mb-1">Birth</p>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <DatePartPicker value={headerData.birth_date} onChange={v => setHeaderData(d => ({ ...d, birth_date: v }))} />
-                      <input value={headerData.birth_place}
-                        onChange={e => setHeaderData(d => ({ ...d, birth_place: e.target.value }))} placeholder="Place"
-                        className="flex-1 min-w-20 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400" />
-                    </div>
-                    <CitationsInline personId={person.id} fact="birth" citations={citationsFor('birth')} sources={sources} onMutated={invalidateCitations} />
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-zinc-600 mb-1">Death</p>
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <DatePartPicker value={headerData.death_date} onChange={v => setHeaderData(d => ({ ...d, death_date: v }))} />
-                      <input value={headerData.death_place}
-                        onChange={e => setHeaderData(d => ({ ...d, death_place: e.target.value }))} placeholder="Place"
-                        className="flex-1 min-w-20 bg-zinc-800 border border-zinc-600 rounded px-2 py-0.5 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400" />
-                    </div>
-                    <CitationsInline personId={person.id} fact="death" citations={citationsFor('death')} sources={sources} onMutated={invalidateCitations} />
-                  </div>
-                </div>
-              ) : (
+              {!editingHeader && (
                 <div className="mt-1 space-y-0.5">
-                  {(person.birth_date || person.birth_year || person.birth_place) && (
-                    <div>
-                      <p className="text-xs text-zinc-400">
-                        <span className="text-zinc-600">*</span>{' '}
-                        {[formatDate(person.birth_date, person.birth_year), person.birth_place].filter(Boolean).join(', ')}
-                      </p>
-                      <CitationsInline personId={person.id} fact="birth" citations={citationsFor('birth')} sources={sources} onMutated={invalidateCitations} />
-                    </div>
-                  )}
-                  {(person.death_date || person.death_year || person.death_place) && (
-                    <div>
-                      <p className="text-xs text-zinc-400">
-                        <span className="text-zinc-600">†</span>{' '}
-                        {[formatDate(person.death_date, person.death_year), person.death_place].filter(Boolean).join(', ')}
-                      </p>
-                      <CitationsInline personId={person.id} fact="death" citations={citationsFor('death')} sources={sources} onMutated={invalidateCitations} />
-                    </div>
-                  )}
-                  {!person.birth_date && !person.birth_year && !person.birth_place && !person.death_date && !person.death_year && !person.death_place && span && (
-                    <p className="text-sm text-zinc-400">{span}</p>
-                  )}
+                  {span && <p className="text-xs text-zinc-400">{span}</p>}
                   <p className="text-xs text-zinc-600">{person.face_count > 0 ? `${person.face_count} photo(s) in app` : 'No photos in app'}</p>
                 </div>
               )}
@@ -1411,6 +1527,28 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
             {editingDetails ? (
               <div className="space-y-2">
+                {/* Birth */}
+                <div>
+                  <span className="text-xs text-zinc-500 block mb-1">Birth</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <DatePartPicker value={detailsData.birth_date} onChange={v => setDetailsData(d => ({ ...d, birth_date: v }))} />
+                    <input value={detailsData.birth_place} onChange={e => setDetailsData(d => ({ ...d, birth_place: e.target.value }))}
+                      placeholder="Place"
+                      className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                  </div>
+                  <CitationsInline personId={person.id} fact="birth" citations={citationsFor('birth')} sources={sources} onMutated={invalidateCitations} />
+                </div>
+                {/* Death */}
+                <div>
+                  <span className="text-xs text-zinc-500 block mb-1">Death</span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <DatePartPicker value={detailsData.death_date} onChange={v => setDetailsData(d => ({ ...d, death_date: v }))} />
+                    <input value={detailsData.death_place} onChange={e => setDetailsData(d => ({ ...d, death_place: e.target.value }))}
+                      placeholder="Place"
+                      className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                  </div>
+                  <CitationsInline personId={person.id} fact="death" citations={citationsFor('death')} sources={sources} onMutated={invalidateCitations} />
+                </div>
                 {/* Sex */}
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-500 w-20 shrink-0">Sex</span>
@@ -1458,6 +1596,38 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               </div>
             ) : hasDetails ? (
               <div className="space-y-1.5">
+                {(person.birth_date || person.birth_year || person.birth_place) && (
+                  <div>
+                    <div className="flex gap-2 text-xs items-center">
+                      <span className="text-zinc-500 w-20 shrink-0">Birth</span>
+                      <span className="text-zinc-300 flex-1">{[formatDate(person.birth_date, person.birth_year), person.birth_place].filter(Boolean).join(', ')}</span>
+                      <button onClick={() => { setAutoPhotoEventType('birth'); setActiveTab('events') }} title="Attach photo to birth"
+                        className="text-zinc-600 hover:text-brand-400 transition-colors shrink-0">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      </button>
+                    </div>
+                    <CitationsInline personId={person.id} fact="birth" citations={citationsFor('birth')} sources={sources} onMutated={invalidateCitations} />
+                  </div>
+                )}
+                {(person.death_date || person.death_year || person.death_place) && (
+                  <div>
+                    <div className="flex gap-2 text-xs items-center">
+                      <span className="text-zinc-500 w-20 shrink-0">Death</span>
+                      <span className="text-zinc-300 flex-1">{[formatDate(person.death_date, person.death_year), person.death_place].filter(Boolean).join(', ')}</span>
+                      <button onClick={() => { setAutoPhotoEventType('death'); setActiveTab('events') }} title="Attach photo to death"
+                        className="text-zinc-600 hover:text-brand-400 transition-colors shrink-0">
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      </button>
+                    </div>
+                    <CitationsInline personId={person.id} fact="death" citations={citationsFor('death')} sources={sources} onMutated={invalidateCitations} />
+                  </div>
+                )}
                 {person.sex && (
                   <div className="flex gap-2 text-xs">
                     <span className="text-zinc-500 w-20 shrink-0">Sex</span>
@@ -1712,8 +1882,10 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               person={person}
               relations={relations}
               persons={persons}
-              onNavigateToBio={() => setActiveTab('bio')}
+              onNavigateToBio={() => { setActiveTab('bio'); setDetailsData(detailsFromPerson(person)); setEditingDetails(true) }}
               onNavToEvent={onNavToEvent}
+              autoPhotoEventType={autoPhotoEventType}
+              onAutoPhotoConsumed={() => setAutoPhotoEventType(null)}
             />
           )}
 
@@ -1803,9 +1975,21 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
         <PersonPicker
           persons={persons}
           excludeIds={allRelatedIds}
+          relations={relations}
           label={pickerLabels[pickerMode]}
           onSelect={handleAdd}
           onClose={() => setPickerMode(null)}
+        />
+      )}
+
+      {mergePickerOpen && (
+        <PersonPicker
+          persons={persons}
+          excludeIds={new Set([person.id])}
+          relations={relations}
+          label="Merge into — select surviving person"
+          onSelect={p => { setMergePending(p); setMergePickerOpen(false) }}
+          onClose={() => setMergePickerOpen(false)}
         />
       )}
 

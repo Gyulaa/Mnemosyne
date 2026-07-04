@@ -68,6 +68,7 @@ class Person(Base):
     christening_date = Column(String, nullable=True)
     burial_date = Column(String, nullable=True)
     notes = Column(String, nullable=True)
+    hidden_auto_events = Column(String, nullable=True)  # JSON list of suppressed auto-event types
     thumbnail_face_id = Column(Integer, nullable=True)
     clusters = relationship("Cluster", back_populates="person")
     relations_as_a = relationship("Relation", foreign_keys="Relation.person_a_id", back_populates="person_a", cascade="all, delete-orphan")
@@ -182,6 +183,7 @@ class EventPerson(Base):
     event_id = Column(Integer, ForeignKey("events.id"), nullable=False, index=True)
     person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
     role = Column(String, nullable=False, default="participant")  # primary | participant
+    featured = Column(Boolean, nullable=False, default=False)
     event = relationship("Event", back_populates="event_persons")
     person = relationship("Person")
 
@@ -237,6 +239,10 @@ def init_db_schema(engine):
             "ALTER TABLE persons ADD COLUMN death_date TEXT",
             "ALTER TABLE persons ADD COLUMN christening_date TEXT",
             "ALTER TABLE persons ADD COLUMN burial_date TEXT",
+            # Phase 4: UI suppression of auto-generated timeline events
+            "ALTER TABLE persons ADD COLUMN hidden_auto_events TEXT",
+            # Phase 5: featured participant flag on event-person rows
+            "ALTER TABLE event_persons ADD COLUMN featured BOOLEAN NOT NULL DEFAULT 0",
             # Phase 2: marriage/divorce data on relations
             "ALTER TABLE relations ADD COLUMN marriage_year INTEGER",
             "ALTER TABLE relations ADD COLUMN marriage_place TEXT",
@@ -363,6 +369,7 @@ def init_db_schema(engine):
                 event_id  INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
                 person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
                 role      TEXT NOT NULL DEFAULT 'participant',
+                featured  BOOLEAN NOT NULL DEFAULT 0,
                 UNIQUE(event_id, person_id)
             )
         """))
