@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, useEffect } from 'react'
 import type { PersonFull, Relation } from '../types'
 import { api } from '../api'
+import TreeExportModal from './TreeExportModal'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const NW = 148
@@ -909,6 +910,7 @@ export default function TreeView({
   const [descendantDepth, setDescendantDepth] = useState(3)
   const lateralDepth = 1
   const [collapsedIds,    setCollapsedIds]    = useState<Set<number>>(new Set())
+  const [exportOpen,      setExportOpen]      = useState(false)
 
   // Auto-set proband when selection changes
   useEffect(() => {
@@ -1030,8 +1032,16 @@ export default function TreeView({
     >
       {!panelOpen && (
         <>
-          {/* Bottom-right: zoom + depth controls */}
+          {/* Bottom-right: export + zoom + depth controls */}
           <div className="absolute bottom-3 right-3 z-10 flex gap-1.5 flex-wrap justify-end">
+            <button onClick={() => setExportOpen(true)}
+              className="h-7 px-2.5 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 text-xs flex items-center gap-1.5"
+              title="Export family tree as PNG">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+              </svg>
+              Export
+            </button>
             <button onClick={() => setZoom(z => clamp(z * 1.2, 0.15, 3))}
               className="w-7 h-7 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-300 hover:bg-zinc-700 flex items-center justify-center text-sm font-bold">+</button>
             <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }) }}
@@ -1157,6 +1167,19 @@ export default function TreeView({
           )
         })}
       </div>
+
+      {exportOpen && (
+        <TreeExportModal
+          nodes={nodes}
+          edges={edges}
+          minX={bounds.minX}
+          minY={bounds.minY}
+          canvasW={bounds.canvasW}
+          canvasH={bounds.canvasH}
+          probandId={effectiveProbandId}
+          onClose={() => setExportOpen(false)}
+        />
+      )}
     </div>
   )
 }
