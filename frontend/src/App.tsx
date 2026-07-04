@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import ScanTab from './components/ScanTab'
 import ClustersTab from './components/ClustersTab'
@@ -7,6 +7,9 @@ import ImagesTab from './components/ImagesTab'
 import FamilyTreeTab from './components/FamilyTreeTab'
 import EventsTab from './components/EventsTab'
 import ProjectSwitcher from './components/ProjectSwitcher'
+import SearchPalette from './components/SearchPalette'
+import DocumentViewer from './components/DocumentViewer'
+import type { PersonDocument } from './types'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 5_000 } },
@@ -32,6 +35,19 @@ export default function App() {
   const [eventNavTarget, setEventNavTarget] = useState<{ eventId: number; key: number } | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [viewingDoc, setViewingDoc] = useState<PersonDocument | null>(null)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setSearchOpen(o => !o)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   function navToImages(personIds: number[]) {
     setTab('images')
@@ -98,7 +114,17 @@ export default function App() {
                 </button>
               ))}
             </nav>
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => setSearchOpen(true)}
+                title="Search (Ctrl+K)"
+                className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
+                  <circle cx="11" cy="11" r="7" />
+                  <path strokeLinecap="round" d="M20 20l-3.5-3.5" />
+                </svg>
+              </button>
               <ProjectSwitcher onExportStart={onExportStart} onExportEnd={onExportEnd} />
             </div>
           </div>
@@ -141,6 +167,21 @@ export default function App() {
             Dismiss
           </button>
         </div>
+      )}
+      <SearchPalette
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onNavToGenealogy={navToGenealogy}
+        onNavToEvent={navToEvent}
+        onViewDocument={doc => setViewingDoc(doc)}
+      />
+
+      {viewingDoc && (
+        <DocumentViewer
+          doc={viewingDoc}
+          onClose={() => setViewingDoc(null)}
+          onNavToPerson={id => { setViewingDoc(null); navToGenealogy(id) }}
+        />
       )}
     </QueryClientProvider>
   )

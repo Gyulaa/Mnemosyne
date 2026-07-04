@@ -1705,6 +1705,12 @@ def delete_relation(relation_id: int, db: Session = Depends(get_db)):
 
 # ── Documents ─────────────────────────────────────────────────────────────────
 
+@app.get("/api/documents")
+def list_all_documents(db: Session = Depends(get_db)):
+    docs = db.query(DBDocument).order_by(DBDocument.created_at.desc()).all()
+    return [_doc_dict(d) for d in docs]
+
+
 @app.get("/api/persons/{person_id}/documents")
 def list_documents(person_id: int, db: Session = Depends(get_db)):
     p = db.get(DBPerson, person_id)

@@ -7,6 +7,7 @@ import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from '.
 import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
 import EventTimeline from './EventTimeline'
+import RelationPathModal from './RelationPathModal'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -53,6 +54,19 @@ function lifespan(p: PersonFull) {
   if (!b && !d) return null
   if (p.death_year || p.death_place || p.death_date) return `${b || '?'} – ${d || '?'}`
   return b ? `* ${b}` : null
+}
+
+function calcAge(p: PersonFull): { age: number; alive: boolean } | null {
+  const by = p.birth_date ? parseInt(p.birth_date.slice(0, 4)) : (p.birth_year ?? null)
+  if (by == null) return null
+  if (p.death_date || p.death_year) {
+    const dy = p.death_date ? parseInt(p.death_date.slice(0, 4)) : p.death_year!
+    if (dy <= by) return null
+    return { age: dy - by, alive: false }
+  }
+  const age = new Date().getFullYear() - by
+  if (age > 130) return null
+  return { age, alive: true }
 }
 
 // ── DatePartPicker ────────────────────────────────────────────────────────────
@@ -1043,6 +1057,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   const [mergePickerOpen, setMergePickerOpen] = useState(false)
   const [mergePending, setMergePending] = useState<PersonFull | null>(null)
   const [merging, setMerging] = useState(false)
+  const [relatePickerOpen, setRelatePickerOpen] = useState(false)
+  const [relatePerson, setRelatePerson] = useState<PersonFull | null>(null)
+  const [relWarning, setRelWarning] = useState<string | null>(null)
 
   // header editing
   const [editingHeader, setEditingHeader] = useState(false)
@@ -1087,6 +1104,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   useEffect(() => {
     setDetailsData(detailsFromPerson(person))
     setActiveTab('bio')
+    setRelWarning(null)
   }, [person.id])
 
   const { data: imagesPage, isLoading: loadingImgs } = useQuery({
@@ -1204,20 +1222,26 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
   const byId = new Map(persons.map(p => [p.id, p]))
 
+  const birthYear = (p: PersonFull) =>
+    p.birth_date ? parseInt(p.birth_date) : (p.birth_year ?? 9999)
+
   const parents = relations
     .filter(r => r.type === 'parent' && r.person_b_id === person.id)
     .map(r => byId.get(r.person_a_id)).filter(Boolean) as PersonFull[]
-  const children = relations
+  const children = (relations
     .filter(r => r.type === 'parent' && r.person_a_id === person.id)
-    .map(r => byId.get(r.person_b_id)).filter(Boolean) as PersonFull[]
-  const spouseRelations = relations
+    .map(r => byId.get(r.person_b_id)).filter(Boolean) as PersonFull[])
+    .sort((a, b) => birthYear(a) - birthYear(b))
+  const spouseRelations = (relations
     .filter(r => r.type === 'spouse' && (r.person_a_id === person.id || r.person_b_id === person.id))
     .map(r => ({ rel: r, p: byId.get(r.person_a_id === person.id ? r.person_b_id : r.person_a_id) }))
-    .filter(x => x.p != null) as { rel: Relation; p: PersonFull }[]
-  const siblings = relations
+    .filter(x => x.p != null) as { rel: Relation; p: PersonFull }[])
+    .sort((a, b) => (a.rel.marriage_year ?? birthYear(a.p) + 20) - (b.rel.marriage_year ?? birthYear(b.p) + 20))
+  const siblings = (relations
     .filter(r => r.type === 'sibling' && (r.person_a_id === person.id || r.person_b_id === person.id))
     .map(r => byId.get(r.person_a_id === person.id ? r.person_b_id : r.person_a_id))
-    .filter(Boolean) as PersonFull[]
+    .filter(Boolean) as PersonFull[])
+    .sort((a, b) => birthYear(a) - birthYear(b))
 
   const allRelatedIds = new Set([
     person.id,
@@ -1238,11 +1262,27 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
   function handleAdd(p: PersonFull) {
     if (!pickerMode) return
+
+    const exists = (type: 'parent' | 'spouse' | 'sibling', aId: number, bId: number) =>
+      relations.some(r => r.type === type &&
+        ((r.person_a_id === aId && r.person_b_id === bId) ||
+         (r.person_a_id === bId && r.person_b_id === aId)))
+
+    const warn = (msg: string) => { setPickerMode(null); setRelWarning(msg) }
+
     switch (pickerMode) {
-      case 'parent':  addRelMut.mutate({ type: 'parent',  a: p.id,      b: person.id }); break
-      case 'child':   addRelMut.mutate({ type: 'parent',  a: person.id, b: p.id });      break
-      case 'spouse':  addRelMut.mutate({ type: 'spouse',  a: person.id, b: p.id });      break
-      case 'sibling': addRelMut.mutate({ type: 'sibling', a: person.id, b: p.id });      break
+      case 'parent':
+        if (exists('parent', p.id, person.id)) { warn(`${p.name ?? 'This person'} is already listed as a parent.`); return }
+        addRelMut.mutate({ type: 'parent',  a: p.id,      b: person.id }); break
+      case 'child':
+        if (exists('parent', person.id, p.id)) { warn(`${p.name ?? 'This person'} is already listed as a child.`); return }
+        addRelMut.mutate({ type: 'parent',  a: person.id, b: p.id });      break
+      case 'spouse':
+        if (exists('spouse', person.id, p.id)) { warn(`${p.name ?? 'This person'} is already listed as a spouse.`); return }
+        addRelMut.mutate({ type: 'spouse',  a: person.id, b: p.id });      break
+      case 'sibling':
+        if (exists('sibling', person.id, p.id)) { warn(`${p.name ?? 'This person'} is already listed as a sibling.`); return }
+        addRelMut.mutate({ type: 'sibling', a: person.id, b: p.id });      break
     }
   }
 
@@ -1344,6 +1384,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   }
 
   const span = lifespan(person)
+  const ageInfo = calcAge(person)
   const images = imagesPage?.items ?? []
   const visibleImages = showAllPhotos ? images : images.slice(0, PHOTOS_CAP)
 
@@ -1375,6 +1416,17 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
       >
         <button onClick={onClose}
           className="absolute top-3 right-3 z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-300 hover:text-white transition-colors text-sm">✕</button>
+
+        {/* Find relation button */}
+        <button onClick={() => setRelatePickerOpen(true)} title="Find relationship path"
+          className="absolute top-3 right-[7.5rem] z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <circle cx="5" cy="12" r="2" />
+            <circle cx="19" cy="5" r="2" />
+            <circle cx="19" cy="19" r="2" />
+            <path strokeLinecap="round" d="M7 12h4l3-5m-3 5l3 5" />
+          </svg>
+        </button>
 
         {/* Merge button — always visible (useful even with clusters) */}
         <button onClick={() => setMergePickerOpen(true)} title="Merge with another person"
@@ -1463,6 +1515,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               {!editingHeader && (
                 <div className="mt-1 space-y-0.5">
                   {span && <p className="text-xs text-zinc-400">{span}</p>}
+                  {ageInfo && (
+                    <p className="text-xs text-zinc-500">
+                      {ageInfo.alive
+                        ? `${ageInfo.age} years old today`
+                        : `Lived ${ageInfo.age} years`}
+                    </p>
+                  )}
                   <p className="text-xs text-zinc-600">{person.face_count > 0 ? `${person.face_count} photo(s) in app` : 'No photos in app'}</p>
                 </div>
               )}
@@ -1628,6 +1687,16 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                     <CitationsInline personId={person.id} fact="death" citations={citationsFor('death')} sources={sources} onMutated={invalidateCitations} />
                   </div>
                 )}
+                {ageInfo && (
+                  <div className="flex gap-2 text-xs">
+                    <span className="text-zinc-500 w-20 shrink-0">
+                      {ageInfo.alive ? 'Age today' : 'Age at death'}
+                    </span>
+                    <span className="text-zinc-400 tabular-nums">
+                      {ageInfo.age} years{ageInfo.alive ? ' (approx.)' : ''}
+                    </span>
+                  </div>
+                )}
                 {person.sex && (
                   <div className="flex gap-2 text-xs">
                     <span className="text-zinc-500 w-20 shrink-0">Sex</span>
@@ -1681,10 +1750,21 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 <button onClick={() => setEditingRelations(true)}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">Edit</button>
               ) : (
-                <button onClick={() => setEditingRelations(false)}
+                <button onClick={() => { setEditingRelations(false); setRelWarning(null) }}
                   className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Done</button>
               )}
             </div>
+
+            {relWarning && (
+              <div className="flex items-start gap-2 text-xs text-amber-300 bg-amber-950/40 border border-amber-800/40 rounded-lg px-3 py-2 mb-3">
+                <svg className="w-3.5 h-3.5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3m0 3h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                </svg>
+                <span className="flex-1">{relWarning}</span>
+                <button onClick={() => setRelWarning(null)} className="text-amber-600 hover:text-amber-400 transition-colors shrink-0">✕</button>
+              </div>
+            )}
+
             <div className="space-y-3.5">
               <RelRow label="Parents" persons={parents} editing={editingRelations} onNavigate={onNavigateTo}
                 onRemove={p => handleRemove('parent', p)} addLabel="Parent" onAdd={() => setPickerMode('parent')} addDisabled={parents.length >= 2} />
@@ -1990,6 +2070,27 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           label="Merge into — select surviving person"
           onSelect={p => { setMergePending(p); setMergePickerOpen(false) }}
           onClose={() => setMergePickerOpen(false)}
+        />
+      )}
+
+      {relatePickerOpen && (
+        <PersonPicker
+          persons={persons}
+          excludeIds={new Set([person.id])}
+          relations={relations}
+          label="Find relationship to…"
+          onSelect={p => { setRelatePerson(p); setRelatePickerOpen(false) }}
+          onClose={() => setRelatePickerOpen(false)}
+        />
+      )}
+
+      {relatePerson && (
+        <RelationPathModal
+          personA={person}
+          personB={relatePerson}
+          persons={persons}
+          relations={relations}
+          onClose={() => setRelatePerson(null)}
         />
       )}
 
