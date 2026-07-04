@@ -61,7 +61,7 @@ function buildSvg(
     const cx = n.x - minX, cy = n.y - minY
     const avx = cx - NW / 2 + 30
     out.push(`<clipPath id="av${n.id}"><circle cx="${avx}" cy="${cy}" r="20"/></clipPath>`)
-    out.push(`<clipPath id="tx${n.id}"><rect x="${cx - NW / 2 + 60}" y="${cy - NH / 2}" width="${NW - 70}" height="${NH}"/></clipPath>`)
+    out.push(`<clipPath id="tx${n.id}"><rect x="${cx - NW / 2 + 60}" y="${cy - NH / 2}" width="${NW - 62}" height="${NH}"/></clipPath>`)
   }
   out.push('</defs>')
 
@@ -98,10 +98,26 @@ function buildSvg(
       out.push(`<text x="${avx}" y="${cy + 5}" text-anchor="middle" fill="${C.avatarText}" font-size="12" font-weight="700" font-family="system-ui,-apple-system,sans-serif">${xe(initials)}</text>`)
     }
 
+    // Split name into 2 lines if it has multiple words
+    const words = (p.name ?? '(unnamed)').trim().split(/\s+/).filter(Boolean)
+    const mid = Math.ceil(words.length / 2)
+    const line1 = words.slice(0, mid).join(' ')
+    const line2 = words.length > 1 ? words.slice(mid).join(' ') : null
+    const twoLines = line2 !== null && line2.length > 0
+    const nfs = twoLines ? '10' : '11.5'
+
+    // Baseline y-positions for each case
+    const ny1 = twoLines ? (span ? cy - 10 : cy - 2)  : (span ? cy - 3 : cy + 5)
+    const ny2 = twoLines ? (span ? cy + 3  : cy + 11) : null
+    const dy  = twoLines ? (span ? cy + 16 : null)     : (span ? cy + 11 : null)
+
     out.push(`<g clip-path="url(#tx${n.id})">`)
-    out.push(`<text x="${tx}" y="${span ? cy - 3 : cy + 5}" fill="${C.nameFill}" font-size="11.5" font-weight="600" font-family="system-ui,-apple-system,sans-serif">${xe(p.name ?? '(unnamed)')}</text>`)
-    if (span) {
-      out.push(`<text x="${tx}" y="${cy + 11}" fill="${C.dateFill}" font-size="10" font-family="system-ui,-apple-system,sans-serif">${xe(span)}</text>`)
+    out.push(`<text x="${tx}" y="${ny1}" fill="${C.nameFill}" font-size="${nfs}" font-weight="600" font-family="system-ui,-apple-system,sans-serif">${xe(line1)}</text>`)
+    if (twoLines && ny2 !== null) {
+      out.push(`<text x="${tx}" y="${ny2}" fill="${C.nameFill}" font-size="${nfs}" font-weight="600" font-family="system-ui,-apple-system,sans-serif">${xe(line2!)}</text>`)
+    }
+    if (dy !== null) {
+      out.push(`<text x="${tx}" y="${dy}" fill="${C.dateFill}" font-size="9.5" font-family="system-ui,-apple-system,sans-serif">${xe(span!)}</text>`)
     }
     out.push('</g>')
 
