@@ -231,16 +231,26 @@ function EventDetailPanel({ ev, persons, onEdit, onClose }: {
               <div className="space-y-2.5">
                 {ev.persons.map(ep => (
                   <div key={ep.id} className="flex items-center gap-3">
-                    {ep.thumbnail_face_id ? (
-                      <img src={api.faceThumbnailUrl(ep.thumbnail_face_id, 64)} alt=""
-                        className="w-9 h-9 rounded-full object-cover shrink-0 border border-zinc-700" />
-                    ) : (
-                      <div className="w-9 h-9 rounded-full bg-zinc-700 flex items-center justify-center text-sm text-zinc-400 font-medium shrink-0">
-                        {(ep.person_name ?? '?')[0]}
-                      </div>
-                    )}
+                    <div className="relative shrink-0">
+                      {ep.thumbnail_face_id ? (
+                        <img src={api.faceThumbnailUrl(ep.thumbnail_face_id, 64)} alt=""
+                          className={`w-9 h-9 rounded-full object-cover border ${ep.featured ? 'border-amber-500/70' : 'border-zinc-700'}`} />
+                      ) : (
+                        <div className={`w-9 h-9 rounded-full bg-zinc-700 flex items-center justify-center text-sm text-zinc-400 font-medium border ${ep.featured ? 'border-amber-500/70' : 'border-transparent'}`}>
+                          {(ep.person_name ?? '?')[0]}
+                        </div>
+                      )}
+                      {ep.featured && (
+                        <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-zinc-900 flex items-center justify-center">
+                          <span className="text-[9px] text-amber-400">★</span>
+                        </span>
+                      )}
+                    </div>
                     <div>
-                      <p className="text-sm text-zinc-200">{ep.person_name ?? '(unnamed)'}</p>
+                      <p className={`text-sm ${ep.featured ? 'text-amber-100' : 'text-zinc-200'}`}>
+                        {ep.featured && <span className="mr-1 text-amber-400 text-xs">★</span>}
+                        {ep.person_name ?? '(unnamed)'}
+                      </p>
                       <p className="text-[10px] text-zinc-600 capitalize">{ep.role}</p>
                     </div>
                   </div>
@@ -343,9 +353,9 @@ function EventCard({ ev, onClick, onEdit }: {
               {ev.persons.slice(0, 4).map(ep => (
                 ep.thumbnail_face_id ? (
                   <img key={ep.id} src={api.faceThumbnailUrl(ep.thumbnail_face_id, 32)} alt=""
-                    className="w-5 h-5 rounded-full object-cover border border-zinc-900" />
+                    className={`w-5 h-5 rounded-full object-cover border ${ep.featured ? 'border-amber-500/80' : 'border-zinc-900'}`} />
                 ) : (
-                  <div key={ep.id} className="w-5 h-5 rounded-full bg-zinc-700 border border-zinc-900 flex items-center justify-center text-[8px] text-zinc-400">
+                  <div key={ep.id} className={`w-5 h-5 rounded-full bg-zinc-700 border flex items-center justify-center text-[8px] text-zinc-400 ${ep.featured ? 'border-amber-500/80' : 'border-zinc-900'}`}>
                     {(ep.person_name ?? '?')[0]}
                   </div>
                 )

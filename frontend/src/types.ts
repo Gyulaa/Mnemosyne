@@ -148,6 +148,7 @@ export interface PersonFull {
   burial_date: string | null
   occupation: string | null
   notes: string | null
+  hidden_auto_events: string[]
   thumbnail_face_id: number | null
   face_count: number
   clusters: LinkedCluster[]
@@ -237,6 +238,7 @@ export interface EventPerson {
   id: number           // event_persons.id
   person_id: number
   role: string         // primary | participant
+  featured: boolean
   person_name: string | null
   thumbnail_face_id: number | null
 }
@@ -246,6 +248,73 @@ export interface EventImage {
   image_id: number
   image_path: string | null
   first_face_id: number | null
+}
+
+// ── GEDCOM import ─────────────────────────────────────────────────────────────
+
+export type GedcomImportAction = 'merge' | 'create' | 'skip'
+
+export interface GedcomImportMatch {
+  id: number
+  name: string
+  birth_year: number | null
+  confidence: 'exact' | 'high' | 'low'
+}
+
+export interface GedcomImportPersonRelative {
+  role: 'parent' | 'spouse' | 'child'
+  name: string
+}
+
+export interface GedcomImportPerson {
+  xref: string
+  name: string | null
+  first_name: string | null
+  last_name: string | null
+  birth_year: number | null
+  birth_place: string | null
+  death_year: number | null
+  sex: 'M' | 'F' | null
+  events_count: number
+  notes_count: number
+  docs_count: number
+  relatives: GedcomImportPersonRelative[]
+  suggested_match: GedcomImportMatch | null
+  action: GedcomImportAction
+  merge_with_id: number | null
+}
+
+export interface GedcomPreview {
+  token: string
+  persons: GedcomImportPerson[]
+  relations_count: number
+  events_count: number
+  sources_count: number
+  notes_count: number
+  documents_count: number
+}
+
+export interface GedcomImportDecision {
+  xref: string
+  action: GedcomImportAction
+  merge_with_id: number | null
+}
+
+export interface GedcomImportStats {
+  persons_created: number
+  persons_merged: number
+  persons_skipped: number
+  relations_added: number
+  events_added: number
+  sources_added: number
+  notes_added: number
+  documents_added: number
+  rollback_available?: boolean
+}
+
+export interface GedcomRollbackStatus {
+  available: boolean
+  expires_in_seconds?: number
 }
 
 export interface PersonEvent {

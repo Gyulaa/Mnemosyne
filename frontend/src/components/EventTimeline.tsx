@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import type { PersonFull, Relation, PersonEvent, ImageItem, ImagePerson } from '../types'
@@ -363,8 +363,15 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
     qc.invalidateQueries({ queryKey: ['events'] })
   }
 
+  async function handleToggleFeatured(epId: number, currentFeatured: boolean) {
+    if (!localEvent) return
+    const updated = await api.events.patchEventPerson(epId, { featured: !currentFeatured })
+    setLocalEvent(updated)
+    if (personId) qc.invalidateQueries({ queryKey: ['person-events', personId] })
+    qc.invalidateQueries({ queryKey: ['events'] })
+  }
+
   const isExisting = !!localEvent
-  const participants = localEvent?.persons.filter(ep => ep.role === 'participant') ?? []
 
   const alreadyInEventIds = useMemo(() => new Set([
     ...(localEvent?.persons.map(ep => ep.person_id) ?? []),
@@ -436,20 +443,32 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
         <p className="text-[10px] text-zinc-600 italic">Save the event first to attach photos.</p>
       )}
 
-      {/* Participants + add participant (only for existing events) */}
+      {/* Participants + featured toggle (only for existing events) */}
       {isExisting && (
         <div>
-          {participants.length > 0 && (
+          {(localEvent?.persons.length ?? 0) > 0 && (
             <>
-              <p className="text-[10px] text-zinc-500 mb-1">Also present</p>
-              <div className="flex flex-wrap gap-1 mb-1.5">
-                {participants.map(ep => (
-                  <div key={ep.id} className="flex items-center gap-1 bg-zinc-800 rounded-full pl-1 pr-2 py-0.5">
-                    {ep.thumbnail_face_id ? (
-                      <img src={api.faceThumbnailUrl(ep.thumbnail_face_id, 32)} alt="" className="w-4 h-4 rounded-full object-cover" />
-                    ) : <div className="w-4 h-4 rounded-full bg-zinc-700" />}
-                    <span className="text-[10px] text-zinc-300">{ep.person_name ?? '(unnamed)'}</span>
-                    <button onClick={() => handleRemovePerson(ep.id)} className="text-zinc-600 hover:text-red-400 transition-colors text-[10px] ml-0.5">✕</button>
+              <p className="text-[10px] text-zinc-500 mb-1.5">People — ★ = key event for them</p>
+              <div className="space-y-1 mb-2">
+                {(localEvent?.persons ?? []).map(ep => (
+                  <div key={ep.id} className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleToggleFeatured(ep.id, ep.featured)}
+                      title={ep.featured ? 'Unmark featured' : 'Mark as featured'}
+                      className={`p-0.5 rounded transition-colors shrink-0 ${ep.featured ? 'text-amber-400' : 'text-zinc-700 hover:text-zinc-400'}`}
+                    >
+                      <svg className="w-3.5 h-3.5" fill={ep.featured ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                      </svg>
+                    </button>
+                    {ep.thumbnail_face_id
+                      ? <img src={api.faceThumbnailUrl(ep.thumbnail_face_id, 32)} alt="" className="w-4 h-4 rounded-full object-cover shrink-0" />
+                      : <div className="w-4 h-4 rounded-full bg-zinc-700 shrink-0" />}
+                    <span className="text-[10px] text-zinc-300 flex-1 truncate">{ep.person_name ?? '(unnamed)'}</span>
+                    <span className="text-[9px] text-zinc-600 shrink-0">{ep.role === 'primary' ? 'primary' : ''}</span>
+                    {ep.role === 'participant' && (
+                      <button onClick={() => handleRemovePerson(ep.id)} className="text-zinc-600 hover:text-red-400 transition-colors text-[10px] shrink-0">✕</button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -541,9 +560,9 @@ interface AutoEvent {
   onAttachPhoto?: () => void
 }
 
-function AutoEventRow({ ev, isLast }: { ev: AutoEvent; isLast: boolean }) {
+function AutoEventRow({ ev, isLast, onHide }: { ev: AutoEvent; isLast: boolean; onHide?: () => void }) {
   return (
-    <div className="flex gap-3">
+    <div className="flex gap-3 group/auto">
       <div className="flex flex-col items-center" style={{ minWidth: 48 }}>
         <span className="text-xs text-zinc-600 tabular-nums font-mono shrink-0 text-right w-full">{ev.year ?? ''}</span>
       </div>
@@ -554,9 +573,21 @@ function AutoEventRow({ ev, isLast }: { ev: AutoEvent; isLast: boolean }) {
         {!isLast && <div className="w-px flex-1 bg-zinc-800 mt-1" />}
       </div>
       <div className="pb-4 min-w-0 flex-1">
-        <p className="text-xs text-zinc-400 font-medium leading-snug">{ev.label}</p>
-        {ev.dateStr && <p className="text-[10px] text-zinc-600 mt-0.5">{ev.dateStr}</p>}
-        {ev.place && <p className="text-[10px] text-zinc-500 mt-0.5">{ev.place}</p>}
+        <div className="flex items-start gap-1">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs text-zinc-400 font-medium leading-snug">{ev.label}</p>
+            {ev.dateStr && <p className="text-[10px] text-zinc-600 mt-0.5">{ev.dateStr}</p>}
+            {ev.place && <p className="text-[10px] text-zinc-500 mt-0.5">{ev.place}</p>}
+          </div>
+          {onHide && (
+            <button onClick={onHide} title="Hide this auto-event"
+              className="opacity-0 group-hover/auto:opacity-100 p-1 rounded text-zinc-700 hover:text-zinc-400 hover:bg-zinc-800 transition-all shrink-0 mt-0.5">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+              </svg>
+            </button>
+          )}
+        </div>
         <div className="flex gap-3 mt-1">
           {ev.onAttachPhoto && (
             <button onClick={ev.onAttachPhoto} className="text-[10px] text-zinc-600 hover:text-brand-400 transition-colors">+ Attach photo</button>
@@ -572,16 +603,18 @@ function AutoEventRow({ ev, isLast }: { ev: AutoEvent; isLast: boolean }) {
 
 // ── ManualEventRow ─────────────────────────────────────────────────────────────
 
-function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage }: {
+function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage, currentPersonId }: {
   ev: PersonEvent
   isLast: boolean
   dimmed: boolean
   onEdit: () => void
   onNavToEventPage?: () => void
+  currentPersonId?: number
 }) {
   const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
   const dateStr = formatEventDate(ev.date, ev.year)
   const participants = ev.persons.filter(ep => ep.role === 'participant')
+  const isFeatured = currentPersonId != null && ev.persons.some(ep => ep.person_id === currentPersonId && ep.featured)
 
   return (
     <div className={`flex gap-3 transition-opacity ${dimmed ? 'opacity-40' : ''}`}>
@@ -589,7 +622,9 @@ function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage }: {
         <span className="text-xs text-zinc-600 tabular-nums font-mono shrink-0 text-right w-full">{ev.year ?? ''}</span>
       </div>
       <div className="flex flex-col items-center">
-        <div className="w-6 h-6 rounded-full bg-zinc-900 border border-brand-600/50 flex items-center justify-center shrink-0 mt-0.5">
+        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+          isFeatured ? 'bg-amber-900/40 border border-amber-500/50' : 'bg-zinc-900 border border-brand-600/50'
+        }`}>
           <EventIcon type={ev.event_type} />
         </div>
         {!isLast && <div className="w-px flex-1 bg-zinc-800 mt-1" />}
@@ -598,7 +633,9 @@ function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage }: {
         <div className="group/ev">
           <div className="flex items-start gap-2">
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-zinc-200 font-medium leading-snug">{ev.title || typeLabel}</p>
+              <p className={`text-xs font-medium leading-snug ${isFeatured ? 'text-amber-100' : 'text-zinc-200'}`}>
+                {isFeatured && <span className="mr-1 text-amber-400">★</span>}{ev.title || typeLabel}
+              </p>
               {ev.title && <p className="text-[10px] text-zinc-500">{typeLabel}</p>}
               {dateStr && <p className="text-[10px] text-zinc-500 mt-0.5">{dateStr}</p>}
               {ev.place && <p className="text-[10px] text-zinc-500 mt-0.5">{ev.place}</p>}
@@ -657,15 +694,25 @@ interface Props {
   persons: PersonFull[]
   onNavigateToBio?: () => void
   onNavToEvent?: (eventId: number) => void
+  autoPhotoEventType?: string | null
+  onAutoPhotoConsumed?: () => void
 }
 
-export default function EventTimeline({ person, relations, persons, onNavigateToBio, onNavToEvent }: Props) {
+export default function EventTimeline({ person, relations, persons, onNavigateToBio, onNavToEvent, autoPhotoEventType, onAutoPhotoConsumed }: Props) {
   const qc = useQueryClient()
 
   // editingEvent: the event currently open in the editor (null = no editor open)
   const [editingEvent, setEditingEvent] = useState<PersonEvent | null>(null)
   const [isCreating, setIsCreating] = useState(false)
   const [autoEventPrefill, setAutoEventPrefill] = useState<{ event_type: string; date: string; place: string } | null>(null)
+
+  // hidden auto-events: types the user has dismissed from the timeline
+  const [hiddenAutoTypes, setHiddenAutoTypes] = useState<string[]>(() => person.hidden_auto_events ?? [])
+  const [showHidden, setShowHidden] = useState(false)
+
+  useEffect(() => {
+    setHiddenAutoTypes(person.hidden_auto_events ?? [])
+  }, [person.id])
 
   const { data: manualEvents = [], refetch } = useQuery({
     queryKey: ['person-events', person.id],
@@ -680,6 +727,34 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
     setEditingEvent(null)
     setIsCreating(true)
   }
+
+  function hideAutoEvent(eventType: string) {
+    const updated = [...hiddenAutoTypes, eventType]
+    setHiddenAutoTypes(updated)
+    api.persons.update(person.id, { hidden_auto_events: updated as any })
+      .then(() => qc.invalidateQueries({ queryKey: ['persons'] }))
+  }
+
+  function restoreAutoEvent(eventType: string) {
+    const updated = hiddenAutoTypes.filter(t => t !== eventType)
+    setHiddenAutoTypes(updated)
+    api.persons.update(person.id, { hidden_auto_events: updated as any })
+      .then(() => qc.invalidateQueries({ queryKey: ['persons'] }))
+  }
+
+  useEffect(() => {
+    if (!autoPhotoEventType) return
+    const date = autoPhotoEventType === 'birth'
+      ? (person.birth_date ?? (person.birth_year ? String(person.birth_year) : null))
+      : autoPhotoEventType === 'death'
+      ? (person.death_date ?? (person.death_year ? String(person.death_year) : null))
+      : null
+    const place = autoPhotoEventType === 'birth' ? person.birth_place
+      : autoPhotoEventType === 'death' ? person.death_place
+      : null
+    openAttachPhotoForAuto(autoPhotoEventType, date, place)
+    onAutoPhotoConsumed?.()
+  }, [autoPhotoEventType])
 
   // Build auto-events from person fields + relations
   const autoEvents = useMemo((): AutoEvent[] => {
@@ -757,9 +832,14 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
     | { kind: 'auto'; ev: AutoEvent; sortYear: number | null }
     | { kind: 'manual'; ev: PersonEvent; sortYear: number | null }
 
+  const hiddenAutoEvents = useMemo(
+    () => autoEvents.filter(ev => hiddenAutoTypes.includes(ev.eventType)),
+    [autoEvents, hiddenAutoTypes]
+  )
+
   const allEntries = useMemo((): Entry[] => {
     const combined: Entry[] = [
-      ...autoEvents.map(ev => ({ kind: 'auto' as const, ev, sortYear: ev.year })),
+      ...autoEvents.filter(ev => !hiddenAutoTypes.includes(ev.eventType)).map(ev => ({ kind: 'auto' as const, ev, sortYear: ev.year })),
       ...manualEvents.map(ev => ({ kind: 'manual' as const, ev, sortYear: ev.year })),
     ]
     combined.sort((a, b) => {
@@ -769,7 +849,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
       return a.sortYear - b.sortYear
     })
     return combined
-  }, [autoEvents, manualEvents])
+  }, [autoEvents, manualEvents, hiddenAutoTypes])
 
   const showEditor = isCreating || editingEvent !== null
   const editorIsNew = isCreating && editingEvent === null
@@ -832,9 +912,9 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
       {/* Timeline */}
       <div>
         {allEntries.map((entry, i) => {
-          const isLast = i === allEntries.length - 1
+          const isLast = i === allEntries.length - 1 && hiddenAutoEvents.length === 0
           if (entry.kind === 'auto') {
-            return <AutoEventRow key={`a-${i}`} ev={entry.ev} isLast={isLast} />
+            return <AutoEventRow key={`a-${entry.ev.eventType}`} ev={entry.ev} isLast={isLast} onHide={() => hideAutoEvent(entry.ev.eventType)} />
           }
           const ev = entry.ev
           const isEditing = editingEvent?.id === ev.id
@@ -844,12 +924,34 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
               ev={ev}
               isLast={isLast}
               dimmed={isEditing}
+              currentPersonId={person.id}
               onEdit={() => { setEditingEvent(ev); setIsCreating(false); setAutoEventPrefill(null) }}
               onNavToEventPage={onNavToEvent ? () => onNavToEvent(ev.id) : undefined}
             />
           )
         })}
       </div>
+
+      {/* Hidden auto-events footer */}
+      {hiddenAutoEvents.length > 0 && (
+        <div className="mt-3 border-t border-zinc-800/60 pt-2.5">
+          <button onClick={() => setShowHidden(h => !h)}
+            className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors">
+            {hiddenAutoEvents.length} hidden event{hiddenAutoEvents.length > 1 ? 's' : ''} {showHidden ? '▲' : '▼'}
+          </button>
+          {showHidden && (
+            <div className="mt-2 space-y-1.5">
+              {hiddenAutoEvents.map(ev => (
+                <div key={ev.eventType} className="flex items-center gap-3">
+                  <span className="text-[10px] text-zinc-600">{ev.label}{ev.dateStr ? ` · ${ev.dateStr}` : ''}</span>
+                  <button onClick={() => restoreAutoEvent(ev.eventType)}
+                    className="text-[10px] text-brand-500 hover:text-brand-400 transition-colors">Restore</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

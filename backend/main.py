@@ -220,6 +220,141 @@ async def import_project(file: UploadFile = File(...)):
         raise HTTPException(500, "Import succeeded but could not activate project")
 
 
+# ── GEDCOM import ─────────────────────────────────────────────────────────────
+
+@app.post("/api/import/gedcom/preview")
+async def gedcom_import_preview(file: UploadFile = File(...)):
+    """
+    Parse an uploaded .ged or .zip file and return a preview of what would be
+    imported, with suggested merge decisions based on name + birth-year matching.
+    """
+    from . import gedcom_import as gi
+
+    project_id = project_manager.active_id
+    if not project_id:
+        raise HTTPException(404, "No active project")
+
+    filename = file.filename or "upload.ged"
+    data = await file.read()
+
+    try:
+        parsed, zip_bytes = gi.load_gedcom(data, filename)
+    except (ValueError, Exception) as e:
+        raise HTTPException(400, f"Parsing failed: {e}")
+
+    # Load existing persons for matching
+    db_path = PROJECTS_DIR / project_id / "photo_organizer.db"
+    import sqlite3 as _sqlite3
+    conn = _sqlite3.connect(str(db_path))
+    conn.row_factory = _sqlite3.Row
+    try:
+        existing = [dict(r) for r in conn.execute(
+            "SELECT id, name, first_name, last_name, birth_year FROM persons"
+        ).fetchall()]
+    finally:
+        conn.close()
+
+    preview_persons = gi.build_preview(parsed, existing)
+
+    # Count relations / events / sources
+    total_events  = sum(len(v['events']) for v in parsed['individuals'].values())
+    total_notes   = sum(len(v['notes'])  for v in parsed['individuals'].values())
+    total_docs    = sum(len(v['docs'])   for v in parsed['individuals'].values())
+
+    token = gi.store_session({
+        'parsed':    parsed,
+        'zip_bytes': zip_bytes,
+        'project_id': project_id,
+    })
+
+    return {
+        'token':            token,
+        'persons':          preview_persons,
+        'relations_count':  len(parsed['families']),
+        'events_count':     total_events,
+        'sources_count':    len(parsed['sources']),
+        'notes_count':      total_notes,
+        'documents_count':  total_docs,
+    }
+
+
+@app.post("/api/import/gedcom/confirm")
+def gedcom_import_confirm(body: dict):
+    """
+    Execute the GEDCOM import with the user's per-person decisions.
+    Expects {token: str, decisions: [{xref, action, merge_with_id}]}.
+    """
+    from . import gedcom_import as gi
+
+    token     = body.get('token', '')
+    decisions = body.get('decisions', [])
+
+    session = gi.get_session(token)
+    if not session:
+        raise HTTPException(400, "Import session expired — please re-upload the file")
+
+    project_id = session['project_id']
+    if project_id != project_manager.active_id:
+        raise HTTPException(400, "Active project changed since preview — please re-upload")
+
+    project_dir = PROJECTS_DIR / project_id
+    db_path     = project_dir / "photo_organizer.db"
+    docs_dir    = project_dir / "documents"
+
+    try:
+        stats, rollback = gi.execute_import(
+            parsed    = session['parsed'],
+            decisions = decisions,
+            db_path   = db_path,
+            docs_dir  = docs_dir,
+            zip_bytes = session['zip_bytes'],
+        )
+        gi.store_rollback(db_path, rollback)
+    except Exception as e:
+        raise HTTPException(500, f"Import failed: {e}")
+
+    gi.clear_session(token)
+    return {**stats, 'rollback_available': True}
+
+
+@app.post("/api/import/gedcom/rollback")
+def gedcom_rollback():
+    """Undo the last GEDCOM import (available for 30 min after confirm)."""
+    from . import gedcom_import as gi
+
+    if not project_manager.active_id:
+        raise HTTPException(400, "No active project")
+
+    project_dir = PROJECTS_DIR / project_manager.active_id
+    db_path     = project_dir / "photo_organizer.db"
+    docs_dir    = project_dir / "documents"
+
+    deleted = gi.execute_rollback(db_path, docs_dir)
+    if deleted is None:
+        raise HTTPException(400, "No rollback available (expired or not yet imported)")
+
+    return {"ok": True, "deleted": deleted}
+
+
+@app.get("/api/import/gedcom/rollback-status")
+def gedcom_rollback_status():
+    """Check if a rollback is available for the active project."""
+    from . import gedcom_import as gi
+
+    if not project_manager.active_id:
+        return {"available": False}
+
+    project_dir = PROJECTS_DIR / project_manager.active_id
+    db_path     = project_dir / "photo_organizer.db"
+    data = gi.get_rollback(db_path)
+    if not data:
+        return {"available": False}
+
+    import time
+    remaining = max(0, int(30 * 60 - (time.time() - data['created_at'])))
+    return {"available": True, "expires_in_seconds": remaining}
+
+
 # ── Scan ──────────────────────────────────────────────────────────────────────
 
 @app.post("/api/scan/start")
@@ -1216,6 +1351,7 @@ def _person_dict(p: "DBPerson", db: Session) -> dict:
         "burial_date": p.burial_date,
         "occupation": p.occupation,
         "notes": p.notes,
+        "hidden_auto_events": json.loads(p.hidden_auto_events) if p.hidden_auto_events else [],
         "thumbnail_face_id": thumb_id,
         "face_count": face_count,
         "clusters": linked_clusters,
@@ -1306,7 +1442,7 @@ _PERSON_FIELDS = [
     "christening_year", "christening_place", "christening_date",
     "death_year", "death_place", "death_date",
     "burial_year", "burial_place", "burial_date",
-    "occupation", "notes",
+    "occupation", "notes", "hidden_auto_events",
 ]
 
 
@@ -1344,7 +1480,10 @@ def update_person(person_id: int, body: dict, db: Session = Depends(get_db)):
         raise HTTPException(404, "Person not found")
     for f in _PERSON_FIELDS:
         if f in body:
-            setattr(p, f, body[f])
+            val = body[f]
+            if f == "hidden_auto_events" and isinstance(val, list):
+                val = json.dumps(val)
+            setattr(p, f, val)
     # Auto-derive display name from name parts when any part is provided
     name_parts_in_body = any(k in body for k in ("title", "last_name", "first_name", "middle_name"))
     if name_parts_in_body:
@@ -1361,6 +1500,107 @@ def update_person(person_id: int, body: dict, db: Session = Depends(get_db)):
     return _person_dict(p, db)
 
 
+@app.post("/api/persons/{source_id}/merge-into/{target_id}")
+def merge_persons(source_id: int, target_id: int, db: Session = Depends(get_db)):
+    """Merge source into target. Target's non-null fields take priority. Source is deleted."""
+    src = db.get(DBPerson, source_id)
+    tgt = db.get(DBPerson, target_id)
+    if not src or not tgt:
+        raise HTTPException(404, "Person not found")
+    if source_id == target_id:
+        raise HTTPException(400, "Cannot merge a person into themselves")
+
+    # 1. Fill missing biographical fields on target from source
+    bio_fields = [
+        "title", "last_name", "first_name", "middle_name", "nickname",
+        "sex",
+        "birth_year", "birth_place", "birth_date",
+        "christening_year", "christening_place", "christening_date",
+        "death_year", "death_place", "death_date",
+        "burial_year", "burial_place", "burial_date",
+        "occupation", "thumbnail_face_id",
+    ]
+    for f in bio_fields:
+        if getattr(tgt, f) is None and getattr(src, f) is not None:
+            setattr(tgt, f, getattr(src, f))
+
+    # Merge hidden_auto_events lists (union, deduplicated)
+    tgt_hidden = json.loads(tgt.hidden_auto_events) if tgt.hidden_auto_events else []
+    src_hidden = json.loads(src.hidden_auto_events) if src.hidden_auto_events else []
+    merged_hidden = list(dict.fromkeys(tgt_hidden + src_hidden))
+    tgt.hidden_auto_events = json.dumps(merged_hidden) if merged_hidden else None
+
+    # 2. Re-link clusters from source → target
+    for cluster in list(src.clusters):
+        cluster.person_id = target_id
+
+    # 3. Transfer relations (avoid self-loops and duplicates)
+    def _rel_key(rel):
+        return (rel.type, min(rel.person_a_id, rel.person_b_id), max(rel.person_a_id, rel.person_b_id))
+
+    existing_rel_keys = set()
+    for rel in db.query(DBRelation).filter(
+        (DBRelation.person_a_id == target_id) | (DBRelation.person_b_id == target_id)
+    ).all():
+        existing_rel_keys.add(_rel_key(rel))
+
+    src_relations = db.query(DBRelation).filter(
+        (DBRelation.person_a_id == source_id) | (DBRelation.person_b_id == source_id)
+    ).all()
+    for rel in src_relations:
+        new_a = target_id if rel.person_a_id == source_id else rel.person_a_id
+        new_b = target_id if rel.person_b_id == source_id else rel.person_b_id
+        if new_a == new_b:  # self-loop
+            db.delete(rel)
+            continue
+        key = (rel.type, min(new_a, new_b), max(new_a, new_b))
+        if key in existing_rel_keys:
+            db.delete(rel)
+        else:
+            rel.person_a_id = new_a
+            rel.person_b_id = new_b
+            existing_rel_keys.add(key)
+
+    # 4. Transfer event_persons (avoid duplicate person in same event)
+    tgt_event_ids = {
+        ep.event_id for ep in db.query(DBEventPerson).filter(DBEventPerson.person_id == target_id).all()
+    }
+    src_eps = db.query(DBEventPerson).filter(DBEventPerson.person_id == source_id).all()
+    for ep in src_eps:
+        if ep.event_id in tgt_event_ids:
+            # Target already in this event — promote featured if source was featured
+            if ep.featured:
+                tgt_ep = db.query(DBEventPerson).filter(
+                    DBEventPerson.event_id == ep.event_id,
+                    DBEventPerson.person_id == target_id,
+                ).first()
+                if tgt_ep:
+                    tgt_ep.featured = True
+            db.delete(ep)
+        else:
+            ep.person_id = target_id
+            tgt_event_ids.add(ep.event_id)
+
+    # 5. Transfer documents, notes, citations
+    db.execute(text("UPDATE documents    SET person_id = :tid WHERE person_id = :sid"), {"tid": target_id, "sid": source_id})
+    db.execute(text("UPDATE person_notes SET person_id = :tid WHERE person_id = :sid"), {"tid": target_id, "sid": source_id})
+    db.execute(text("UPDATE citations    SET person_id = :tid WHERE person_id = :sid"), {"tid": target_id, "sid": source_id})
+
+    # 6. Delete source (event_persons already transferred; relations already transferred)
+    db.execute(text("DELETE FROM event_persons WHERE person_id = :sid"), {"sid": source_id})
+    db.delete(src)
+    db.commit()
+
+    # Sync derived year fields on target
+    for prefix in ("birth", "death", "christening", "burial"):
+        date_val = getattr(tgt, f"{prefix}_date")
+        if date_val:
+            setattr(tgt, f"{prefix}_year", _year_from_date(date_val))
+    db.commit()
+
+    return _person_dict(tgt, db)
+
+
 @app.delete("/api/persons/{person_id}")
 def delete_person(person_id: int, db: Session = Depends(get_db)):
     p = db.get(DBPerson, person_id)
@@ -1368,8 +1608,15 @@ def delete_person(person_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Person not found")
     if p.clusters:
         raise HTTPException(400, "Cannot delete person with assigned photo clusters")
+    # event_persons has no ORM cascade from Person and the actual DB table was created
+    # by Base.metadata.create_all() without ON DELETE CASCADE, so delete manually.
+    db.execute(text("DELETE FROM event_persons WHERE person_id = :pid"), {"pid": person_id})
     db.delete(p)
     db.commit()
+    # Clean up events that no longer have any participants
+    with db.bind.connect() as conn:
+        conn.execute(text("DELETE FROM events WHERE id NOT IN (SELECT DISTINCT event_id FROM event_persons)"))
+        conn.commit()
     return {"ok": True}
 
 
@@ -1830,6 +2077,7 @@ def _event_person_dict(ep: DBEventPerson) -> dict:
         "id": ep.id,
         "person_id": ep.person_id,
         "role": ep.role,
+        "featured": bool(ep.featured),
         "person_name": p.name if p else None,
         "thumbnail_face_id": p.thumbnail_face_id if p else None,
     }
@@ -1972,6 +2220,18 @@ def add_event_person(event_id: int, body: EventPersonAdd, db: Session = Depends(
     db.commit()
     db.refresh(ev)
     return _event_dict(ev)
+
+
+@app.patch("/api/event-persons/{ep_id}")
+def patch_event_person(ep_id: int, body: dict, db: Session = Depends(get_db)):
+    ep = db.get(DBEventPerson, ep_id)
+    if not ep:
+        raise HTTPException(404, "Not found")
+    if "featured" in body:
+        ep.featured = bool(body["featured"])
+    db.commit()
+    db.refresh(ep.event)
+    return _event_dict(ep.event)
 
 
 @app.delete("/api/event-persons/{ep_id}")

@@ -6,6 +6,7 @@ import TreeView from './TreeView'
 import PersonPanel from './PersonPanel'
 import ExportModal from './ExportModal'
 import StatisticsView from './StatisticsView'
+import GedcomImportModal from './GedcomImportModal'
 
 // ── GEDCOM export modal ───────────────────────────────────────────────────────
 
@@ -369,6 +370,16 @@ export default function FamilyTreeTab({
   const [exporting, setExporting] = useState(false)
   const [exportingGedcom, setExportingGedcom] = useState(false)
   const [showGedcomModal, setShowGedcomModal] = useState(false)
+  const [showGedcomImport, setShowGedcomImport] = useState(false)
+  const [gedcomRollbackExpiry, setGedcomRollbackExpiry] = useState<number | null>(() => {
+    try {
+      const v = localStorage.getItem('mnemosyne_gedcom_rollback')
+      if (!v) return null
+      const { expires_at } = JSON.parse(v)
+      return typeof expires_at === 'number' && expires_at > Date.now() ? expires_at : null
+    } catch { return null }
+  })
+  const [rollingBack, setRollingBack] = useState(false)
   const [groupNames, setGroupNames] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem('mnemosyne_group_names') ?? '{}') }
     catch { return {} }
@@ -384,6 +395,7 @@ export default function FamilyTreeTab({
   const [search, setSearch] = useState('')
   const [showOnlyUnlinked, setShowOnlyUnlinked] = useState(false)
 
+  const queryClient = useQueryClient()
   const { data: persons = [], isLoading } = useQuery({ queryKey: ['persons'], queryFn: api.persons.list })
   const { data: relations = [] } = useQuery({ queryKey: ['relations'], queryFn: api.relations.list })
 
@@ -452,6 +464,31 @@ export default function FamilyTreeTab({
     }
   }
 
+  function setRollbackExpiry(expiresAt: number | null) {
+    setGedcomRollbackExpiry(expiresAt)
+    if (expiresAt) {
+      localStorage.setItem('mnemosyne_gedcom_rollback', JSON.stringify({ expires_at: expiresAt }))
+    } else {
+      localStorage.removeItem('mnemosyne_gedcom_rollback')
+    }
+  }
+
+  async function handleRollback() {
+    if (rollingBack) return
+    setRollingBack(true)
+    try {
+      await api.project.rollbackGedcomImport()
+      setRollbackExpiry(null)
+      queryClient.invalidateQueries({ queryKey: ['persons'] })
+      queryClient.invalidateQueries({ queryKey: ['relations'] })
+      setSelectedId(null)
+    } catch (e) {
+      alert(`Visszavonás sikertelen: ${e}`)
+    } finally {
+      setRollingBack(false)
+    }
+  }
+
   async function handleGedcomExport(opts: GedcomOpts) {
     setShowGedcomModal(false)
     if (exportingGedcom) return
@@ -481,6 +518,28 @@ export default function FamilyTreeTab({
 
   return (
     <div className="h-full flex flex-col bg-zinc-950">
+
+      {/* ── Rollback banner ── */}
+      {gedcomRollbackExpiry && gedcomRollbackExpiry > Date.now() && (
+        <div className="shrink-0 flex items-center gap-3 px-4 py-2 bg-amber-950/60 border-b border-amber-800/50 text-xs">
+          <span className="text-amber-300 font-medium">Import visszavonható</span>
+          <span className="text-amber-500">– az utolsó GEDCOM importálás visszavonható az adatok törlésével</span>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={handleRollback}
+              disabled={rollingBack}
+              className="px-3 py-1 rounded-md bg-amber-700 hover:bg-amber-600 text-white font-medium disabled:opacity-50 transition-colors"
+            >
+              {rollingBack ? 'Visszavonás…' : 'Visszavon'}
+            </button>
+            <button
+              onClick={() => setRollbackExpiry(null)}
+              className="text-amber-600 hover:text-amber-400 transition-colors"
+              title="Bezár"
+            >✕</button>
+          </div>
+        </div>
+      )}
 
       {/* ── Toolbar ── */}
       <div className="shrink-0 h-11 flex items-center gap-2 px-3 bg-zinc-900 border-b border-zinc-800">
@@ -531,7 +590,7 @@ export default function FamilyTreeTab({
           </button>
         )}
 
-        {/* GEDCOM export — always available when there are persons */}
+        {/* GEDCOM export/import */}
         {persons.length > 0 && (
           <button
             onClick={() => setShowGedcomModal(true)}
@@ -542,6 +601,13 @@ export default function FamilyTreeTab({
             {exportingGedcom ? 'Exporting…' : 'GEDCOM ↓'}
           </button>
         )}
+        <button
+          onClick={() => setShowGedcomImport(true)}
+          className="h-7 px-3 text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-600 rounded-full transition-colors shrink-0"
+          title="GEDCOM importálás (.ged vagy .zip)"
+        >
+          GEDCOM ↑
+        </button>
 
         {/* View toggle */}
         {persons.length > 0 && (
@@ -645,6 +711,7 @@ export default function FamilyTreeTab({
               onClose={() => setSelectedId(null)}
               onNavigateTo={id => setSelectedId(id)}
               onNavToEvent={onNavToEvent}
+              onDeleted={() => setSelectedId(null)}
             />
           )}
         </div>
@@ -672,6 +739,19 @@ export default function FamilyTreeTab({
         <GedcomExportModal
           onExport={handleGedcomExport}
           onClose={() => setShowGedcomModal(false)}
+        />
+      )}
+
+      {showGedcomImport && (
+        <GedcomImportModal
+          existingPersons={persons}
+          relations={relations}
+          onDone={() => {
+            queryClient.invalidateQueries({ queryKey: ['persons'] })
+            queryClient.invalidateQueries({ queryKey: ['relations'] })
+            setRollbackExpiry(Date.now() + 30 * 60 * 1000)
+          }}
+          onClose={() => setShowGedcomImport(false)}
         />
       )}
 

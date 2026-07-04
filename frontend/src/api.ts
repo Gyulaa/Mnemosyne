@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, Source, Citation, PersonNote, NoteCitation, PersonEvent } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, Source, Citation, PersonNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus } from './types'
 
 const BASE = '/api'
 
@@ -125,6 +125,29 @@ export const api = {
       if (!res.ok) throw new Error(await res.text())
       return res.blob()
     },
+    previewGedcomImport: async (file: File): Promise<GedcomPreview> => {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch(`${BASE}/import/gedcom/preview`, { method: 'POST', body: fd })
+      if (!res.ok) throw new Error(await res.text())
+      return res.json()
+    },
+    confirmGedcomImport: async (token: string, decisions: GedcomImportDecision[]): Promise<GedcomImportStats> => {
+      const res = await fetch(`${BASE}/import/gedcom/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, decisions }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      return res.json()
+    },
+    rollbackGedcomImport: async (): Promise<{ ok: boolean; deleted: Record<string, number> }> => {
+      const res = await fetch(`${BASE}/import/gedcom/rollback`, { method: 'POST' })
+      if (!res.ok) throw new Error(await res.text())
+      return res.json()
+    },
+    gedcomRollbackStatus: (): Promise<GedcomRollbackStatus> =>
+      fetchJson<GedcomRollbackStatus>(`${BASE}/import/gedcom/rollback-status`),
     importZip: async (file: File): Promise<Project> => {
       const fd = new FormData()
       fd.append('file', file)
@@ -186,6 +209,8 @@ export const api = {
       }),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/persons/${id}`, { method: 'DELETE' }),
+    mergeInto: (sourceId: number, targetId: number) =>
+      post<PersonFull>(`${BASE}/persons/${sourceId}/merge-into/${targetId}`),
   },
   relations: {
     list: () => fetchJson<Relation[]>(`${BASE}/relations`),
@@ -275,6 +300,8 @@ export const api = {
       fetchJson<PersonEvent | { ok: boolean }>(`${BASE}/event-persons/${eventPersonId}`, { method: 'DELETE' }),
     listForImage: (imageId: number) =>
       fetchJson<PersonEvent[]>(`${BASE}/images/${imageId}/events`),
+    patchEventPerson: (epId: number, fields: { featured?: boolean }) =>
+      patch<PersonEvent>(`${BASE}/event-persons/${epId}`, fields),
   },
   faceThumbnailUrl: (id: number, size = 160) =>
     `${BASE}/faces/${id}/thumbnail?size=${size}`,

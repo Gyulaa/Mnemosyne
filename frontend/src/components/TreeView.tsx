@@ -157,18 +157,23 @@ function extractProbandContext(
   }
 
   // Include persons connected via direct sibling relations (fixpoint).
-  // This handles siblings whose shared parent is not in the dataset.
+  // Only for siblings whose parents are NOT tracked in this dataset — persons
+  // with known ancestors are reached via the cousin-depth loop above, which
+  // correctly respects lateralDepth.
   let sibChanged = true
   while (sibChanged) {
     sibChanged = false
     for (const r of allRelations) {
       if (r.type !== 'sibling') continue
-      if (visible.has(r.person_a_id) && allIds.has(r.person_b_id) && !visible.has(r.person_b_id)) {
-        visible.add(r.person_b_id); sibChanged = true
+      const tryAdd = (newId: number) => {
+        if (!allIds.has(newId) || visible.has(newId)) return
+        // Skip if any of the person's parents is a known ancestor — they will be
+        // added (at the right lateralDepth) by the cousin-depth loop instead.
+        if ((maps.parentsOf.get(newId) ?? []).some(pid => ancestorIds.has(pid))) return
+        visible.add(newId); sibChanged = true
       }
-      if (visible.has(r.person_b_id) && allIds.has(r.person_a_id) && !visible.has(r.person_a_id)) {
-        visible.add(r.person_a_id); sibChanged = true
-      }
+      if (visible.has(r.person_a_id)) tryAdd(r.person_b_id)
+      if (visible.has(r.person_b_id)) tryAdd(r.person_a_id)
     }
   }
 
@@ -567,6 +572,19 @@ function buildProbandLayout(
   // KEY INVARIANT: when any person is placed via sibling or parent anchor,
   // their unpositioned same-gen spouses are placed IMMEDIATELY in the same step
   // so no third party can be inserted between a couple.
+  //
+  // genOcc(gen): returns only x-values occupied by nodes in that generation.
+  // Cross-generation x-collisions (e.g. proband at x=0 blocking an ancestor's
+  // spouse from taking x=0 in a different row) caused spouses to be pushed
+  // arbitrarily far left/right. Always filter by generation.
+  const genOcc = (gen: number): Set<number> => {
+    const s = new Set<number>()
+    for (const [oid, ox] of combinedX) {
+      if ((genMap.get(oid) ?? 0) === gen) s.add(ox)
+    }
+    return s
+  }
+
   let passN = true
   while (passN) {
     passN = false
@@ -574,34 +592,40 @@ function buildProbandLayout(
       if (combinedX.has(id)) continue
       const myGen = genMap.get(id) ?? 0
 
-      const genLeftmost  = () => { let v = Infinity;  for (const [oid, ox] of combinedX) { if ((genMap.get(oid) ?? 0) === myGen) v = Math.min(v, ox) }; return v <  Infinity ? v : 0 }
-      const genRightmost = () => { let v = -Infinity; for (const [oid, ox] of combinedX) { if ((genMap.get(oid) ?? 0) === myGen) v = Math.max(v, ox) }; return v > -Infinity ? v : 0 }
-
       // Place `id` at `pos`, then immediately place any unpositioned same-gen
-      // spouses adjacent — prevents any person from slipping between a couple.
+      // spouses at their nearest free slot — prevents any person from slipping
+      // between a couple and avoids piling spouses on one side when the other
+      // direction has closer open positions.
       const placeWithSpouses = (pos: number) => {
         combinedX.set(id, pos)
         passN = true
-        const dir = pos <= 0 ? -1 : 1
-        let cursor = pos + dir * (NW + HG)
+        const step = NW + HG
         for (const spId of maps.spousesOf.get(id) ?? []) {
           if (combinedX.has(spId) || (genMap.get(spId) ?? 0) !== myGen) continue
-          const occ = new Set([...combinedX.values()])
-          while (occ.has(cursor)) cursor += dir * (NW + HG)
-          combinedX.set(spId, cursor)
-          cursor += dir * (NW + HG)
+          const occ = genOcc(myGen)
+          let leftX = pos - step
+          while (occ.has(leftX)) leftX -= step
+          let rightX = pos + step
+          while (occ.has(rightX)) rightX += step
+          combinedX.set(spId, Math.abs(leftX - pos) <= Math.abs(rightX - pos) ? leftX : rightX)
         }
       }
 
-      // A: spouse anchor — place adjacent to positioned partner
+      // A: spouse anchor — place at nearest free slot on EITHER side of partner.
+      // Do NOT fix direction by sign of partnerX: an ancestor at x<0 may still
+      // have its nearest free slot to the right (between it and the tree center).
       let placed = false
       for (const sid of maps.spousesOf.get(id) ?? []) {
         if (!combinedX.has(sid) || (genMap.get(sid) ?? 0) !== myGen) continue
         const partnerX = combinedX.get(sid)!
-        const dir = partnerX <= 0 ? -1 : 1
-        let targetX = partnerX + dir * (NW + HG)
-        const occ = new Set([...combinedX.values()])
-        while (occ.has(targetX)) targetX += dir * (NW + HG)
+        const occ = genOcc(myGen)
+        const step = NW + HG
+        let leftX = partnerX - step
+        while (occ.has(leftX)) leftX -= step
+        let rightX = partnerX + step
+        while (occ.has(rightX)) rightX += step
+        // Pick the closer free slot; left wins ties (preserves spouse-left convention)
+        const targetX = Math.abs(leftX - partnerX) <= Math.abs(rightX - partnerX) ? leftX : rightX
         combinedX.set(id, targetX)
         placed = true; passN = true; break
       }
@@ -636,7 +660,7 @@ function buildProbandLayout(
           : sibCenter
         const dir = dirRef <= 0 ? -1 : 1
         let targetX = sibCenter + dir * (NW + HG)
-        const occ = new Set([...combinedX.values()])
+        const occ = genOcc(myGen)
         while (occ.has(targetX)) targetX += dir * (NW + HG)
         placeWithSpouses(targetX)
         continue
@@ -649,7 +673,7 @@ function buildProbandLayout(
         const pc = posParentXs.reduce((a, b) => a + b, 0) / posParentXs.length
         const dir = pc <= 0 ? -1 : 1
         let targetX = pc
-        const occ = new Set([...combinedX.values()])
+        const occ = genOcc(myGen)
         while (occ.has(targetX)) targetX += dir * (NW + HG)
         placeWithSpouses(targetX)
       }
