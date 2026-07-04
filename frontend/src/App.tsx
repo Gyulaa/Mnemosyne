@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import ScanTab from './components/ScanTab'
 import ClustersTab from './components/ClustersTab'
@@ -37,6 +37,17 @@ export default function App() {
   const [exportError, setExportError] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<PersonDocument | null>(null)
+  const [aboutOpen,  setAboutOpen]  = useState(false)
+  const aboutRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!aboutOpen) return
+    const handler = (e: MouseEvent) => {
+      if (aboutRef.current && !aboutRef.current.contains(e.target as Node)) setAboutOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [aboutOpen])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -125,6 +136,30 @@ export default function App() {
                   <path strokeLinecap="round" d="M20 20l-3.5-3.5" />
                 </svg>
               </button>
+
+              {/* About */}
+              <div ref={aboutRef} className="relative">
+                <button
+                  onClick={() => setAboutOpen(o => !o)}
+                  title="About"
+                  className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <circle cx="12" cy="12" r="9" />
+                    <path strokeLinecap="round" d="M12 8h.01M12 11v5" />
+                  </svg>
+                </button>
+                {aboutOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-52 bg-zinc-900 border border-zinc-700/80 rounded-xl shadow-2xl p-4 z-50">
+                    <p className="text-sm font-semibold text-zinc-100 mb-0.5">Mnemosyne</p>
+                    <p className="text-[11px] text-zinc-500 leading-relaxed">Personal photo &amp; genealogy organizer</p>
+                    <div className="my-3 border-t border-zinc-800" />
+                    <p className="text-xs text-zinc-400">by <span className="text-zinc-200 font-medium">Gyula Miklós</span></p>
+                    <p className="text-[11px] text-zinc-600 mt-0.5">© 2026 · MIT License</p>
+                  </div>
+                )}
+              </div>
+
               <ProjectSwitcher onExportStart={onExportStart} onExportEnd={onExportEnd} />
             </div>
           </div>
