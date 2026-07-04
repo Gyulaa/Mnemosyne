@@ -222,6 +222,7 @@ export const api = {
       fetchJson<{ ok: boolean }>(`${BASE}/relations/${id}`, { method: 'DELETE' }),
   },
   documents: {
+    listAll: () => fetchJson<PersonDocument[]>(`${BASE}/documents`),
     list: (personId: number) => fetchJson<PersonDocument[]>(`${BASE}/persons/${personId}/documents`),
     upload: async (personId: number, file: File, meta: { title?: string; doc_type?: string; year?: number; description?: string }): Promise<PersonDocument> => {
       const fd = new FormData()
