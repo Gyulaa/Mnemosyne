@@ -177,6 +177,14 @@ export interface PersonDocument {
   description: string | null
   created_at: string | null
   source_id: number | null
+  persons: { id: number; name: string | null }[]
+}
+
+export interface DocumentType {
+  id: number
+  key: string
+  label: string
+  sort_order: number
 }
 
 export interface Source {

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument, Source, Citation } from '../types'
+import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument, DocumentType, Source, Citation } from '../types'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
 import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
@@ -525,6 +525,7 @@ function RelRow({
 
 function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => void }) {
   const qc = useQueryClient()
+  const { data: docTypes = [] } = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [title, setTitle] = useState('')
@@ -588,7 +589,8 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
           onChange={e => setDocType(e.target.value)}
           className="flex-1 bg-zinc-700 border border-zinc-600 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-brand-400"
         >
-          {DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          {docTypes.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+          {docTypes.length === 0 && DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
         <input
           type="number"
@@ -614,6 +616,94 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
         </button>
       </div>
     </div>
+  )
+}
+
+// ── DocLinkExistingModal ──────────────────────────────────────────────────────
+
+function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
+  personId: number
+  linkedDocIds: Set<number>
+  onClose: () => void
+}) {
+  const qc = useQueryClient()
+  const { data: allDocs = [] } = useQuery<PersonDocument[]>({ queryKey: ['docs-all'], queryFn: api.documents.listAll })
+  const { data: types = [] }   = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
+  const [search, setSearch] = useState('')
+  const [linking, setLinking] = useState<number | null>(null)
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [onClose])
+
+  const typeMap = new Map(types.map(t => [t.key, t.label]))
+  const available = allDocs.filter(d => !linkedDocIds.has(d.id))
+  const filtered = search
+    ? available.filter(d => [d.title, d.filename, ...(d.persons.map(p => p.name))].filter(Boolean).join(' ').toLowerCase().includes(search.toLowerCase()))
+    : available
+
+  async function link(docId: number) {
+    setLinking(docId)
+    try {
+      await api.documents.linkPerson(docId, personId)
+      qc.invalidateQueries({ queryKey: ['person-docs', personId] })
+      qc.invalidateQueries({ queryKey: ['docs-all'] })
+      onClose()
+    } finally {
+      setLinking(null)
+    }
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl w-[440px] max-w-[92vw] max-h-[70vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-zinc-800 shrink-0">
+          <p className="text-sm font-semibold text-zinc-100">Link existing document</p>
+          <button onClick={onClose} className="w-7 h-7 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
+          </button>
+        </div>
+        <div className="px-4 py-2 border-b border-zinc-800 shrink-0">
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search documents…"
+            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
+        </div>
+        <div className="flex-1 overflow-y-auto divide-y divide-zinc-800/60">
+          {filtered.length === 0 ? (
+            <p className="px-4 py-4 text-xs text-zinc-600 italic">
+              {available.length === 0 ? 'All documents are already linked' : 'No documents found'}
+            </p>
+          ) : filtered.map(doc => (
+            <button key={doc.id} onClick={() => link(doc.id)} disabled={linking === doc.id}
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-zinc-800 transition-colors disabled:opacity-60">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-zinc-200 truncate">{doc.title || doc.filename}</p>
+                <p className="text-[10px] text-zinc-500">
+                  {typeMap.get(doc.doc_type ?? '') ?? doc.doc_type ?? 'Document'}
+                  {doc.year ? ` · ${doc.year}` : ''}
+                </p>
+                {doc.persons.length > 0 && (
+                  <p className="text-[10px] text-zinc-600 truncate">{doc.persons.map(p => p.name).join(', ')}</p>
+                )}
+              </div>
+              {linking === doc.id ? (
+                <svg className="w-4 h-4 animate-spin text-brand-400 shrink-0" fill="none" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth={3} strokeOpacity={0.3}/>
+                  <path fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a10 10 0 100 10h-2A8 8 0 014 12z"/>
+                </svg>
+              ) : (
+                <svg className="w-4 h-4 text-zinc-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.19 8.688a4.5 4.5 0 011.242 7.244l-4.5 4.5a4.5 4.5 0 01-6.364-6.364l1.757-1.757m13.35-.622l1.757-1.757a4.5 4.5 0 00-6.364-6.364l-4.5 4.5a4.5 4.5 0 001.242 7.244"/>
+                </svg>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body
   )
 }
 
@@ -660,8 +750,9 @@ function DocPreviewModal({ doc, onClose }: { doc: PersonDocument; onClose: () =>
 
 // ── DocRow ────────────────────────────────────────────────────────────────────
 
-function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }) {
+function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDelete: () => void; onNavToDocument?: (docId: number, editMode?: boolean) => void }) {
   const qc = useQueryClient()
+  const { data: docTypes = [] } = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
   const [editing, setEditing] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const [title, setTitle] = useState(doc.title ?? '')
@@ -698,7 +789,8 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
   }
 
   const displayName = doc.title || doc.filename
-  const typeLabel = DOC_TYPE_LABELS[doc.doc_type ?? ''] ?? doc.doc_type
+  const typeMap = new Map(docTypes.map(t => [t.key, t.label]))
+  const typeLabel = typeMap.get(doc.doc_type ?? '') ?? DOC_TYPE_LABELS[doc.doc_type ?? ''] ?? doc.doc_type
 
   if (editing) {
     return (
@@ -716,7 +808,8 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
             onChange={e => setDocType(e.target.value)}
             className="flex-1 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-brand-400"
           >
-            {DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            {docTypes.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+            {docTypes.length === 0 && DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
           <input
             type="number"
@@ -757,7 +850,12 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
           <DocIcon mime={doc.mime_type} />
         )}
         <div className="flex-1 min-w-0">
-          {canPreview ? (
+          {onNavToDocument ? (
+            <button onClick={() => onNavToDocument(doc.id)}
+              className="text-xs text-zinc-200 hover:text-brand-300 truncate block leading-snug transition-colors text-left w-full">
+              {displayName}
+            </button>
+          ) : canPreview ? (
             <button onClick={() => setPreviewing(true)}
               className="text-xs text-zinc-200 hover:text-brand-300 truncate block leading-snug transition-colors text-left w-full">
               {displayName}
@@ -813,7 +911,7 @@ function DocRow({ doc, onDelete }: { doc: PersonDocument; onDelete: () => void }
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
           </a>
-          <button onClick={() => setEditing(true)} title="Edit"
+          <button onClick={() => onNavToDocument ? onNavToDocument(doc.id, true) : setEditing(true)} title="Edit"
             className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
@@ -1030,6 +1128,7 @@ interface Props {
   onClose: () => void
   onNavigateTo: (id: number) => void
   onNavToEvent?: (eventId: number) => void
+  onNavToDocument?: (docId: number, editMode?: boolean) => void
   onDeleted?: () => void
 }
 
@@ -1049,7 +1148,7 @@ function detailsFromPerson(p: PersonFull) {
   }
 }
 
-export default function PersonPanel({ person, persons, relations, onClose, onNavigateTo, onNavToEvent, onDeleted }: Props) {
+export default function PersonPanel({ person, persons, relations, onClose, onNavigateTo, onNavToEvent, onNavToDocument, onDeleted }: Props) {
   const qc = useQueryClient()
   const [visible, setVisible] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -1094,6 +1193,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
   // documents
   const [showUploadForm, setShowUploadForm] = useState(false)
+  const [showLinkForm, setShowLinkForm] = useState(false)
 
   useEffect(() => {
     const t = requestAnimationFrame(() => setVisible(true))
@@ -1976,13 +2076,29 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
                 Documents{docs.length > 0 ? ` (${docs.length})` : ''}
               </h3>
-              <button
-                onClick={() => setShowUploadForm(s => !s)}
-                className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
-              >
-                {showUploadForm ? 'Cancel' : '+ Upload'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setShowLinkForm(true); setShowUploadForm(false) }}
+                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
+                >
+                  + Link
+                </button>
+                <button
+                  onClick={() => setShowUploadForm(s => !s)}
+                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
+                >
+                  {showUploadForm ? 'Cancel' : '+ Upload'}
+                </button>
+              </div>
             </div>
+
+            {showLinkForm && (
+              <DocLinkExistingModal
+                personId={person.id}
+                linkedDocIds={new Set(docs.map(d => d.id))}
+                onClose={() => setShowLinkForm(false)}
+              />
+            )}
 
             {showUploadForm && (
               <DocUploadForm personId={person.id} onDone={() => setShowUploadForm(false)} />
@@ -1997,7 +2113,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             ) : (
               <div className="divide-y divide-zinc-800/60">
                 {docs.map(doc => (
-                  <DocRow key={doc.id} doc={doc} onDelete={() => deleteDocMut.mutate(doc.id)} />
+                  <DocRow key={doc.id} doc={doc} onDelete={() => deleteDocMut.mutate(doc.id)} onNavToDocument={onNavToDocument} />
                 ))}
               </div>
             )}

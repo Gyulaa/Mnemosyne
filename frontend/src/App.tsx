@@ -6,6 +6,7 @@ import ConnectionsTab from './components/ConnectionsTab'
 import ImagesTab from './components/ImagesTab'
 import FamilyTreeTab from './components/FamilyTreeTab'
 import EventsTab from './components/EventsTab'
+import DocumentsTab from './components/DocumentsTab'
 import ProjectSwitcher from './components/ProjectSwitcher'
 import SearchPalette from './components/SearchPalette'
 import DocumentViewer from './components/DocumentViewer'
@@ -15,15 +16,16 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 5_000 } },
 })
 
-type Tab = 'scan' | 'clusters' | 'images' | 'events' | 'connections' | 'genealogy'
+type Tab = 'scan' | 'clusters' | 'images' | 'events' | 'genealogy' | 'documents' | 'connections'
 
 const TAB_LABELS: Record<Tab, string> = {
   scan: 'Scan',
   clusters: 'Clusters',
   images: 'Images',
   events: 'Events',
-  connections: 'Connections',
   genealogy: 'Genealogy',
+  documents: 'Documents',
+  connections: 'Connections',
 }
 
 export default function App() {
@@ -33,6 +35,7 @@ export default function App() {
   const [clusterNavTarget, setClusterNavTarget] = useState<{ clusterId: number; key: number } | null>(null)
   const [genealogyNavTarget, setGenealogyNavTarget] = useState<{ personId: number; key: number } | null>(null)
   const [eventNavTarget, setEventNavTarget] = useState<{ eventId: number; key: number } | null>(null)
+  const [documentsNavTarget, setDocumentsNavTarget] = useState<{ docId: number; editMode?: boolean; key: number } | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
@@ -83,6 +86,11 @@ export default function App() {
   function navToEvent(eventId: number) {
     setTab('events')
     setEventNavTarget({ eventId, key: Date.now() })
+  }
+
+  function navToDocument(docId: number, editMode = false) {
+    setTab('documents')
+    setDocumentsNavTarget({ docId, editMode, key: Date.now() })
   }
 
   function onExportStart() {
@@ -168,11 +176,14 @@ export default function App() {
         <main className={[
           'flex-1 min-h-0',
           tab === 'genealogy' ? 'overflow-hidden' : 'overflow-auto',
+          tab === 'documents' ? 'overflow-hidden' : '',
         ].join(' ')}>
           {tab === 'genealogy' ? (
-            <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} onNavToEvent={navToEvent} />
+            <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} onNavToEvent={navToEvent} onNavToDocument={navToDocument} />
           ) : tab === 'events' ? (
             <EventsTab navTarget={eventNavTarget} onNavConsumed={() => setEventNavTarget(null)} />
+          ) : tab === 'documents' ? (
+            <DocumentsTab onNavToGenealogy={navToGenealogy} navTarget={documentsNavTarget} onNavConsumed={() => setDocumentsNavTarget(null)} />
           ) : (
             <div className={tab === 'connections' ? 'px-4 py-4' : 'max-w-6xl mx-auto px-6 py-8'}>
               {tab === 'scan'        ? <ScanTab /> :

@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage
 from . import scanner as scanner_mod
 from . import clusterer
 from . import export_utils
@@ -1384,6 +1384,10 @@ def _doc_dict(d: "DBDocument") -> dict:
         "description": d.description,
         "created_at": d.created_at,
         "source_id": d.source.id if d.source else None,
+        "persons": [
+            {"id": dp.person_id, "name": dp.person.name if dp.person else None}
+            for dp in (d.linked_persons or [])
+        ],
     }
 
 
@@ -1716,7 +1720,14 @@ def list_documents(person_id: int, db: Session = Depends(get_db)):
     p = db.get(DBPerson, person_id)
     if not p:
         raise HTTPException(404, "Person not found")
-    docs = db.query(DBDocument).filter(DBDocument.person_id == person_id).order_by(DBDocument.year, DBDocument.created_at).all()
+    # Query via junction table so all documents linked to this person are returned
+    docs = (
+        db.query(DBDocument)
+        .join(DBDocumentPerson, DBDocumentPerson.document_id == DBDocument.id)
+        .filter(DBDocumentPerson.person_id == person_id)
+        .order_by(DBDocument.year, DBDocument.created_at)
+        .all()
+    )
     return [_doc_dict(d) for d in docs]
 
 
@@ -1752,9 +1763,88 @@ async def upload_document(
         created_at=datetime.now().isoformat(),
     )
     db.add(doc)
+    db.flush()
+    # Also insert into junction table
+    db.add(DBDocumentPerson(document_id=doc.id, person_id=person_id))
     db.commit()
     db.refresh(doc)
     return _doc_dict(doc)
+
+
+@app.post("/api/documents/{doc_id}/persons/{person_id}", status_code=201)
+def link_person_to_document(doc_id: int, person_id: int, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if not db.get(DBPerson, person_id):
+        raise HTTPException(404, "Person not found")
+    existing = db.get(DBDocumentPerson, (doc_id, person_id))
+    if not existing:
+        db.add(DBDocumentPerson(document_id=doc_id, person_id=person_id))
+        db.commit()
+        db.refresh(d)
+    return _doc_dict(d)
+
+
+@app.delete("/api/documents/{doc_id}/persons/{person_id}")
+def unlink_person_from_document(doc_id: int, person_id: int, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    dp = db.get(DBDocumentPerson, (doc_id, person_id))
+    if dp:
+        db.delete(dp)
+        db.commit()
+        db.refresh(d)
+    return _doc_dict(d)
+
+
+# ── Document types ─────────────────────────────────────────────────────────────
+
+@app.get("/api/document-types")
+def list_document_types(db: Session = Depends(get_db)):
+    types = db.query(DBDocumentType).order_by(DBDocumentType.sort_order, DBDocumentType.label).all()
+    return [{"id": t.id, "key": t.key, "label": t.label, "sort_order": t.sort_order} for t in types]
+
+
+@app.post("/api/document-types", status_code=201)
+def create_document_type(body: dict, db: Session = Depends(get_db)):
+    key = (body.get("key") or "").strip()
+    label = (body.get("label") or "").strip()
+    if not key or not label:
+        raise HTTPException(400, "key and label are required")
+    existing = db.query(DBDocumentType).filter(DBDocumentType.key == key).first()
+    if existing:
+        raise HTTPException(409, "A type with this key already exists")
+    max_order = db.query(func.max(DBDocumentType.sort_order)).scalar() or 0
+    t = DBDocumentType(key=key, label=label, sort_order=max_order + 1)
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return {"id": t.id, "key": t.key, "label": t.label, "sort_order": t.sort_order}
+
+
+@app.patch("/api/document-types/{type_id}")
+def update_document_type(type_id: int, body: dict, db: Session = Depends(get_db)):
+    t = db.get(DBDocumentType, type_id)
+    if not t:
+        raise HTTPException(404, "Document type not found")
+    if "label" in body and body["label"]:
+        t.label = body["label"].strip()
+    if "sort_order" in body:
+        t.sort_order = int(body["sort_order"])
+    db.commit()
+    return {"id": t.id, "key": t.key, "label": t.label, "sort_order": t.sort_order}
+
+
+@app.delete("/api/document-types/{type_id}")
+def delete_document_type(type_id: int, db: Session = Depends(get_db)):
+    t = db.get(DBDocumentType, type_id)
+    if not t:
+        raise HTTPException(404, "Document type not found")
+    db.delete(t)
+    db.commit()
+    return {"ok": True}
 
 
 @app.patch("/api/documents/{doc_id}")

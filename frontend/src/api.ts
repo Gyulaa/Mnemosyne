@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, Source, Citation, PersonNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus } from './types'
 
 const BASE = '/api'
 
@@ -243,6 +243,17 @@ export const api = {
       `${BASE}/documents/${id}/file${download ? '?dl=1' : ''}`,
     promoteToSource: (docId: number, title?: string, sourceType?: string) =>
       post<Source>(`${BASE}/documents/${docId}/promote-to-source`, { title, source_type: sourceType }),
+    linkPerson: (docId: number, personId: number) =>
+      post<PersonDocument>(`${BASE}/documents/${docId}/persons/${personId}`, {}),
+    unlinkPerson: (docId: number, personId: number) =>
+      fetchJson<PersonDocument>(`${BASE}/documents/${docId}/persons/${personId}`, { method: 'DELETE' }),
+  },
+  documentTypes: {
+    list: () => fetchJson<DocumentType[]>(`${BASE}/document-types`),
+    create: (key: string, label: string) => post<DocumentType>(`${BASE}/document-types`, { key, label }),
+    update: (id: number, fields: Partial<Pick<DocumentType, 'label' | 'sort_order'>>) =>
+      patch<DocumentType>(`${BASE}/document-types/${id}`, fields),
+    delete: (id: number) => fetchJson<{ ok: boolean }>(`${BASE}/document-types/${id}`, { method: 'DELETE' }),
   },
   sources: {
     list: () => fetchJson<Source[]>(`${BASE}/sources`),

@@ -45,19 +45,14 @@ interface Props {
 
 export default function DocumentViewer({ doc, onClose, onNavToPerson }: Props) {
   const { data: persons = [] } = useQuery<PersonFull[]>({ queryKey: ['persons'], queryFn: api.persons.list })
-  const person = persons.find(p => p.id === doc.person_id)
+  const { data: types = [] }   = useQuery({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
+  const typeMap = new Map(types.map(t => [t.key, t.label]))
 
   const fileUrl = api.documents.fileUrl(doc.id)
   const displayName = doc.title || doc.filename
-  const typeLabel = DOC_TYPE_LABELS[doc.doc_type ?? ''] ?? doc.doc_type ?? 'Document'
+  const typeLabel = typeMap.get(doc.doc_type ?? '') ?? DOC_TYPE_LABELS[doc.doc_type ?? ''] ?? doc.doc_type ?? 'Document'
 
-  const by = person?.birth_date
-    ? person.birth_date.slice(0, 4)
-    : person?.birth_year != null ? String(person.birth_year) : null
-  const dy = person?.death_date
-    ? person.death_date.slice(0, 4)
-    : person?.death_year != null ? String(person.death_year) : null
-  const years = [by, dy].filter(Boolean).join('–')
+  const linkedPersons = (doc.persons ?? []).map(lp => persons.find(p => p.id === lp.id)).filter(Boolean) as PersonFull[]
 
   return (
     <div
@@ -131,27 +126,39 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson }: Props) {
               </div>
             )}
 
-            {/* Associated person */}
+            {/* Linked persons */}
             <div>
-              <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2">Associated person</p>
-              {person ? (
-                <button
-                  onClick={() => { onClose(); onNavToPerson(person.id) }}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 hover:border-zinc-600 rounded-xl transition-colors text-left group"
-                >
-                  <div className="w-10 h-10 rounded-full bg-zinc-700 border border-zinc-600 shrink-0 overflow-hidden flex items-center justify-center">
-                    <PersonAvatar person={person} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-zinc-100 truncate">{person.name ?? '(névtelen)'}</p>
-                    {years && <p className="text-xs text-zinc-500 tabular-nums">{years}</p>}
-                  </div>
-                  <svg className="w-4 h-4 text-zinc-600 group-hover:text-zinc-400 shrink-0 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
+              <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2">
+                Linked persons {linkedPersons.length > 1 ? `(${linkedPersons.length})` : ''}
+              </p>
+              {linkedPersons.length > 0 ? (
+                <div className="space-y-1.5">
+                  {linkedPersons.map(person => {
+                    const by = person.birth_date ? person.birth_date.slice(0, 4) : person.birth_year != null ? String(person.birth_year) : null
+                    const dy = person.death_date ? person.death_date.slice(0, 4) : person.death_year != null ? String(person.death_year) : null
+                    const years = [by, dy].filter(Boolean).join('–')
+                    return (
+                      <button
+                        key={person.id}
+                        onClick={() => { onClose(); onNavToPerson(person.id) }}
+                        className="w-full flex items-center gap-3 px-3 py-2 bg-zinc-800/60 hover:bg-zinc-800 border border-zinc-700/60 hover:border-zinc-600 rounded-xl transition-colors text-left group"
+                      >
+                        <div className="w-9 h-9 rounded-full bg-zinc-700 border border-zinc-600 shrink-0 overflow-hidden flex items-center justify-center">
+                          <PersonAvatar person={person} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-zinc-100 truncate">{person.name ?? '(unnamed)'}</p>
+                          {years && <p className="text-xs text-zinc-500 tabular-nums">{years}</p>}
+                        </div>
+                        <svg className="w-4 h-4 text-zinc-600 group-hover:text-zinc-400 shrink-0 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    )
+                  })}
+                </div>
               ) : (
-                <p className="text-xs text-zinc-500 italic">Person not found</p>
+                <p className="text-xs text-zinc-500 italic">No persons linked</p>
               )}
             </div>
 

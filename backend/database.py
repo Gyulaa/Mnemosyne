@@ -100,12 +100,30 @@ class Document(Base):
     filename = Column(String, nullable=False)       # eredeti fájlnév (megjelenítésre)
     mime_type = Column(String, nullable=True)
     title = Column(String, nullable=True)
-    doc_type = Column(String, nullable=True)        # birth_cert | death_cert | ...
+    doc_type = Column(String, nullable=True)        # key from document_types
     year = Column(Integer, nullable=True)
     description = Column(String, nullable=True)
     created_at = Column(String, nullable=True)      # ISO timestamp
     person = relationship("Person", back_populates="documents")
     source = relationship("Source", back_populates="document", uselist=False)
+    linked_persons = relationship("DocumentPerson", back_populates="document", cascade="all, delete-orphan")
+
+
+class DocumentPerson(Base):
+    __tablename__ = "document_persons"
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True)
+    person_id   = Column(Integer, ForeignKey("persons.id",   ondelete="CASCADE"), primary_key=True)
+    role        = Column(String, nullable=True)
+    document    = relationship("Document", back_populates="linked_persons")
+    person      = relationship("Person")
+
+
+class DocumentType(Base):
+    __tablename__ = "document_types"
+    id         = Column(Integer, primary_key=True, index=True)
+    key        = Column(String, nullable=False, unique=True)
+    label      = Column(String, nullable=False)
+    sort_order = Column(Integer, nullable=False, default=0)
 
 
 class PersonNote(Base):
@@ -401,4 +419,59 @@ def init_db_schema(engine):
             except Exception:
                 pass
             conn.execute(text("UPDATE schema_version SET version = 2"))
+            conn.commit()
+
+        # v2 → v3: document_types + document_persons (multi-person documents)
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 3:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS document_types (
+                    id         INTEGER PRIMARY KEY,
+                    key        TEXT NOT NULL UNIQUE,
+                    label      TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS document_persons (
+                    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    person_id   INTEGER NOT NULL REFERENCES persons(id)   ON DELETE CASCADE,
+                    role        TEXT,
+                    PRIMARY KEY (document_id, person_id)
+                )
+            """))
+            conn.commit()
+            # Pre-populate default document types
+            default_types = [
+                ("birth_cert",    "Birth certificate",    0),
+                ("death_cert",    "Death certificate",    1),
+                ("marriage_cert", "Marriage certificate", 2),
+                ("baptism",       "Baptism record",       3),
+                ("burial_record", "Burial record",        4),
+                ("passport",      "Passport",             5),
+                ("military",      "Military record",      6),
+                ("land_record",   "Land record",          7),
+                ("will",          "Will / Testament",     8),
+                ("letter",        "Letter",               9),
+                ("photo",         "Photograph",           10),
+                ("other",         "Document",             11),
+            ]
+            for key, label, order in default_types:
+                try:
+                    conn.execute(text(
+                        "INSERT OR IGNORE INTO document_types (key, label, sort_order) VALUES (:k, :l, :o)"
+                    ), {"k": key, "l": label, "o": order})
+                except Exception:
+                    pass
+            conn.commit()
+            # Migrate existing documents: copy person_id → document_persons
+            try:
+                conn.execute(text("""
+                    INSERT OR IGNORE INTO document_persons (document_id, person_id)
+                    SELECT id, person_id FROM documents WHERE person_id IS NOT NULL
+                """))
+            except Exception:
+                pass
+            conn.commit()
+            conn.execute(text("UPDATE schema_version SET version = 3"))
             conn.commit()
