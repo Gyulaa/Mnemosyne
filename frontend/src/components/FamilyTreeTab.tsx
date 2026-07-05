@@ -498,7 +498,7 @@ export default function FamilyTreeTab({
 
   const unlinkedCount = persons.filter(p => !linkedIds.has(p.id)).length
 
-  async function handleTreeExport({ name, excludeLiving }: { name: string; includeGenealogy: boolean; excludeLiving: boolean }) {
+  async function handleTreeExport({ name, excludeLiving, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, includeFaceless }: { name: string; includeGenealogy: boolean; excludeLiving: boolean; includeNotes: boolean; includeSources: boolean; includeEvents: boolean; includeDocuments: boolean; includeImages: boolean; includeFaceless: boolean }) {
     if (!activeGroup || exporting) return
     setShowExportModal(false)
     setExporting(true)
@@ -510,7 +510,7 @@ export default function FamilyTreeTab({
           .filter(p => p.death_year != null || p.death_date != null)
           .map(p => p.id)
       }
-      const blob = await api.project.exportZip(undefined, name, true, personIds)
+      const blob = await api.project.exportZip(undefined, name, true, personIds, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url

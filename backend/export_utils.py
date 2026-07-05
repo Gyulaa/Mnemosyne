@@ -27,6 +27,32 @@ def _vacuum_copy(source: Path, dest: Path) -> None:
         gc.collect()
 
 
+def _delete_images(conn: sqlite3.Connection, keep_subquery: str) -> None:
+    """Delete images (and dependent rows) that don't match keep_subquery."""
+    conn.execute(f"DELETE FROM event_images WHERE image_id NOT IN ({keep_subquery})")
+    conn.execute(f"DELETE FROM faces WHERE image_id NOT IN ({keep_subquery})")
+    conn.execute(f"DELETE FROM images WHERE id NOT IN ({keep_subquery})")
+
+
+def _delete_persons(conn: sqlite3.Connection, where_clause: str) -> None:
+    """Delete persons matching where_clause after cleaning up all FK child tables."""
+    conn.execute(f"""
+        DELETE FROM note_citations
+        WHERE note_id IN (SELECT id FROM person_notes WHERE person_id IN (SELECT id FROM persons WHERE {where_clause}))
+    """)
+    conn.execute(f"DELETE FROM person_notes WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
+    conn.execute(f"DELETE FROM citations WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
+    conn.execute(f"DELETE FROM event_persons WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
+    conn.execute(f"DELETE FROM document_persons WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
+    conn.execute(f"DELETE FROM documents WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
+    conn.execute(f"""
+        DELETE FROM relations
+        WHERE person_a_id IN (SELECT id FROM persons WHERE {where_clause})
+           OR person_b_id IN (SELECT id FROM persons WHERE {where_clause})
+    """)
+    conn.execute(f"DELETE FROM persons WHERE {where_clause}")
+
+
 def build_export_db(
     source_db_path: Path,
     dest_db_path: Path,
@@ -34,6 +60,11 @@ def build_export_db(
     include_genealogy: bool = True,
     person_ids: list[int] | None = None,
     include_faceless: bool = True,
+    include_notes: bool = True,
+    include_sources: bool = True,
+    include_events: bool = True,
+    include_documents: bool = True,
+    include_images: bool = True,
 ) -> dict[int, tuple[str, str]]:
     """
     Copy source DB to dest, optionally filter to specific cluster IDs, rewrite image
@@ -59,8 +90,7 @@ def build_export_db(
             if family_cluster_ids:
                 cids_str = ",".join(str(x) for x in family_cluster_ids)
                 keep_images = f"SELECT DISTINCT image_id FROM faces WHERE cluster_id IN ({cids_str})"
-                conn.execute(f"DELETE FROM faces WHERE image_id NOT IN ({keep_images})")
-                conn.execute(f"DELETE FROM images WHERE id NOT IN ({keep_images})")
+                _delete_images(conn, keep_images)
 
                 noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
                 if not noise_row:
@@ -79,29 +109,23 @@ def build_export_db(
                 conn.execute(f"DELETE FROM clusters WHERE id NOT IN ({cids_str}) AND label != -1")
             else:
                 # No linked clusters — no images to include.
+                conn.execute("DELETE FROM event_images")
                 conn.execute("DELETE FROM faces")
                 conn.execute("DELETE FROM images")
                 conn.execute("DELETE FROM clusters WHERE label != -1")
 
             # Filter persons and relations to the selected family group.
-            conn.execute(f"""
-                DELETE FROM relations
-                WHERE person_a_id NOT IN ({pids_str})
-                   OR person_b_id NOT IN ({pids_str})
-            """)
-            conn.execute(f"DELETE FROM persons WHERE id NOT IN ({pids_str})")
+            _delete_persons(conn, f"id NOT IN ({pids_str})")
             conn.commit()
 
         elif cluster_ids is not None and len(cluster_ids) > 0:
             ids_str = ",".join(str(x) for x in cluster_ids)
             keep_images = f"SELECT DISTINCT image_id FROM faces WHERE cluster_id IN ({ids_str})"
 
-            # 1. Faces reference images — delete faces first to satisfy FK.
-            conn.execute(f"DELETE FROM faces WHERE image_id NOT IN ({keep_images})")
-            # 2. Delete images that have no face from selected clusters.
-            conn.execute(f"DELETE FROM images WHERE id NOT IN ({keep_images})")
+            # 1. Remove event_images + faces for excluded images, then the images themselves.
+            _delete_images(conn, keep_images)
 
-            # 3. Ensure noise cluster exists — unselected faces move here so
+            # 2. Ensure noise cluster exists — unselected faces move here so
             #    their embeddings survive for re-clustering in the new collection.
             noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
             if not noise_row:
@@ -109,7 +133,7 @@ def build_export_db(
                 noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
             noise_id = noise_row[0]
 
-            # 4. Move (not delete) faces from unselected named clusters to noise.
+            # 3. Move (not delete) faces from unselected named clusters to noise.
             conn.execute(f"""
                 UPDATE faces
                 SET cluster_id = {noise_id},
@@ -119,50 +143,62 @@ def build_export_db(
                 )
             """)
 
-            # 5. Delete unselected named clusters (faces are now in noise).
+            # 4. Delete unselected named clusters (faces are now in noise).
             conn.execute(f"DELETE FROM clusters WHERE id NOT IN ({ids_str}) AND label != -1")
 
             if include_genealogy:
                 # Keep only persons linked to the remaining (selected) clusters.
-                # Relations must be deleted first (they reference persons via FK).
-                conn.execute("""
-                    DELETE FROM relations
-                    WHERE person_a_id NOT IN (
-                        SELECT person_id FROM clusters WHERE person_id IS NOT NULL)
-                       OR person_b_id NOT IN (
-                        SELECT person_id FROM clusters WHERE person_id IS NOT NULL)
-                """)
-                conn.execute("""
-                    DELETE FROM persons
-                    WHERE id NOT IN (
-                        SELECT person_id FROM clusters WHERE person_id IS NOT NULL
-                    )
-                """)
+                _delete_persons(conn, "id NOT IN (SELECT person_id FROM clusters WHERE person_id IS NOT NULL)")
             else:
                 # clusters.person_id references persons, so unlink before deleting.
-                conn.execute("DELETE FROM relations")
                 conn.execute("UPDATE clusters SET person_id = NULL")
-                conn.execute("DELETE FROM persons")
+                _delete_persons(conn, "1=1")  # delete all persons
             conn.commit()
 
         elif not include_genealogy:
             # Full-project export without genealogy.
-            conn.execute("DELETE FROM relations")
             conn.execute("UPDATE clusters SET person_id = NULL")
-            conn.execute("DELETE FROM persons")
+            _delete_persons(conn, "1=1")
             conn.commit()
 
-        if not include_faceless:
-            conn.execute(
-                "DELETE FROM images WHERE id NOT IN (SELECT DISTINCT image_id FROM faces)"
-            )
+        # ── Images ───────────────────────────────────────────────────────────────
+        if not include_images:
+            _delete_images(conn, "0")   # delete all image files + faces
+            conn.commit()
+        elif not include_faceless:
+            _delete_images(conn, "SELECT DISTINCT image_id FROM faces")
             conn.commit()
 
-        # Remove events whose participants were all removed during filtering.
-        conn.execute(
-            "DELETE FROM events WHERE id NOT IN (SELECT DISTINCT event_id FROM event_persons)"
-        )
-        conn.commit()
+        # ── Notes ─────────────────────────────────────────────────────────────
+        if not include_notes:
+            conn.execute("DELETE FROM note_citations")
+            conn.execute("DELETE FROM person_notes")
+            conn.commit()
+
+        # ── Sources & Citations ───────────────────────────────────────────────
+        if not include_sources:
+            conn.execute("DELETE FROM note_citations")
+            conn.execute("DELETE FROM citations")
+            conn.execute("DELETE FROM sources")
+            conn.commit()
+
+        # ── Events ────────────────────────────────────────────────────────────
+        if not include_events:
+            conn.execute("DELETE FROM event_images")
+            conn.execute("DELETE FROM event_persons")
+            conn.execute("DELETE FROM events")
+            conn.commit()
+        else:
+            # Remove events that lost all participants during person filtering.
+            conn.execute("DELETE FROM event_images WHERE event_id NOT IN (SELECT DISTINCT event_id FROM event_persons)")
+            conn.execute("DELETE FROM events WHERE id NOT IN (SELECT DISTINCT event_id FROM event_persons)")
+            conn.commit()
+
+        # ── Documents ─────────────────────────────────────────────────────────
+        if not include_documents:
+            conn.execute("DELETE FROM document_persons")
+            conn.execute("DELETE FROM documents")
+            conn.commit()
 
         rows = conn.execute("SELECT id, path FROM images").fetchall()
         path_map: dict[int, tuple[str, str]] = {}
@@ -187,6 +223,11 @@ def create_project_zip(
     include_genealogy: bool = True,
     person_ids: list[int] | None = None,
     include_faceless: bool = True,
+    include_notes: bool = True,
+    include_sources: bool = True,
+    include_events: bool = True,
+    include_documents: bool = True,
+    include_images: bool = True,
 ) -> io.BytesIO:
     """Build a self-contained project ZIP (DB + images + documents) and return it as a BytesIO."""
     import tempfile
@@ -199,7 +240,12 @@ def create_project_zip(
     # OS clean the temp dir later is safe since the data is already in `buf`.
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         tmp_db = Path(tmpdir) / "project.db"
-        path_map = build_export_db(source_db_path, tmp_db, cluster_ids, include_genealogy, person_ids, include_faceless)
+        path_map = build_export_db(
+            source_db_path, tmp_db, cluster_ids,
+            include_genealogy, person_ids, include_faceless,
+            include_notes, include_sources, include_events,
+            include_documents, include_images,
+        )
 
         # Collect document files that are still referenced in the exported DB.
         doc_stored_names: list[str] = []

@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats } from './types'
 
 const BASE = '/api'
 
@@ -96,13 +96,29 @@ export const api = {
     rename:   (id: string, name: string) => patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { name }),
     delete:   (id: string) =>
       fetchJson<{ ok: boolean; new_active: import('./types').Project | null }>(`${BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-    exportZip: async (clusterIds?: number[], name?: string, includeGenealogy = true, personIds?: number[], includeFaceless = true): Promise<Blob> => {
+    exportZip: async (
+      clusterIds?: number[],
+      name?: string,
+      includeGenealogy = true,
+      personIds?: number[],
+      includeFaceless = true,
+      includeNotes = true,
+      includeSources = true,
+      includeEvents = true,
+      includeDocuments = true,
+      includeImages = true,
+    ): Promise<Blob> => {
       const p = new URLSearchParams()
       if (clusterIds?.length) p.set('cluster_ids', clusterIds.join(','))
       if (personIds?.length) p.set('person_ids', personIds.join(','))
       if (name) p.set('name', name)
       if (!includeGenealogy) p.set('include_genealogy', 'false')
       if (!includeFaceless) p.set('include_faceless', 'false')
+      if (!includeNotes) p.set('include_notes', 'false')
+      if (!includeSources) p.set('include_sources', 'false')
+      if (!includeEvents) p.set('include_events', 'false')
+      if (!includeDocuments) p.set('include_documents', 'false')
+      if (!includeImages) p.set('include_images', 'false')
       const res = await fetch(`${BASE}/projects/export?${p}`)
       if (!res.ok) throw new Error(await res.text())
       return res.blob()
@@ -152,6 +168,27 @@ export const api = {
       const fd = new FormData()
       fd.append('file', file)
       const res = await fetch(`${BASE}/projects/import`, { method: 'POST', body: fd })
+      if (!res.ok) throw new Error(await res.text())
+      return res.json()
+    },
+    previewMerge: async (file: File): Promise<MergePreviewResponse> => {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch(`${BASE}/import/merge/preview`, { method: 'POST', body: fd })
+      if (!res.ok) throw new Error(await res.text())
+      return res.json()
+    },
+    confirmMerge: async (token: string, decisions: MergeDecision[], options: MergeOptions): Promise<MergeStats> => {
+      const res = await fetch(`${BASE}/import/merge/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, decisions, options }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      return res.json()
+    },
+    rollbackMerge: async (): Promise<{ ok: boolean; deleted: Record<string, number> }> => {
+      const res = await fetch(`${BASE}/import/gedcom/rollback`, { method: 'POST' })
       if (!res.ok) throw new Error(await res.text())
       return res.json()
     },
@@ -276,6 +313,7 @@ export const api = {
   },
   notes: {
     list: (personId: number) => fetchJson<PersonNote[]>(`${BASE}/persons/${personId}/notes`),
+    listAll: () => fetchJson<{ id: number; person_id: number; title: string | null; content: string }[]>(`${BASE}/notes`),
     create: (personId: number, fields: { title?: string; content?: string; sort_order?: number }) =>
       post<PersonNote>(`${BASE}/persons/${personId}/notes`, fields),
     update: (id: number, fields: { title?: string | null; content?: string; sort_order?: number }) =>

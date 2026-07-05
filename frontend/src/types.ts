@@ -325,6 +325,78 @@ export interface GedcomRollbackStatus {
   expires_in_seconds?: number
 }
 
+// ── ZIP merge import ──────────────────────────────────────────────────────────
+
+export type MergeAction = 'merge' | 'create' | 'skip'
+
+export interface MergeMatchSuggestion {
+  id: number
+  name: string | null
+  first_name: string | null
+  last_name: string | null
+  birth_year: number | null
+  confidence: 'exact' | 'high' | 'low'
+  match_source?: 'name' | 'family'
+  context_conflict?: boolean
+}
+
+export interface MergePersonEntry {
+  incoming_id: number
+  name: string | null
+  first_name: string | null
+  last_name: string | null
+  birth_year: number | null
+  death_year: number | null
+  sex: 'M' | 'F' | null
+  occupation: string | null
+  birth_place: string | null
+  suggested_match: MergeMatchSuggestion | null
+  action: MergeAction
+  merge_with_id: number | null
+  new_fields: Record<string, unknown>
+  context_status: 'confirmed' | 'conflict' | 'none'
+  incoming_family: { role: string; name: string; birth_year: number | null }[]
+}
+
+export interface MergePreviewResponse {
+  token: string
+  persons: MergePersonEntry[]
+  relations_count: number
+  events_count: number
+  documents_count: number
+  notes_count: number
+  sources_count?: number
+  images_count?: number
+  clusters_count?: number
+}
+
+export interface MergeDecision {
+  incoming_id: number
+  action: MergeAction
+  merge_with_id: number | null
+}
+
+export interface MergeOptions {
+  include_documents: boolean
+  include_events: boolean
+  include_sources: boolean
+  merge_strategy: 'fill_missing' | 'incoming_priority'
+  include_images: boolean
+}
+
+export interface MergeStats {
+  persons_created: number
+  persons_merged: number
+  persons_skipped: number
+  relations_added: number
+  events_added: number
+  documents_added: number
+  sources_added?: number
+  rollback_available?: boolean
+  images_imported?: number
+  clusters_linked?: number
+}
+
 export interface PersonEvent {
   id: number
   event_type: string   // custom|military|education|emigration|immigration|occupation|award|religious|travel
