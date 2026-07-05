@@ -350,10 +350,24 @@ function layoutDescendants(
     const spouses = clusterSpouses.get(primary) ?? []
     const n = 1 + spouses.length
     const step = NW + HG
+
+    // Sort spouses by shared-children count (desc): most-children spouse goes left of primary
+    const myChildSet = new Set(maps.childrenOf.get(primary) ?? [])
+    const sharedKids = (sid: number) =>
+      (maps.childrenOf.get(sid) ?? []).filter(c => myChildSet.has(c)).length
+    const sorted = [...spouses].sort((a, b) => sharedKids(b) - sharedKids(a))
+
+    // Spread symmetrically around primary: left half left, right half right.
+    // 1 spouse → same as before (left=0, primary at 0, spouse at 1).
+    // 2 spouses → [spouse0] [primary] [spouse1] — primary centred between them.
+    const leftCount = Math.floor(sorted.length / 2)
     // Span of cards without trailing gap: n*step - HG
     const clusterLeft = center - (n * step - HG) / 2
-    xMap.set(primary, clusterLeft + NW / 2)
-    spouses.forEach((sid, i) => xMap.set(sid, clusterLeft + (i + 1) * step + NW / 2))
+    xMap.set(primary, clusterLeft + leftCount * step + NW / 2)
+    sorted.slice(0, leftCount).forEach((sid, i) =>
+      xMap.set(sid, clusterLeft + (leftCount - 1 - i) * step + NW / 2))
+    sorted.slice(leftCount).forEach((sid, i) =>
+      xMap.set(sid, clusterLeft + (leftCount + 1 + i) * step + NW / 2))
     // Place child clusters left-to-right
     let cursor = left
     for (const c of getChildClusters(primary)) {
@@ -533,8 +547,24 @@ function buildProbandLayout(
   descendantDepth: number,
   lateralDepth: number,
   collapsedIds: Set<number>,
+  activeSpouseOf: Map<number, number> = new Map(),
 ): LayoutNode[] {
   const rawVisible = extractProbandContext(probandId, allPersons, allRelations, ancestorDepth, descendantDepth, lateralDepth)
+
+  // Remove inactive spouses from rawVisible BEFORE buildRelationMaps — the implicit
+  // co-parent derivation inside buildRelationMaps would otherwise re-add them as
+  // implicit spouses (co-parents of shared children), bypassing filteredRelations.
+  for (const [pid, activeSpouseId] of activeSpouseOf) {
+    if (!rawVisible.has(pid)) continue
+    for (const r of allRelations) {
+      if (r.type !== 'spouse') continue
+      const otherId = r.person_a_id === pid ? r.person_b_id
+                    : r.person_b_id === pid ? r.person_a_id
+                    : null
+      if (otherId != null && otherId !== activeSpouseId) rawVisible.delete(otherId)
+    }
+  }
+
   const rawMaps    = buildRelationMaps(allRelations, rawVisible)
   const visibleIds = applyCollapse(rawVisible, collapsedIds, rawMaps.childrenOf)
   const maps       = buildRelationMaps(allRelations, visibleIds)
@@ -911,14 +941,15 @@ export default function TreeView({
   const lateralDepth = 1
   const [collapsedIds,    setCollapsedIds]    = useState<Set<number>>(new Set())
   const [exportOpen,      setExportOpen]      = useState(false)
+  const [activeSpouseOf,  setActiveSpouseOf]  = useState<Map<number, number>>(new Map())
 
   // Auto-set proband when selection changes
   useEffect(() => {
     if (selectedId !== null) setProbandId(selectedId)
   }, [selectedId])
 
-  // Reset collapse when proband changes
-  useEffect(() => { setCollapsedIds(new Set()) }, [probandId])
+  // Reset collapse + active-spouse selection when proband changes
+  useEffect(() => { setCollapsedIds(new Set()); setActiveSpouseOf(new Map()) }, [probandId])
 
   // Full children map for collapse count (uses all relations, not just visible)
   const fullChildrenOf = useMemo(() => {
@@ -930,6 +961,48 @@ export default function TreeView({
     }
     return m
   }, [relations])
+
+  // All explicit spouse lists (unfiltered) — used to detect multi-spouse persons
+  const fullSpousesOf = useMemo(() => {
+    const m = new Map<number, number[]>()
+    for (const r of relations) {
+      if (r.type !== 'spouse') continue
+      if (!m.has(r.person_a_id)) m.set(r.person_a_id, [])
+      m.get(r.person_a_id)!.push(r.person_b_id)
+      if (!m.has(r.person_b_id)) m.set(r.person_b_id, [])
+      m.get(r.person_b_id)!.push(r.person_a_id)
+    }
+    return m
+  }, [relations])
+
+  // For each multi-spouse person: which spouse is currently shown.
+  // Default = the one with the most shared children; overridden by activeSpouseOf.
+  const effectiveActiveSpouseOf = useMemo(() => {
+    const result = new Map<number, number>(activeSpouseOf)
+    for (const [pid, spouseIds] of fullSpousesOf) {
+      if (spouseIds.length <= 1 || result.has(pid)) continue
+      const myChildren = new Set(
+        relations.filter(r => r.type === 'parent' && r.person_a_id === pid).map(r => r.person_b_id),
+      )
+      const sorted = [...spouseIds].sort((a, b) => {
+        const ca = relations.filter(r => r.type === 'parent' && r.person_a_id === a && myChildren.has(r.person_b_id)).length
+        const cb = relations.filter(r => r.type === 'parent' && r.person_a_id === b && myChildren.has(r.person_b_id)).length
+        return cb - ca
+      })
+      result.set(pid, sorted[0])
+    }
+    return result
+  }, [fullSpousesOf, activeSpouseOf, relations])
+
+  // Relations with inactive spouses filtered out — fed to the layout engine so
+  // each multi-spouse person appears with exactly one partner at a time.
+  const filteredRelations = useMemo(() => relations.filter(r => {
+    if (r.type !== 'spouse') return true
+    const { person_a_id: a, person_b_id: b } = r
+    if ((fullSpousesOf.get(a) ?? []).length > 1 && effectiveActiveSpouseOf.get(a) !== b) return false
+    if ((fullSpousesOf.get(b) ?? []).length > 1 && effectiveActiveSpouseOf.get(b) !== a) return false
+    return true
+  }), [relations, fullSpousesOf, effectiveActiveSpouseOf])
 
   const effectiveProbandId = probandId ?? persons[0]?.id ?? null
 
@@ -954,16 +1027,16 @@ export default function TreeView({
     if (!effectiveProbandId || !persons.length) return []
     return buildProbandLayout(
       effectiveProbandId, persons, relations,
-      ancestorDepth, descendantDepth, lateralDepth, collapsedIds,
+      ancestorDepth, descendantDepth, lateralDepth, collapsedIds, effectiveActiveSpouseOf,
     )
-  }, [effectiveProbandId, persons, relations, ancestorDepth, descendantDepth, lateralDepth, collapsedIds])
+  }, [effectiveProbandId, persons, relations, ancestorDepth, descendantDepth, lateralDepth, collapsedIds, effectiveActiveSpouseOf])
 
   const nodeMap = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
 
   const layoutRelations = useMemo(() => {
     const vis = new Set(nodes.map(n => n.id))
-    return relations.filter(r => vis.has(r.person_a_id) && vis.has(r.person_b_id))
-  }, [nodes, relations])
+    return filteredRelations.filter(r => vis.has(r.person_a_id) && vis.has(r.person_b_id))
+  }, [nodes, filteredRelations])
 
   const bounds = useMemo(() => {
     if (!nodes.length) return { minX: 0, minY: 0, canvasW: 800, canvasH: 500 }
@@ -978,8 +1051,8 @@ export default function TreeView({
   }, [nodes])
 
   const edges = useMemo(
-    () => buildEdges(nodes, layoutRelations, relations, bounds.minX, bounds.minY),
-    [nodes, layoutRelations, relations, bounds],
+    () => buildEdges(nodes, layoutRelations, filteredRelations, bounds.minX, bounds.minY),
+    [nodes, layoutRelations, filteredRelations, bounds],
   )
 
   function resetView() {
@@ -1163,6 +1236,38 @@ export default function TreeView({
                   title={`Expand — ${hiddenCount} persons hidden`}
                 >▶ +{hiddenCount}</button>
               )}
+
+              {/* Spouse cycling badge — shown when this person has 2+ explicit spouses */}
+              {(() => {
+                const allSpouses = fullSpousesOf.get(node.id) ?? []
+                if (allSpouses.length <= 1) return null
+                const activeId = effectiveActiveSpouseOf.get(node.id)
+                const activePerson = persons.find(p => p.id === activeId)
+                const idx = activeId != null ? allSpouses.indexOf(activeId) : 0
+                const firstName = activePerson?.name?.trim().split(/\s+/)[0] ?? '?'
+                const goPrev = (e: React.MouseEvent) => {
+                  e.stopPropagation()
+                  setActiveSpouseOf(m => new Map([...m, [node.id, allSpouses[(idx - 1 + allSpouses.length) % allSpouses.length]]]))
+                }
+                const goNext = (e: React.MouseEvent) => {
+                  e.stopPropagation()
+                  setActiveSpouseOf(m => new Map([...m, [node.id, allSpouses[(idx + 1) % allSpouses.length]]]))
+                }
+                return (
+                  <div
+                    data-node
+                    style={{ position: 'absolute', top: -26, left: '50%', transform: 'translateX(-50%)', zIndex: 20 }}
+                    className="flex items-center h-6 rounded-full bg-zinc-900 border border-violet-600/70 text-violet-300 shadow-lg whitespace-nowrap select-none"
+                  >
+                    <button onClick={goPrev} title="Previous spouse"
+                      className="px-1.5 h-full flex items-center text-[12px] hover:text-white transition-colors cursor-pointer rounded-l-full hover:bg-violet-900/50">←</button>
+                    <span className="text-[10px] font-medium px-0.5">{firstName}</span>
+                    <span className="text-[10px] text-violet-500 pr-0.5">{idx + 1}/{allSpouses.length}</span>
+                    <button onClick={goNext} title="Next spouse"
+                      className="px-1.5 h-full flex items-center text-[12px] hover:text-white transition-colors cursor-pointer rounded-r-full hover:bg-violet-900/50">→</button>
+                  </div>
+                )
+              })()}
             </div>
           )
         })}
