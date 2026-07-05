@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument, DocumentType, Source, Citation } from '../types'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
+import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
 import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
 import EventTimeline from './EventTimeline'
@@ -310,7 +311,7 @@ function PhotoGallery({ images, onOpen }: { images: ImageItem[]; onOpen: (i: num
 
 function Avatar({ person, size }: { person: PersonFull; size: number }) {
   const [err, setErr] = useState(false)
-  const init = (person.name ?? '?').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
+  const init = displayInitials(person)
   if (person.thumbnail_face_id && !err) {
     return (
       <img src={api.faceThumbnailUrl(person.thumbnail_face_id, size * 2)} alt=""
@@ -345,9 +346,11 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
   onClose: () => void
 }) {
   const qc = useQueryClient()
+  const { nameOrder } = useSettings()
   const [search, setSearch] = useState('')
   const [mode, setMode] = useState<'list' | 'create'>('list')
-  const [newName, setNewName] = useState('')
+  const [newParts, setNewParts] = useState<NameParts>({ title: '', first_name: '', last_name: '', middle_name: '', nickname: '' })
+  const [newBirthYear, setNewBirthYear] = useState('')
   const [creating, setCreating] = useState(false)
 
   const personById = useMemo(() => new Map(persons.map(p => [p.id, p])), [persons])
@@ -383,11 +386,19 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
     .slice(0, 12)
 
   async function handleCreate() {
-    const name = newName.trim()
-    if (creating || !name) return
+    const displayName = deriveDisplayName(newParts).trim()
+    if (creating || !displayName) return
     setCreating(true)
     try {
-      const newPerson = await api.persons.create({ name })
+      const newPerson = await api.persons.create({
+        name:        displayName,
+        first_name:  newParts.first_name.trim()  || null,
+        last_name:   newParts.last_name.trim()   || null,
+        middle_name: newParts.middle_name.trim() || null,
+        title:       newParts.title.trim()       || null,
+        nickname:    newParts.nickname.trim()    || null,
+        birth_year:  newBirthYear ? parseInt(newBirthYear) : null,
+      })
       await qc.invalidateQueries({ queryKey: ['persons'] })
       onSelect(newPerson)
       onClose()
@@ -397,6 +408,9 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
   }
 
   if (mode === 'create') {
+    const displayName = deriveDisplayName(newParts)
+    const INPUT = 'w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400'
+    const LABEL = 'block text-[10px] text-zinc-500 mb-0.5'
     return (
       <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
         <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-96 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
@@ -404,14 +418,32 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
             <button onClick={() => setMode('list')} className="text-zinc-500 hover:text-zinc-200 text-lg leading-none transition-colors">‹</button>
             <p className="text-xs font-semibold text-zinc-300">New person — {label.toLowerCase()}</p>
           </div>
-          <div className="px-4 py-4 space-y-3">
-            <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreate()}
-              placeholder="Full name..."
-              className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
-            <button onClick={handleCreate} disabled={creating || !newName.trim()}
+          <div className="px-4 py-4 space-y-2.5">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className={LABEL}>First name *</label>
+                <input autoFocus value={newParts.first_name} onChange={e => setNewParts(p => ({ ...p, first_name: e.target.value }))}
+                  placeholder="Jane" className={INPUT} />
+              </div>
+              <div>
+                <label className={LABEL}>Last name *</label>
+                <input value={newParts.last_name} onChange={e => setNewParts(p => ({ ...p, last_name: e.target.value }))}
+                  placeholder="Doe" className={INPUT} />
+              </div>
+            </div>
+            <div>
+              <label className={LABEL}>Birth year</label>
+              <input type="number" value={newBirthYear} onChange={e => setNewBirthYear(e.target.value)}
+                placeholder="1945" className={INPUT} />
+            </div>
+            {displayName && (
+              <p className="text-[10px] text-zinc-500">
+                Displayed as: <span className="text-zinc-300 font-medium">{displayName}</span>
+              </p>
+            )}
+            <button onClick={handleCreate} disabled={creating || !displayName.trim()}
               className="w-full py-2 bg-brand-500 hover:bg-brand-400 disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-colors">
-              {creating ? 'Creating...' : 'Create and add'}
+              {creating ? 'Creating…' : 'Create and add'}
             </button>
           </div>
         </div>
@@ -441,7 +473,7 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
                 <div className="shrink-0"><Avatar person={p} size={32} /></div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-sm text-zinc-200 truncate">{p.name ?? '(unnamed)'}</span>
+                    <span className="text-sm text-zinc-200 truncate">{displayPersonName(p, nameOrder)}</span>
                     {p.sex && <span className="text-[10px] text-zinc-600 shrink-0">{p.sex === 'M' ? '♂' : '♀'}</span>}
                   </div>
                   {lifespan && <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{lifespan}</p>}
@@ -488,6 +520,7 @@ function RelRow({
   onAdd: () => void
   addDisabled?: boolean
 }) {
+  const { nameOrder } = useSettings()
   if (!editing && persons.length === 0) return null
 
   return (
@@ -501,7 +534,7 @@ function RelRow({
               className="inline-flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 hover:border-zinc-500 rounded-full transition-colors max-w-[160px]"
             >
               <Avatar person={p} size={20} />
-              <span className="text-xs text-zinc-200 truncate leading-none">{p.name ?? '(unnamed)'}</span>
+              <span className="text-xs text-zinc-200 truncate leading-none">{displayPersonName(p, nameOrder)}</span>
             </button>
             {editing && onRemove && (
               <button onClick={() => onRemove(p)}
@@ -1150,6 +1183,7 @@ function detailsFromPerson(p: PersonFull) {
 
 export default function PersonPanel({ person, persons, relations, onClose, onNavigateTo, onNavToEvent, onNavToDocument, onDeleted }: Props) {
   const qc = useQueryClient()
+  const { nameOrder } = useSettings()
   const [visible, setVisible] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -1549,7 +1583,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 rounded-none">
             <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 shadow-2xl w-64 text-center">
               <p className="text-zinc-100 font-medium mb-1 text-sm">Töröljük a személyt?</p>
-              <p className="text-zinc-400 text-xs mb-4 leading-relaxed">{person.name ?? '(névtelen)'} véglegesen törlődik az összes kapcsolatával együtt.</p>
+              <p className="text-zinc-400 text-xs mb-4 leading-relaxed">{displayPersonName(person, nameOrder)} véglegesen törlődik az összes kapcsolatával együtt.</p>
               <div className="flex gap-2 justify-center">
                 <button onClick={() => setConfirmDelete(false)}
                   className="px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-300 text-xs hover:bg-zinc-600 transition-colors">
@@ -1569,10 +1603,10 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 shadow-2xl w-72 text-center">
               <p className="text-zinc-100 font-medium mb-1 text-sm">Összevonás megerősítése</p>
               <p className="text-zinc-400 text-xs mb-1 leading-relaxed">
-                <span className="text-zinc-200">{person.name ?? '(névtelen)'}</span>
+                <span className="text-zinc-200">{displayPersonName(person, nameOrder)}</span>
                 {' '}adatai beolvadnak ide:
               </p>
-              <p className="text-zinc-200 text-sm font-medium mb-1">{mergePending.name ?? '(névtelen)'}</p>
+              <p className="text-zinc-200 text-sm font-medium mb-1">{displayPersonName(mergePending, nameOrder)}</p>
               <p className="text-zinc-600 text-[10px] mb-4 leading-relaxed">
                 Az alapadatok (amelyek már kitöltöttek) megmaradnak. A kapcsolatok, események és dokumentumok átkerülnek. A forrásszemély törlődik.
               </p>
@@ -1605,7 +1639,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 </div>
               ) : (
                 <h2 className="text-lg font-bold text-zinc-100 leading-snug">
-                  {person.name ?? '(unnamed)'}
+                  {displayPersonName(person, nameOrder)}
                   {person.sex && <span className="ml-1.5 text-sm font-normal text-zinc-500">{person.sex === 'M' ? '♂' : '♀'}</span>}
                 </h2>
               )}
@@ -1881,7 +1915,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                             <button onClick={() => onNavigateTo(p.id)}
                               className="inline-flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 hover:border-zinc-500 rounded-full transition-colors max-w-[160px]">
                               <Avatar person={p} size={20} />
-                              <span className="text-xs text-zinc-200 truncate leading-none">{p.name ?? '(unnamed)'}</span>
+                              <span className="text-xs text-zinc-200 truncate leading-none">{displayPersonName(p, nameOrder)}</span>
                             </button>
                             {editingRelations && (
                               <button onClick={() => handleRemove('spouse', p)}
@@ -2207,6 +2241,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           persons={persons}
           relations={relations}
           onClose={() => setRelatePerson(null)}
+          onNavigate={id => { setRelatePerson(null); onNavigateTo(id) }}
         />
       )}
 

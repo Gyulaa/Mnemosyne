@@ -2,10 +2,11 @@ import { useState, useRef, useMemo, useEffect } from 'react'
 import type { PersonFull, Relation } from '../types'
 import { api } from '../api'
 import TreeExportModal from './TreeExportModal'
+import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const NW = 148
-const NH = 64
+const NH = 82
 const HG = 30
 const VG = 96
 const PAD = 72
@@ -878,14 +879,14 @@ function PersonCard({ person, selected, isProband }: {
   isProband?: boolean
 }) {
   const [imgErr, setImgErr] = useState(false)
+  const { nameOrder } = useSettings()
   const span = person.birth_year
     ? person.death_year ? `${person.birth_year}–${person.death_year}` : `* ${person.birth_year}`
     : null
-  const initials = (person.name ?? '?').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
 
   return (
     <div className={[
-      'absolute inset-0 rounded-xl flex items-center gap-2.5 px-2.5 transition-all overflow-hidden',
+      'absolute inset-0 rounded-xl flex items-center gap-2.5 px-2.5 transition-all overflow-hidden py-1',
       selected
         ? 'bg-brand-700 border-2 border-brand-400 shadow-lg shadow-brand-900/60'
         : 'bg-zinc-800/90 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800',
@@ -899,13 +900,16 @@ function PersonCard({ person, selected, isProband }: {
           onError={() => setImgErr(true)} />
       ) : (
         <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${selected ? 'bg-brand-500 text-white' : 'bg-zinc-700 text-zinc-300'}`}>
-          {initials}
+          {displayInitials(person)}
         </div>
       )}
-      <div className="min-w-0 flex-1">
-        <div className={`text-xs font-semibold truncate leading-snug ${selected ? 'text-white' : 'text-zinc-100'}`}>
-          {person.name ?? '(unnamed)'}
+      <div className="min-w-0 flex-1 py-1.5">
+        <div className={`text-xs font-semibold leading-snug break-words ${selected ? 'text-white' : 'text-zinc-100'}`}>
+          {displayPersonName(person, nameOrder)}
         </div>
+        {person.nickname && (
+          <div className={`text-[10px] leading-snug italic ${selected ? 'text-brand-200/80' : 'text-zinc-400'}`}>„{person.nickname}"</div>
+        )}
         {span && <div className={`text-[10px] leading-snug ${selected ? 'text-brand-200' : 'text-zinc-500'}`}>{span}</div>}
         {person.face_count > 0 && (
           <div className={`text-[9px] leading-snug ${selected ? 'text-brand-300' : 'text-zinc-600'}`}>{person.face_count} photos</div>
@@ -929,6 +933,7 @@ export default function TreeView({
   onSelect: (id: number) => void
   panelOpen?: boolean
 }) {
+  const { nameOrder } = useSettings()
   const containerRef = useRef<HTMLDivElement>(null)
   const [pan,  setPan]  = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
@@ -1244,7 +1249,9 @@ export default function TreeView({
                 const activeId = effectiveActiveSpouseOf.get(node.id)
                 const activePerson = persons.find(p => p.id === activeId)
                 const idx = activeId != null ? allSpouses.indexOf(activeId) : 0
-                const firstName = activePerson?.name?.trim().split(/\s+/)[0] ?? '?'
+                const firstName = activePerson
+                  ? (activePerson.first_name?.trim() || displayPersonName(activePerson, nameOrder).split(' ')[0] || '?')
+                  : '?'
                 const goPrev = (e: React.MouseEvent) => {
                   e.stopPropagation()
                   setActiveSpouseOf(m => new Map([...m, [node.id, allSpouses[(idx - 1 + allSpouses.length) % allSpouses.length]]]))

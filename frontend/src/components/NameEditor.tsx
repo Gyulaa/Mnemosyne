@@ -7,7 +7,7 @@ export interface NameParts {
 }
 
 export function deriveDisplayName(parts: NameParts): string {
-  return [parts.title, parts.last_name, parts.first_name, parts.middle_name]
+  return [parts.title, parts.first_name, parts.middle_name, parts.last_name]
     .map(s => s.trim())
     .filter(Boolean)
     .join(' ')

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { PersonFull, PersonEvent, PersonDocument } from '../types'
+import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
 
 interface Props {
   open: boolean
@@ -38,15 +39,15 @@ function Avatar({ p }: { p: PersonFull }) {
       />
     )
   }
-  const initials = (p.name ?? '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
   return (
     <span className="text-[10px] font-semibold text-zinc-400 leading-none select-none">
-      {initials}
+      {displayInitials(p)}
     </span>
   )
 }
 
 export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavToEvent, onViewDocument }: Props) {
+  const { nameOrder } = useSettings()
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -176,7 +177,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
                         <Avatar p={p} />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm text-zinc-100 truncate font-medium">{p.name ?? '(névtelen)'}</p>
+                        <p className="text-sm text-zinc-100 truncate font-medium">{displayPersonName(p, nameOrder)}</p>
                         {personSub(p) && <p className="text-xs text-zinc-500 truncate">{personSub(p)}</p>}
                       </div>
                       {active && (
