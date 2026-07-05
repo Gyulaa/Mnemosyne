@@ -7,6 +7,8 @@ import PersonPanel from './PersonPanel'
 import ExportModal from './ExportModal'
 import StatisticsView from './StatisticsView'
 import GedcomImportModal from './GedcomImportModal'
+import NameEditor, { NameParts, deriveDisplayName } from './NameEditor'
+import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
 
 // ── GEDCOM export modal ───────────────────────────────────────────────────────
 
@@ -293,54 +295,110 @@ function PersonAvatar({ person, size = 36 }: { person: PersonFull; size?: number
       className="rounded-full bg-zinc-700 flex items-center justify-center shrink-0 text-zinc-300 font-semibold"
       style={{ width: size, height: size, fontSize: Math.round(size * 0.38) }}
     >
-      {initials(person.name)}
+      {displayInitials(person)}
     </div>
   )
 }
 
 // ── NewPersonModal ────────────────────────────────────────────────────────────
 
+const EMPTY_NAME: NameParts = { title: '', first_name: '', last_name: '', middle_name: '', nickname: '' }
+
 function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: PersonFull) => void }) {
-  const [name, setName] = useState('')
+  const [nameParts, setNameParts] = useState<NameParts>(EMPTY_NAME)
+  const [sex, setSex]             = useState<'' | 'M' | 'F'>('')
   const [birthYear, setBirthYear] = useState('')
   const [deathYear, setDeathYear] = useState('')
   const qc = useQueryClient()
+
+  const displayName = deriveDisplayName(nameParts)
+  const canSubmit = displayName.trim().length > 0
+
   const mut = useMutation({
-    mutationFn: () => api.persons.create({ name: name.trim(), birth_year: birthYear ? parseInt(birthYear) : null, death_year: deathYear ? parseInt(deathYear) : null }),
+    mutationFn: () => api.persons.create({
+      name:        displayName.trim(),
+      first_name:  nameParts.first_name.trim()  || null,
+      last_name:   nameParts.last_name.trim()   || null,
+      middle_name: nameParts.middle_name.trim() || null,
+      title:       nameParts.title.trim()       || null,
+      nickname:    nameParts.nickname.trim()    || null,
+      sex:         sex || null,
+      birth_year:  birthYear ? parseInt(birthYear) : null,
+      death_year:  deathYear ? parseInt(deathYear) : null,
+    }),
     onSuccess: p => { qc.invalidateQueries({ queryKey: ['persons'] }); onCreated(p) },
   })
 
+  const INPUT = 'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400'
+  const LABEL = 'block text-xs text-zinc-400 mb-1'
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-80 p-5" onClick={e => e.stopPropagation()}>
+      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-[420px] max-w-[92vw] p-5" onClick={e => e.stopPropagation()}>
         <h3 className="text-sm font-semibold text-zinc-100 mb-4">Add new person</h3>
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-zinc-400 mb-1">Name *</label>
-            <input autoFocus value={name} onChange={e => setName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && name.trim() && mut.mutate()}
-              placeholder="e.g. Jane Doe"
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
+
+        {/* Name fields */}
+        <div className="space-y-2 mb-4">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className={LABEL}>First name *</label>
+              <input autoFocus value={nameParts.first_name} onChange={e => setNameParts(p => ({ ...p, first_name: e.target.value }))}
+                placeholder="Jane" className={INPUT} />
+            </div>
+            <div>
+              <label className={LABEL}>Last name *</label>
+              <input value={nameParts.last_name} onChange={e => setNameParts(p => ({ ...p, last_name: e.target.value }))}
+                placeholder="Doe" className={INPUT} />
+            </div>
+            <div>
+              <label className={LABEL}>Middle name(s)</label>
+              <input value={nameParts.middle_name} onChange={e => setNameParts(p => ({ ...p, middle_name: e.target.value }))}
+                placeholder="Marie" className={INPUT} />
+            </div>
+            <div>
+              <label className={LABEL}>Title / Suffix</label>
+              <input value={nameParts.title} onChange={e => setNameParts(p => ({ ...p, title: e.target.value }))}
+                placeholder="Dr., Jr., …" className={INPUT} />
+            </div>
           </div>
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label className="block text-xs text-zinc-400 mb-1">Birth year</label>
-              <input type="number" value={birthYear} onChange={e => setBirthYear(e.target.value)} placeholder="1945"
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
-            </div>
-            <div className="flex-1">
-              <label className="block text-xs text-zinc-400 mb-1">Death year</label>
-              <input type="number" value={deathYear} onChange={e => setDeathYear(e.target.value)} placeholder="2010"
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
-            </div>
+
+          {/* Preview */}
+          {displayName && (
+            <p className="text-[11px] text-zinc-500">
+              Displayed as: <span className="text-zinc-300 font-medium">{displayName}</span>
+            </p>
+          )}
+        </div>
+
+        {/* Birth, death, sex */}
+        <div className="grid grid-cols-3 gap-2 mb-4">
+          <div>
+            <label className={LABEL}>Birth year</label>
+            <input type="number" value={birthYear} onChange={e => setBirthYear(e.target.value)}
+              placeholder="1945" className={INPUT} />
+          </div>
+          <div>
+            <label className={LABEL}>Death year</label>
+            <input type="number" value={deathYear} onChange={e => setDeathYear(e.target.value)}
+              placeholder="2010" className={INPUT} />
+          </div>
+          <div>
+            <label className={LABEL}>Sex</label>
+            <select value={sex} onChange={e => setSex(e.target.value as '' | 'M' | 'F')}
+              className={INPUT}>
+              <option value="">—</option>
+              <option value="M">Male</option>
+              <option value="F">Female</option>
+            </select>
           </div>
         </div>
-        {mut.error && <p className="mt-2 text-xs text-red-400">{String(mut.error)}</p>}
-        <div className="flex gap-2 mt-4">
+
+        {mut.error && <p className="mb-3 text-xs text-red-400">{String(mut.error)}</p>}
+        <div className="flex gap-2">
           <button onClick={onClose} className="flex-1 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">Cancel</button>
-          <button onClick={() => mut.mutate()} disabled={!name.trim() || mut.isPending}
+          <button onClick={() => mut.mutate()} disabled={!canSubmit || mut.isPending}
             className="flex-1 px-3 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white rounded-lg transition-colors">
-            {mut.isPending ? 'Saving...' : 'Create'}
+            {mut.isPending ? 'Saving…' : 'Create'}
           </button>
         </div>
       </div>
@@ -365,6 +423,7 @@ export default function FamilyTreeTab({
   onNavToEvent?: (eventId: number) => void
   onNavToDocument?: (docId: number, editMode?: boolean) => void
 }) {
+  const { nameOrder } = useSettings()
   const [activeView, setActiveView] = useState<'tree' | 'stats'>('tree')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null)
@@ -672,7 +731,7 @@ export default function FamilyTreeTab({
               >
                 <PersonAvatar person={p} size={32} />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm text-zinc-100 truncate font-medium">{p.name ?? '(unnamed)'}</div>
+                  <div className="text-sm text-zinc-100 truncate font-medium">{displayPersonName(p, nameOrder)}</div>
                   <div className="text-xs text-zinc-500 truncate">{lifespan(p) ?? (p.face_count > 0 ? `${p.face_count} photos` : 'No photos')}</div>
                 </div>
               </button>

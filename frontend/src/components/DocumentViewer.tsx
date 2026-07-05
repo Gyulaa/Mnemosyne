@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { PersonDocument, PersonFull } from '../types'
+import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   birth_cert:    'Birth certificate',
@@ -24,7 +25,7 @@ function isAudio(mime: string | null) { return mime?.startsWith('audio/') ?? fal
 
 function PersonAvatar({ person }: { person: PersonFull }) {
   const [err, setErr] = useState(false)
-  const init = (person.name ?? '?').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
+  const init = displayInitials(person)
   if (person.thumbnail_face_id && !err) {
     return (
       <img
@@ -44,6 +45,7 @@ interface Props {
 }
 
 export default function DocumentViewer({ doc, onClose, onNavToPerson }: Props) {
+  const { nameOrder } = useSettings()
   const { data: persons = [] } = useQuery<PersonFull[]>({ queryKey: ['persons'], queryFn: api.persons.list })
   const { data: types = [] }   = useQuery({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
   const typeMap = new Map(types.map(t => [t.key, t.label]))
@@ -147,7 +149,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson }: Props) {
                           <PersonAvatar person={person} />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-zinc-100 truncate">{person.name ?? '(unnamed)'}</p>
+                          <p className="text-sm font-semibold text-zinc-100 truncate">{displayPersonName(person, nameOrder)}</p>
                           {years && <p className="text-xs text-zinc-500 tabular-nums">{years}</p>}
                         </div>
                         <svg className="w-4 h-4 text-zinc-600 group-hover:text-zinc-400 shrink-0 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

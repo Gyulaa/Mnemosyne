@@ -11,6 +11,7 @@ import ProjectSwitcher from './components/ProjectSwitcher'
 import SearchPalette from './components/SearchPalette'
 import DocumentViewer from './components/DocumentViewer'
 import type { PersonDocument } from './types'
+import { SettingsProvider, useSettings } from './SettingsContext'
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 5_000 } },
@@ -28,7 +29,7 @@ const TAB_LABELS: Record<Tab, string> = {
   connections: 'Connections',
 }
 
-export default function App() {
+function AppInner() {
   const [tab, setTab] = useState<Tab>('scan')
   const [imageNavFilter, setImageNavFilter] = useState<{ personIds: number[]; key: number } | null>(null)
   const [imageOpenTarget, setImageOpenTarget] = useState<{ imageId: number; personIds: number[]; key: number } | null>(null)
@@ -40,8 +41,11 @@ export default function App() {
   const [exportError, setExportError] = useState<string | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<PersonDocument | null>(null)
-  const [aboutOpen,  setAboutOpen]  = useState(false)
-  const aboutRef = useRef<HTMLDivElement>(null)
+  const [aboutOpen,    setAboutOpen]    = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const aboutRef    = useRef<HTMLDivElement>(null)
+  const settingsRef = useRef<HTMLDivElement>(null)
+  const { nameOrder, setNameOrder } = useSettings()
 
   useEffect(() => {
     if (!aboutOpen) return
@@ -51,6 +55,15 @@ export default function App() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [aboutOpen])
+
+  useEffect(() => {
+    if (!settingsOpen) return
+    const handler = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) setSettingsOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [settingsOpen])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -145,6 +158,44 @@ export default function App() {
                 </svg>
               </button>
 
+              {/* Settings */}
+              <div ref={settingsRef} className="relative">
+                <button
+                  onClick={() => setSettingsOpen(o => !o)}
+                  title="Settings"
+                  className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                </button>
+                {settingsOpen && (
+                  <div className="absolute right-0 top-full mt-2 w-64 bg-zinc-900 border border-zinc-700/80 rounded-xl shadow-2xl p-4 z-50">
+                    <p className="text-xs font-semibold text-zinc-300 mb-3">Settings</p>
+                    <div>
+                      <p className="text-[11px] text-zinc-500 mb-2">Name display order</p>
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => setNameOrder('en')}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${nameOrder === 'en' ? 'bg-brand-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'}`}
+                        >
+                          Given · Family
+                          <span className="block text-[10px] font-normal opacity-70">e.g. Jane Doe</span>
+                        </button>
+                        <button
+                          onClick={() => setNameOrder('hu')}
+                          className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${nameOrder === 'hu' ? 'bg-brand-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'}`}
+                        >
+                          Family · Given
+                          <span className="block text-[10px] font-normal opacity-70">e.g. Doe Jane</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* About */}
               <div ref={aboutRef} className="relative">
                 <button
@@ -230,5 +281,13 @@ export default function App() {
         />
       )}
     </QueryClientProvider>
+  )
+}
+
+export default function App() {
+  return (
+    <SettingsProvider>
+      <AppInner />
+    </SettingsProvider>
   )
 }
