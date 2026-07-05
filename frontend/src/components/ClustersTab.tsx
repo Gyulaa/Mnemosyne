@@ -82,13 +82,13 @@ export default function ClustersTab({
     }
   }
 
-  async function doExport({ name, includeGenealogy }: { name: string; includeGenealogy: boolean }) {
+  async function doExport({ name, includeGenealogy, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, includeFaceless }: { name: string; includeGenealogy: boolean; includeNotes: boolean; includeSources: boolean; includeEvents: boolean; includeDocuments: boolean; includeImages: boolean; includeFaceless: boolean }) {
     if (exportingClusters) return
     setShowExportModal(false)
     setExportingClusters(true)
     onExportStart?.()
     try {
-      const blob = await api.project.exportZip([...checkedClusters], name, includeGenealogy)
+      const blob = await api.project.exportZip([...checkedClusters], name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url; a.download = `${name.replace(/\s+/g, '_') || 'clusters'}_export.zip`; a.click()

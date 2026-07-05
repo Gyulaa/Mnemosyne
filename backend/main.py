@@ -126,6 +126,11 @@ def export_project(
     name: str = Query(default=""),
     include_genealogy: bool = Query(default=True),
     include_faceless: bool = Query(default=True),
+    include_notes: bool = Query(default=True),
+    include_sources: bool = Query(default=True),
+    include_events: bool = Query(default=True),
+    include_documents: bool = Query(default=True),
+    include_images: bool = Query(default=True),
 ):
     """Download the active project as a self-contained ZIP (DB + images)."""
     project_id = project_manager.active_id
@@ -147,7 +152,12 @@ def export_project(
     if person_ids.strip():
         parsed_person_ids = [int(x) for x in person_ids.split(",") if x.strip().isdigit()]
 
-    buf = export_utils.create_project_zip(source_db, project_info, parsed_cluster_ids, include_genealogy, parsed_person_ids, include_faceless)
+    buf = export_utils.create_project_zip(
+        source_db, project_info, parsed_cluster_ids,
+        include_genealogy, parsed_person_ids, include_faceless,
+        include_notes, include_sources, include_events,
+        include_documents, include_images,
+    )
     raw_name = project_info.get('name', 'project')
     ascii_name = unicodedata.normalize("NFD", raw_name).encode("ascii", "ignore").decode("ascii")
     filename = f"{ascii_name.replace(' ', '_') or 'project'}_export.zip"
@@ -353,6 +363,105 @@ def gedcom_rollback_status():
     import time
     remaining = max(0, int(30 * 60 - (time.time() - data['created_at'])))
     return {"available": True, "expires_in_seconds": remaining}
+
+
+# ── ZIP merge import ──────────────────────────────────────────────────────────
+
+@app.post("/api/import/merge/preview")
+async def merge_preview(file: UploadFile = File(...)):
+    """
+    Upload a project ZIP; return a per-person preview with suggested merge decisions.
+    """
+    from . import merge_import as mi
+    from . import gedcom_import as gi
+
+    if not project_manager.active_id:
+        raise HTTPException(400, "No active project")
+
+    project_id = project_manager.active_id
+    data = await file.read()
+
+    try:
+        incoming_data = mi.read_zip_db(data)
+    except (ValueError, Exception) as e:
+        raise HTTPException(400, f"Could not read ZIP: {e}")
+
+    db_path = PROJECTS_DIR / project_id / "photo_organizer.db"
+    import sqlite3 as _sqlite3
+    _conn = _sqlite3.connect(str(db_path))
+    _conn.row_factory = _sqlite3.Row
+    try:
+        existing = [dict(r) for r in _conn.execute(
+            "SELECT id, name, first_name, last_name, birth_year FROM persons"
+        ).fetchall()]
+        existing_relations = [dict(r) for r in _conn.execute(
+            "SELECT id, type, person_a_id, person_b_id FROM relations"
+        ).fetchall()]
+    finally:
+        _conn.close()
+
+    preview_persons = mi.build_merge_preview(incoming_data, existing, existing_relations)
+
+    token = gi.store_session({
+        'incoming_data': incoming_data,
+        'zip_data':      data,
+        'project_id':    project_id,
+    })
+
+    return {
+        'token':            token,
+        'persons':          preview_persons,
+        'relations_count':  len(incoming_data['relations']),
+        'events_count':     len(incoming_data['events']),
+        'documents_count':  len(incoming_data['documents']),
+        'notes_count':      len(incoming_data['person_notes']),
+        'sources_count':    len(incoming_data.get('sources', [])),
+        'images_count':     len(incoming_data.get('images', [])),
+        'clusters_count':   len(incoming_data.get('clusters', [])),
+    }
+
+
+@app.post("/api/import/merge/confirm")
+def merge_confirm(body: dict):
+    """
+    Execute the ZIP merge with user decisions.
+    Body: {token, decisions: [{incoming_id, action, merge_with_id}], options: {...}}.
+    """
+    from . import merge_import as mi
+    from . import gedcom_import as gi
+
+    token     = body.get('token', '')
+    decisions = body.get('decisions', [])
+    options   = body.get('options', {})
+
+    session = gi.get_session(token)
+    if not session:
+        raise HTTPException(400, "Merge session expired — please re-upload the file")
+
+    project_id = session['project_id']
+    if project_id != project_manager.active_id:
+        raise HTTPException(400, "Active project changed since preview — please re-upload")
+
+    project_dir = PROJECTS_DIR / project_id
+    db_path     = project_dir / "photo_organizer.db"
+    docs_dir    = project_dir / "documents"
+
+    try:
+        stats, rollback = mi.execute_merge(
+            incoming_data = session['incoming_data'],
+            decisions     = decisions,
+            db_path       = db_path,
+            docs_dir      = docs_dir,
+            zip_data      = session['zip_data'],
+            options       = options,
+        )
+        gi.store_rollback(db_path, rollback)
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(500, f"Merge failed: {e}")
+
+    gi.clear_session(token)
+    return {**stats, 'rollback_available': True}
 
 
 # ── Scan ──────────────────────────────────────────────────────────────────────
@@ -2052,6 +2161,16 @@ def _note_dict(n: "DBPersonNote") -> dict:
         "updated_at": n.updated_at,
         "citations": sorted([_note_citation_dict(nc) for nc in n.note_citations], key=lambda x: x["marker"]),
     }
+
+
+@app.get("/api/notes")
+def list_all_notes(db: Session = Depends(get_db)):
+    """Lightweight note list for search — returns id, person_id, title and content only."""
+    notes = db.query(DBPersonNote).order_by(DBPersonNote.person_id).all()
+    return [
+        {"id": n.id, "person_id": n.person_id, "title": n.title, "content": n.content}
+        for n in notes
+    ]
 
 
 @app.get("/api/persons/{person_id}/notes")

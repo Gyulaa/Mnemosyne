@@ -1,8 +1,10 @@
 import { useState, useCallback } from 'react'
 import type { PersonFull } from '../types'
 import { api } from '../api'
+import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import type { NameOrder } from '../SettingsContext'
 
-const NW = 148, NH = 64
+const NW = 148, NH = 82
 
 interface ExportNode { id: number; person: PersonFull; x: number; y: number }
 interface ExportEdge {
@@ -51,6 +53,7 @@ function buildSvg(
   nodes: ExportNode[], edges: ExportEdge[],
   minX: number, minY: number, canvasW: number, canvasH: number,
   probandId: number | null, theme: Theme, uris: Map<number, string>,
+  nameOrder: NameOrder,
 ): string {
   const C = theme === 'dark' ? DARK : LIGHT
   const out: string[] = []
@@ -83,7 +86,7 @@ function buildSvg(
     const lx = cx - NW / 2, ty = cy - NH / 2
     const proband = n.id === probandId
     const p = n.person
-    const initials = (p.name ?? '?').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2) || '?'
+    const initials = displayInitials(p)
     const span = p.birth_year ? (p.death_year ? `${p.birth_year}–${p.death_year}` : `* ${p.birth_year}`) : null
     const avx = lx + 30, tx = lx + 60
     const uri = uris.get(n.id)
@@ -98,23 +101,34 @@ function buildSvg(
       out.push(`<text x="${avx}" y="${cy + 5}" text-anchor="middle" fill="${C.avatarText}" font-size="12" font-weight="700" font-family="system-ui,-apple-system,sans-serif">${xe(initials)}</text>`)
     }
 
-    // Split name into 2 lines if it has multiple words
-    const words = (p.name ?? '(unnamed)').trim().split(/\s+/).filter(Boolean)
+    // Split display name into 2 lines if it has multiple words
+    const displayName = displayPersonName(p, nameOrder)
+    const words = displayName.trim().split(/\s+/).filter(Boolean)
     const mid = Math.ceil(words.length / 2)
     const line1 = words.slice(0, mid).join(' ')
     const line2 = words.length > 1 ? words.slice(mid).join(' ') : null
     const twoLines = line2 !== null && line2.length > 0
+    const hasNick = !!p.nickname
     const nfs = twoLines ? '10' : '11.5'
 
-    // Baseline y-positions for each case
-    const ny1 = twoLines ? (span ? cy - 10 : cy - 2)  : (span ? cy - 3 : cy + 5)
-    const ny2 = twoLines ? (span ? cy + 3  : cy + 11) : null
-    const dy  = twoLines ? (span ? cy + 16 : null)     : (span ? cy + 11 : null)
+    // Baseline y-positions — NH=82, card center=cy, top=cy-41, bottom=cy+41
+    let ny1: number, ny2: number | null, nickY: number | null, dy: number | null
+    if (twoLines && span && hasNick)       { ny1 = cy-17; ny2 = cy-4;  nickY = cy+9;  dy = cy+22 }
+    else if (twoLines && span)             { ny1 = cy-11; ny2 = cy+2;  nickY = null;  dy = cy+15 }
+    else if (twoLines && hasNick)          { ny1 = cy-13; ny2 = cy;    nickY = cy+14; dy = null  }
+    else if (twoLines)                     { ny1 = cy-5;  ny2 = cy+8;  nickY = null;  dy = null  }
+    else if (span && hasNick)              { ny1 = cy-11; ny2 = null;  nickY = cy+2;  dy = cy+16 }
+    else if (span)                         { ny1 = cy-5;  ny2 = null;  nickY = null;  dy = cy+9  }
+    else if (hasNick)                      { ny1 = cy-5;  ny2 = null;  nickY = cy+8;  dy = null  }
+    else                                   { ny1 = cy+4;  ny2 = null;  nickY = null;  dy = null  }
 
     out.push(`<g clip-path="url(#tx${n.id})">`)
     out.push(`<text x="${tx}" y="${ny1}" fill="${C.nameFill}" font-size="${nfs}" font-weight="600" font-family="system-ui,-apple-system,sans-serif">${xe(line1)}</text>`)
     if (twoLines && ny2 !== null) {
       out.push(`<text x="${tx}" y="${ny2}" fill="${C.nameFill}" font-size="${nfs}" font-weight="600" font-family="system-ui,-apple-system,sans-serif">${xe(line2!)}</text>`)
+    }
+    if (nickY !== null && p.nickname) {
+      out.push(`<text x="${tx}" y="${nickY}" fill="${C.dateFill}" font-size="9" font-style="italic" font-family="system-ui,-apple-system,sans-serif">„${xe(p.nickname)}"</text>`)
     }
     if (dy !== null) {
       out.push(`<text x="${tx}" y="${dy}" fill="${C.dateFill}" font-size="9.5" font-family="system-ui,-apple-system,sans-serif">${xe(span!)}</text>`)
@@ -163,6 +177,7 @@ interface Props {
 }
 
 export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, canvasH, probandId, onClose }: Props) {
+  const { nameOrder } = useSettings()
   const [scale,  setScale]  = useState<Scale>(2)
   const [theme,  setTheme]  = useState<Theme>('dark')
   const [photos, setPhotos] = useState(true)
@@ -183,7 +198,7 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
           if (uri) uris.set(n.id, uri)
         }))
       }
-      const svg = buildSvg(nodes, edges, minX, minY, canvasW, canvasH, probandId, theme, uris)
+      const svg = buildSvg(nodes, edges, minX, minY, canvasW, canvasH, probandId, theme, uris, nameOrder)
       const png = await svgToPng(svg, canvasW, canvasH, scale)
       const url = URL.createObjectURL(png)
       const a = document.createElement('a')
@@ -194,7 +209,7 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
     } finally {
       setBusy(false)
     }
-  }, [nodes, edges, minX, minY, canvasW, canvasH, probandId, theme, scale, photos])
+  }, [nodes, edges, minX, minY, canvasW, canvasH, probandId, theme, scale, photos, nameOrder])
 
   return (
     <div

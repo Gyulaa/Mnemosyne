@@ -509,7 +509,7 @@ def execute_rollback(db_path: Path, docs_dir: Path) -> Optional[dict]:
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
 
-    deleted: dict[str, int] = {k: 0 for k in ('persons', 'relations', 'events', 'sources', 'notes', 'documents')}
+    deleted: dict[str, int] = {k: 0 for k in ('persons', 'relations', 'events', 'sources', 'notes', 'documents', 'clusters', 'images', 'faces')}
 
     # 1. Delete created persons (manual cascade — SQLAlchemy ORM not available here)
     for pid in data.get('created_person_ids', []):
@@ -578,6 +578,43 @@ def execute_rollback(db_path: Path, docs_dir: Path) -> Optional[dict]:
         if before:
             set_clause = ', '.join(f"{k} = ?" for k in before)
             conn.execute(f"UPDATE persons SET {set_clause} WHERE id = ?", [*before.values(), snap['id']])
+    conn.commit()
+
+    # 8. Undo cluster → person re-links (restore old person_id, usually NULL)
+    for item in data.get('relinked_clusters', []):
+        conn.execute("UPDATE clusters SET person_id = ? WHERE id = ?",
+                     (item.get('old_person_id'), item['id']))
+        deleted['clusters'] += 1
+    conn.commit()
+
+    # 9. Unlink newly created clusters (set person_id = NULL; keep faces/embeddings)
+    for cl_id in data.get('added_cluster_ids', []):
+        conn.execute("UPDATE clusters SET person_id = NULL WHERE id = ?", (cl_id,))
+        deleted['clusters'] += 1
+    conn.commit()
+
+    # 10. Delete newly imported faces on existing images
+    for face_id in data.get('added_face_ids', []):
+        cur = conn.execute("DELETE FROM faces WHERE id = ?", (face_id,))
+        if cur.rowcount:
+            deleted['faces'] += 1
+    conn.commit()
+
+    # 11. Delete newly imported images (explicit face cascade + file removal)
+    for img_info in data.get('added_image_ids', []):
+        conn.execute("DELETE FROM faces WHERE image_id = ?", (img_info['id'],))
+        cur = conn.execute("DELETE FROM images WHERE id = ?", (img_info['id'],))
+        if cur.rowcount:
+            _try_delete_file(Path(img_info['path']))
+            deleted['images'] += 1
+    conn.commit()
+
+    # 12. Restore auto-set thumbnails
+    for item in data.get('updated_thumbnails', []):
+        conn.execute(
+            "UPDATE persons SET thumbnail_face_id = ? WHERE id = ?",
+            (item.get('old_thumbnail_face_id'), item['person_id']),
+        )
     conn.commit()
 
     conn.close()

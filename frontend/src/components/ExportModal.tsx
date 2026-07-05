@@ -6,6 +6,11 @@ export type ExportSettings = {
   includeGenealogy: boolean
   includeFaceless: boolean
   excludeLiving: boolean
+  includeNotes: boolean
+  includeSources: boolean
+  includeEvents: boolean
+  includeDocuments: boolean
+  includeImages: boolean
 }
 
 type Props = {
@@ -19,13 +24,84 @@ type Props = {
   onClose: () => void
 }
 
+function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => !disabled && onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none ${
+        disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+      } ${checked && !disabled ? 'bg-brand-500' : 'bg-zinc-600'}`}
+    >
+      <span
+        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-[18px]' : 'translate-x-[3px]'
+        }`}
+      />
+    </button>
+  )
+}
+
+function Row({
+  label,
+  desc,
+  checked,
+  onChange,
+  indent,
+  disabled,
+}: {
+  label: string
+  desc?: string
+  checked: boolean
+  onChange: (v: boolean) => void
+  indent?: boolean
+  disabled?: boolean
+}) {
+  return (
+    <div
+      className={`flex items-center justify-between gap-4 py-2 ${indent ? 'pl-4 border-l border-zinc-700/60' : ''} ${disabled ? 'opacity-40' : ''}`}
+    >
+      <div className="min-w-0">
+        <p className="text-sm text-zinc-200 leading-snug">{label}</p>
+        {desc && <p className="text-xs text-zinc-500 mt-0.5 leading-snug">{desc}</p>}
+      </div>
+      <Toggle checked={checked} onChange={onChange} disabled={disabled} />
+    </div>
+  )
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500 mb-1 mt-4 first:mt-0">
+      {children}
+    </p>
+  )
+}
+
 function isLiving(p: PersonFull) {
   return p.death_year == null && p.death_date == null
 }
 
-export default function ExportModal({ defaultName, clusterCount, subtitle, hideGenealogyOption, showFacelessOption, persons, onExport, onClose }: Props) {
+export default function ExportModal({
+  defaultName,
+  clusterCount,
+  subtitle,
+  hideGenealogyOption,
+  showFacelessOption,
+  persons,
+  onExport,
+  onClose,
+}: Props) {
   const [name, setName] = useState(defaultName)
   const [includeGenealogy, setIncludeGenealogy] = useState(true)
+  const [includeNotes, setIncludeNotes] = useState(true)
+  const [includeSources, setIncludeSources] = useState(true)
+  const [includeEvents, setIncludeEvents] = useState(true)
+  const [includeDocuments, setIncludeDocuments] = useState(true)
+  const [includeImages, setIncludeImages] = useState(true)
   const [includeFaceless, setIncludeFaceless] = useState(true)
   const [excludeLiving, setExcludeLiving] = useState(false)
 
@@ -36,18 +112,25 @@ export default function ExportModal({ defaultName, clusterCount, subtitle, hideG
   }, [persons])
 
   const showExcludeLivingOption = livingCount > 0 && deceasedCount > 0
+  const showGenealogy = !hideGenealogyOption
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
     onExport({
       name: name.trim() || defaultName,
-      includeGenealogy: hideGenealogyOption ? true : includeGenealogy,
+      includeGenealogy: showGenealogy ? includeGenealogy : true,
       includeFaceless: showFacelessOption ? includeFaceless : true,
       excludeLiving: showExcludeLivingOption ? excludeLiving : false,
+      includeNotes: !showGenealogy || includeGenealogy ? includeNotes : true,
+      includeSources: !showGenealogy || includeGenealogy ? includeSources : true,
+      includeEvents: !showGenealogy || includeGenealogy ? includeEvents : true,
+      includeDocuments: !showGenealogy || includeGenealogy ? includeDocuments : true,
+      includeImages,
     })
   }
 
-  const subtitleText = subtitle ?? (clusterCount != null ? `${clusterCount} cluster${clusterCount !== 1 ? 's' : ''} selected` : null)
+  const subtitleText =
+    subtitle ?? (clusterCount != null ? `${clusterCount} cluster${clusterCount !== 1 ? 's' : ''} selected` : null)
 
   return (
     <div
@@ -59,64 +142,68 @@ export default function ExportModal({ defaultName, clusterCount, subtitle, hideG
         className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
-        <h2 className="text-sm font-semibold text-zinc-100 mb-1">Export settings</h2>
-        {subtitleText && (
-          <p className="text-xs text-zinc-500 mb-4">{subtitleText}</p>
-        )}
+        <h2 className="text-sm font-semibold text-zinc-100 mb-0.5">Export ZIP</h2>
+        {subtitleText && <p className="text-xs text-zinc-500 mb-1">{subtitleText}</p>}
 
-        <div className="space-y-4 mt-4">
-          <div>
-            <label className="text-xs text-zinc-400 block mb-1">Collection name</label>
+        <div className="mt-4 space-y-0.5">
+          {/* Archive name */}
+          <SectionLabel>Archive</SectionLabel>
+          <div className="pb-1">
             <input
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-brand-400"
+              placeholder={defaultName}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-brand-400 mt-1"
             />
           </div>
 
-          {!hideGenealogyOption && (
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={includeGenealogy}
-                onChange={e => setIncludeGenealogy(e.target.checked)}
-                className="mt-0.5 w-4 h-4 accent-brand-500 shrink-0"
-              />
-              <div>
-                <p className="text-sm text-zinc-200">Include genealogy data</p>
-                <p className="text-xs text-zinc-500">Family tree relationships between persons</p>
-              </div>
-            </label>
+          {/* Genealogy */}
+          <SectionLabel>Genealogy data</SectionLabel>
+          {showGenealogy && (
+            <Row
+              label="Include family tree"
+              desc="Persons, relations and all related data"
+              checked={includeGenealogy}
+              onChange={setIncludeGenealogy}
+            />
           )}
+          <div className={`space-y-0 ${!showGenealogy || includeGenealogy ? '' : 'opacity-40 pointer-events-none'}`}>
+            <Row label="Notes" indent={showGenealogy} checked={includeNotes} onChange={setIncludeNotes} disabled={showGenealogy && !includeGenealogy} />
+            <Row label="Sources & Citations" indent={showGenealogy} checked={includeSources} onChange={setIncludeSources} disabled={showGenealogy && !includeGenealogy} />
+            <Row label="Events" indent={showGenealogy} checked={includeEvents} onChange={setIncludeEvents} disabled={showGenealogy && !includeGenealogy} />
+            <Row label="Documents" indent={showGenealogy} checked={includeDocuments} onChange={setIncludeDocuments} disabled={showGenealogy && !includeGenealogy} />
+          </div>
 
+          {/* Photos */}
+          <SectionLabel>Photos</SectionLabel>
+          <Row
+            label="Include photos"
+            desc="Face images linked to persons"
+            checked={includeImages}
+            onChange={setIncludeImages}
+          />
           {showFacelessOption && (
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={includeFaceless}
-                onChange={e => setIncludeFaceless(e.target.checked)}
-                className="mt-0.5 w-4 h-4 accent-brand-500 shrink-0"
-              />
-              <div>
-                <p className="text-sm text-zinc-200">Include images without faces</p>
-                <p className="text-xs text-zinc-500">Photos where no face was detected</p>
-              </div>
-            </label>
+            <Row
+              label="Include faceless images"
+              desc="Photos where no face was detected"
+              indent
+              checked={includeFaceless}
+              onChange={setIncludeFaceless}
+              disabled={!includeImages}
+            />
           )}
 
+          {/* Privacy */}
           {showExcludeLivingOption && (
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
+            <>
+              <SectionLabel>Privacy</SectionLabel>
+              <Row
+                label="Exclude living persons"
+                desc={`${livingCount} living · ${deceasedCount} deceased in this export`}
                 checked={excludeLiving}
-                onChange={e => setExcludeLiving(e.target.checked)}
-                className="mt-0.5 w-4 h-4 accent-brand-500 shrink-0"
+                onChange={setExcludeLiving}
               />
-              <div>
-                <p className="text-sm text-zinc-200">Exclude living persons</p>
-                <p className="text-xs text-zinc-500">{livingCount} living · {deceasedCount} deceased in this export</p>
-              </div>
-            </label>
+            </>
           )}
         </div>
 

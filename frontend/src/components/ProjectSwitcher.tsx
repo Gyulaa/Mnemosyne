@@ -2,6 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import ExportModal from './ExportModal'
+import MergeModal from './MergeModal'
 
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
@@ -26,6 +27,7 @@ export default function ProjectSwitcher({
   const [exporting, setExporting] = useState(false)
   const [importing, setImporting] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
+  const [showMergeModal, setShowMergeModal] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -90,13 +92,13 @@ export default function ProjectSwitcher({
     onError: (e) => alert(`Delete failed: ${e}`),
   })
 
-  async function handleExport({ name, includeGenealogy, includeFaceless }: { name: string; includeGenealogy: boolean; includeFaceless: boolean }) {
+  async function handleExport({ name, includeGenealogy, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages }: { name: string; includeGenealogy: boolean; includeFaceless: boolean; includeNotes: boolean; includeSources: boolean; includeEvents: boolean; includeDocuments: boolean; includeImages: boolean }) {
     if (exporting) return
     setShowExportModal(false)
     setExporting(true)
     onExportStart?.()
     try {
-      const blob = await api.project.exportZip(undefined, name, includeGenealogy, undefined, includeFaceless)
+      const blob = await api.project.exportZip(undefined, name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages)
       const safeName = name.replace(/\s+/g, '_') || 'project'
       triggerDownload(blob, `${safeName}_export.zip`)
       onExportEnd?.()
@@ -155,6 +157,13 @@ export default function ProjectSwitcher({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
+
+      {showMergeModal && (
+        <MergeModal
+          onClose={() => setShowMergeModal(false)}
+          onDone={() => qc.invalidateQueries()}
+        />
+      )}
 
       {showExportModal && (
         <ExportModal
@@ -312,6 +321,17 @@ export default function ProjectSwitcher({
                 onChange={handleImport}
               />
             </div>
+            <button
+              onClick={() => { setOpen(false); setShowMergeModal(true) }}
+              disabled={importing || exporting}
+              title="Merge genealogy data from a ZIP into this collection"
+              className="w-full px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              Merge from ZIP…
+            </button>
             {(exporting || importing) && (
               <div className="h-0.5 rounded-full bg-zinc-800 overflow-hidden mx-0.5">
                 <div
