@@ -356,12 +356,14 @@ export default function FamilyTreeTab({
   navTarget,
   onNavConsumed,
   onNavToEvent,
+  onNavToDocument,
 }: {
   onExportStart?: () => void
   onExportEnd?: (error?: string) => void
   navTarget?: { personId: number; key: number } | null
   onNavConsumed?: () => void
   onNavToEvent?: (eventId: number) => void
+  onNavToDocument?: (docId: number, editMode?: boolean) => void
 }) {
   const [activeView, setActiveView] = useState<'tree' | 'stats'>('tree')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -711,6 +713,7 @@ export default function FamilyTreeTab({
               onClose={() => setSelectedId(null)}
               onNavigateTo={id => setSelectedId(id)}
               onNavToEvent={onNavToEvent}
+              onNavToDocument={onNavToDocument}
               onDeleted={() => setSelectedId(null)}
             />
           )}
