@@ -131,3 +131,8 @@ class EventImageAdd(BaseModel):
 class EventPersonAdd(BaseModel):
     person_id: int
     role: str = "participant"
+
+
+class BulkDownloadRequest(BaseModel):
+    ids: list[int]
+    include_notes: bool = True

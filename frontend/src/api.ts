@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats } from './types'
 
 const BASE = '/api'
 
@@ -284,6 +284,23 @@ export const api = {
       post<PersonDocument>(`${BASE}/documents/${docId}/persons/${personId}`, {}),
     unlinkPerson: (docId: number, personId: number) =>
       fetchJson<PersonDocument>(`${BASE}/documents/${docId}/persons/${personId}`, { method: 'DELETE' }),
+    bulkDownload: async (ids: number[], includeNotes: boolean): Promise<void> => {
+      const res = await fetch(`${BASE}/documents/bulk-download`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, include_notes: includeNotes }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'documents.zip'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    },
   },
   documentTypes: {
     list: () => fetchJson<DocumentType[]>(`${BASE}/document-types`),
@@ -310,6 +327,19 @@ export const api = {
       patch<Citation>(`${BASE}/citations/${id}`, fields),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/citations/${id}`, { method: 'DELETE' }),
+  },
+  documentNotes: {
+    list: (docId: number) => fetchJson<DocumentNote[]>(`${BASE}/documents/${docId}/notes`),
+    create: (docId: number, fields: { title?: string; content?: string }) =>
+      post<DocumentNote>(`${BASE}/documents/${docId}/notes`, fields),
+    update: (id: number, fields: { title?: string | null; content?: string }) =>
+      patch<DocumentNote>(`${BASE}/document-notes/${id}`, fields),
+    delete: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/document-notes/${id}`, { method: 'DELETE' }),
+    addCitation: (noteId: number, fields: { source_id?: number; marker: number; detail?: string; custom_label?: string }) =>
+      post<NoteCitation>(`${BASE}/document-notes/${noteId}/citations`, fields),
+    deleteCitation: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/document-note-citations/${id}`, { method: 'DELETE' }),
   },
   notes: {
     list: (personId: number) => fetchJson<PersonNote[]>(`${BASE}/persons/${personId}/notes`),

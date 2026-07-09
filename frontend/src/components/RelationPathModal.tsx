@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { api } from '../api'
 import type { PersonFull, Relation } from '../types'
 import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import type { NameOrder } from '../SettingsContext'
 
 // ── BFS path finder ────────────────────────────────────────────────────────────
 
@@ -231,6 +232,325 @@ function TurnConnector({ edge, side, highlight }: { edge: PathEdge; side: 'right
   )
 }
 
+// ── Canvas export ─────────────────────────────────────────────────────────────
+
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.lineTo(x + w - r, y)
+  ctx.arcTo(x + w, y, x + w, y + r, r)
+  ctx.lineTo(x + w, y + h - r)
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r)
+  ctx.lineTo(x + r, y + h)
+  ctx.arcTo(x, y + h, x, y + h - r, r)
+  ctx.lineTo(x, y + r)
+  ctx.arcTo(x, y, x + r, y, r)
+  ctx.closePath()
+}
+
+async function exportRelationPathPNG(
+  chainPersons: PersonFull[],
+  path: PathEdge[],
+  highlightMap: Map<number, HighlightType>,
+  personA: PersonFull,
+  personB: PersonFull,
+  nameOrder: NameOrder,
+  lcaId: number | null,
+  byId: Map<number, PersonFull>,
+  isBloodOnly: boolean,
+  steps: number,
+) {
+  const DPR = 2
+  const CCARD_W = 120
+  const CEDGE_W = 72
+  const SLOT_W  = CCARD_W + CEDGE_W
+  const AVATAR_R = 28
+  const CARD_BODY_H = AVATAR_R * 2 + 52
+  const CTURN_H  = 50
+  const CPAD     = 48
+  const HEADER_H = 72
+  const FOOTER_H = steps > 0 ? 54 : 0
+  const CROW_SIZE = 5
+
+  const nCols    = Math.min(CROW_SIZE, chainPersons.length)
+  const rowWidth = nCols * CCARD_W + Math.max(0, nCols - 1) * CEDGE_W
+
+  type ERow = { persons: PersonFull[]; edges: PathEdge[]; isRTL: boolean; turnEdge: PathEdge | null }
+  const rows: ERow[] = []
+  if (path.length > 0) {
+    for (let r = 0; r * CROW_SIZE < chainPersons.length; r++) {
+      const s = r * CROW_SIZE
+      const e = Math.min(s + CROW_SIZE, chainPersons.length)
+      rows.push({
+        persons:  chainPersons.slice(s, e),
+        edges:    path.slice(s, e - 1),
+        isRTL:    r % 2 === 1,
+        turnEdge: e < chainPersons.length ? path[e - 1] : null,
+      })
+    }
+  }
+
+  const nRows  = Math.max(rows.length, 1)
+  const chainH = nRows * CARD_BODY_H + Math.max(0, nRows - 1) * CTURN_H
+  const canvasW = rowWidth + CPAD * 2
+  const canvasH = CPAD + HEADER_H + chainH + FOOTER_H + CPAD
+
+  // Pre-load avatar images
+  const avatarImgs = new Map<number, HTMLImageElement | null>()
+  await Promise.all(
+    chainPersons
+      .filter(p => p.thumbnail_face_id != null)
+      .map(p => new Promise<void>(res => {
+        const img = new Image()
+        img.crossOrigin = 'anonymous'
+        img.onload  = () => { avatarImgs.set(p.id, img);  res() }
+        img.onerror = () => { avatarImgs.set(p.id, null); res() }
+        img.src = api.faceThumbnailUrl(p.thumbnail_face_id!, 80)
+      }))
+  )
+
+  const canvas = document.createElement('canvas')
+  canvas.width  = canvasW * DPR
+  canvas.height = canvasH * DPR
+  const ctx = canvas.getContext('2d')!
+  ctx.scale(DPR, DPR)
+
+  // Background
+  ctx.fillStyle = '#09090b'
+  ctx.fillRect(0, 0, canvasW, canvasH)
+
+  // Header
+  const nameA = displayPersonName(personA, nameOrder) || '(unnamed)'
+  const nameB = displayPersonName(personB, nameOrder) || '(unnamed)'
+  ctx.textAlign    = 'center'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = '#3f3f46'
+  ctx.font = '600 10px system-ui,-apple-system,sans-serif'
+  ctx.fillText('RELATIONSHIP', canvasW / 2, CPAD + 14)
+  ctx.fillStyle = '#e4e4e7'
+  ctx.font = '700 15px system-ui,-apple-system,sans-serif'
+  ctx.fillText(`${nameA}  ·  ${nameB}`, canvasW / 2, CPAD + 38)
+  ctx.fillStyle = '#27272a'
+  ctx.fillRect(CPAD, CPAD + 50, canvasW - CPAD * 2, 1)
+
+  const startY = CPAD + HEADER_H
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+
+  function drawAvatar(person: PersonFull, cx: number, cy: number) {
+    const ht        = highlightMap.get(person.id)
+    const ringColor = ht === 'lca' ? '#ef4444' : ht === 'endpoint' ? '#7c3aed' : ht === 'marriage' ? '#3b82f6' : null
+
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(cx, cy, AVATAR_R, 0, Math.PI * 2)
+    ctx.clip()
+    const img = avatarImgs.get(person.id)
+    if (img) {
+      ctx.drawImage(img, cx - AVATAR_R, cy - AVATAR_R, AVATAR_R * 2, AVATAR_R * 2)
+    } else {
+      ctx.fillStyle = '#3f3f46'
+      ctx.fillRect(cx - AVATAR_R, cy - AVATAR_R, AVATAR_R * 2, AVATAR_R * 2)
+    }
+    ctx.restore()
+
+    if (!img) {
+      ctx.fillStyle    = '#a1a1aa'
+      ctx.font         = `700 ${Math.floor(AVATAR_R * 0.55)}px system-ui,-apple-system,sans-serif`
+      ctx.textAlign    = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(displayInitials(person), cx, cy)
+      ctx.textBaseline = 'alphabetic'
+    }
+
+    if (ringColor) {
+      ctx.beginPath()
+      ctx.arc(cx, cy, AVATAR_R + 2.5, 0, Math.PI * 2)
+      ctx.strokeStyle = ringColor
+      ctx.lineWidth   = 2.5
+      ctx.stroke()
+    } else {
+      ctx.beginPath()
+      ctx.arc(cx, cy, AVATAR_R, 0, Math.PI * 2)
+      ctx.strokeStyle = '#3f3f46'
+      ctx.lineWidth   = 1
+      ctx.stroke()
+    }
+
+    const fullName = displayPersonName(person, nameOrder) || '(unnamed)'
+    ctx.font         = '600 11px system-ui,-apple-system,sans-serif'
+    ctx.textAlign    = 'center'
+    ctx.textBaseline = 'alphabetic'
+    let name = fullName
+    while (ctx.measureText(name).width > CCARD_W - 8 && name.length > 3) {
+      name = name.slice(0, -4) + '…'
+    }
+    ctx.fillStyle = ht === 'lca' ? '#fca5a5' : '#f4f4f5'
+    ctx.fillText(name, cx, cy + AVATAR_R + 18)
+
+    if (ht === 'lca') {
+      ctx.fillStyle = '#f87171'
+      ctx.font      = '700 7px system-ui,-apple-system,sans-serif'
+      ctx.fillText('LCA', cx, cy + AVATAR_R + 30)
+    }
+
+    const by = person.birth_date ? person.birth_date.slice(0, 4) : person.birth_year != null ? String(person.birth_year) : null
+    const dy = person.death_date ? person.death_date.slice(0, 4) : person.death_year != null ? String(person.death_year) : null
+    const years = [by, dy].filter(Boolean).join('–')
+    if (years) {
+      ctx.fillStyle = '#52525b'
+      ctx.font      = '400 9px system-ui,-apple-system,sans-serif'
+      ctx.fillText(years, cx, cy + AVATAR_R + (ht === 'lca' ? 42 : 31))
+    }
+  }
+
+  function drawHEdge(sx: number, ex: number, lineY: number, edge: PathEdge) {
+    ctx.beginPath()
+    ctx.setLineDash(edge.blood ? [] : [5, 3])
+    ctx.strokeStyle = edge.blood ? '#52525b' : '#6d28d9'
+    ctx.lineWidth   = 1.5
+    ctx.moveTo(sx, lineY)
+    ctx.lineTo(ex, lineY)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    const label = LABEL_TEXT[edge.label].toUpperCase()
+    ctx.font     = '600 7px system-ui,-apple-system,sans-serif'
+    const tw = ctx.measureText(label).width
+    const bw = tw + 10, bh = 14, mx = (sx + ex) / 2
+    const bx = mx - bw / 2, by2 = lineY + 5
+
+    roundRect(ctx, bx, by2, bw, bh, 3)
+    ctx.fillStyle = edge.blood ? '#1a1a1e' : '#1e1b4b'
+    ctx.fill()
+    roundRect(ctx, bx, by2, bw, bh, 3)
+    ctx.strokeStyle = edge.blood ? '#3f3f46' : '#3730a3'
+    ctx.lineWidth   = 0.5
+    ctx.stroke()
+
+    ctx.fillStyle    = edge.blood ? '#71717a' : '#818cf8'
+    ctx.textAlign    = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, mx, by2 + bh / 2)
+    ctx.textBaseline = 'alphabetic'
+  }
+
+  function drawVEdge(turnX: number, topY: number, botY: number, edge: PathEdge) {
+    const label = LABEL_TEXT[edge.label].toUpperCase()
+    ctx.font     = '600 7px system-ui,-apple-system,sans-serif'
+    const tw = ctx.measureText(label).width
+    const bw = tw + 10, bh = 14
+    const midY = (topY + botY) / 2
+    const bx = turnX - bw / 2, by2 = midY - bh / 2
+
+    ctx.beginPath()
+    ctx.setLineDash(edge.blood ? [] : [5, 3])
+    ctx.strokeStyle = edge.blood ? '#52525b' : '#6d28d9'
+    ctx.lineWidth   = 1.5
+    ctx.moveTo(turnX, topY)
+    ctx.lineTo(turnX, by2)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(turnX, by2 + bh)
+    ctx.lineTo(turnX, botY)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    roundRect(ctx, bx, by2, bw, bh, 3)
+    ctx.fillStyle = edge.blood ? '#1a1a1e' : '#1e1b4b'
+    ctx.fill()
+    roundRect(ctx, bx, by2, bw, bh, 3)
+    ctx.strokeStyle = edge.blood ? '#3f3f46' : '#3730a3'
+    ctx.lineWidth   = 0.5
+    ctx.stroke()
+
+    ctx.fillStyle    = edge.blood ? '#71717a' : '#818cf8'
+    ctx.textAlign    = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, turnX, midY)
+    ctx.textBaseline = 'alphabetic'
+  }
+
+  // ── Draw rows ─────────────────────────────────────────────────────────────
+
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri]
+    const n   = row.persons.length
+    const rowY   = startY + ri * (CARD_BODY_H + CTURN_H)
+    const avatarY = rowY + AVATAR_R + 4
+
+    for (let i = 0; i < n; i++) {
+      const px = CPAD + (row.isRTL ? (nCols - 1 - i) * SLOT_W : i * SLOT_W)
+      drawAvatar(row.persons[i], px + CCARD_W / 2, avatarY)
+
+      if (i < n - 1) {
+        const sx = row.isRTL
+          ? CPAD + (nCols - 2 - i) * SLOT_W + CCARD_W
+          : CPAD + i * SLOT_W + CCARD_W
+        drawHEdge(sx, sx + CEDGE_W, avatarY, row.edges[i])
+      }
+    }
+
+    if (row.turnEdge) {
+      const turnX   = row.isRTL ? CPAD + CCARD_W / 2 : CPAD + (n - 1) * SLOT_W + CCARD_W / 2
+      const turnTopY = rowY + CARD_BODY_H + 2
+      const turnBotY = rowY + CARD_BODY_H + CTURN_H - 2
+      drawVEdge(turnX, turnTopY, turnBotY, row.turnEdge)
+    }
+  }
+
+  // ── Footer ────────────────────────────────────────────────────────────────
+
+  if (steps > 0) {
+    const fy = startY + chainH + 20
+    ctx.fillStyle = '#27272a'
+    ctx.fillRect(CPAD, fy - 10, canvasW - CPAD * 2, 1)
+
+    ctx.textBaseline = 'middle'
+    ctx.textAlign    = 'left'
+    ctx.font         = '600 11px system-ui,-apple-system,sans-serif'
+    ctx.fillStyle    = isBloodOnly ? '#fda4af' : '#93c5fd'
+    ctx.fillText(isBloodOnly ? '♥ Blood relatives' : '♥ Related by marriage', CPAD, fy + 10)
+
+    ctx.textAlign = 'right'
+    ctx.fillStyle = '#3f3f46'
+    ctx.font      = '400 11px system-ui,-apple-system,sans-serif'
+    ctx.fillText(`${steps} ${steps === 1 ? 'step' : 'steps'}`, canvasW - CPAD, fy + 10)
+
+    if (lcaId) {
+      const lcaP = byId.get(lcaId)
+      if (lcaP) {
+        ctx.textAlign = 'left'
+        ctx.fillStyle = '#fca5a5'
+        ctx.font      = '400 9px system-ui,-apple-system,sans-serif'
+        ctx.fillText(`LCA: ${displayPersonName(lcaP, nameOrder)}`, CPAD, fy + 28)
+      }
+    }
+    ctx.textBaseline = 'alphabetic'
+  }
+
+  // Watermark
+  ctx.fillStyle    = '#27272a'
+  ctx.font         = '400 8px system-ui,-apple-system,sans-serif'
+  ctx.textAlign    = 'right'
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillText('Mnemosyne', canvasW - CPAD / 2, canvasH - 10)
+
+  // Download
+  const safeName = `${nameA}_${nameB}`.replace(/[^a-zA-Z0-9_-]/g, '_')
+  canvas.toBlob(blob => {
+    if (!blob) return
+    const url = URL.createObjectURL(blob)
+    const a   = document.createElement('a')
+    a.download = `relationship_${safeName}.png`
+    a.href = url
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }, 'image/png')
+}
+
 // ── Main modal ─────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -244,6 +564,7 @@ interface Props {
 
 export default function RelationPathModal({ personA, personB, persons, relations, onClose, onNavigate }: Props) {
   const { nameOrder } = useSettings()
+  const [exporting, setExporting] = useState(false)
   const byId = new Map(persons.map(p => [p.id, p]))
 
   const path = findPath(personA.id, personB.id, relations)
@@ -388,64 +709,93 @@ export default function RelationPathModal({ personA, personB, persons, relations
         </div>
 
         {/* Footer */}
-        {hasPath && steps > 0 && (
+        {hasPath && (
           <div className="flex flex-wrap items-center gap-3 px-5 py-3 bg-zinc-950/50 border-t border-zinc-800">
-            <div className={[
-              'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium',
-              isBloodOnly
-                ? 'bg-rose-950/60 text-rose-300 border border-rose-900/50'
-                : 'bg-blue-950/60 text-blue-300 border border-blue-900/50',
-            ].join(' ')}>
-              {isBloodOnly ? (
-                <>
-                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                    <path d="M10 3C7 7 4 10 4 13a6 6 0 0012 0c0-3-3-6-6-10z" />
-                  </svg>
-                  Blood relatives
-                </>
-              ) : (
-                <>
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                  </svg>
-                  Related by marriage
-                </>
-              )}
-            </div>
-
-            {lcaId && (
-              <div className="relative group/lca">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-rose-950/60 text-rose-300 border border-rose-900/50 cursor-default select-none">
-                  <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m8-9h1M3 12H2m15.07-6.07l.707.707M5.636 18.364l-.707.707M18.364 18.364l.707-.707M5.636 5.636l-.707-.707" />
-                  </svg>
-                  <span className="text-rose-500/70 mr-0.5">LCA:</span>
-                  {displayPersonName(byId.get(lcaId) ?? {}, nameOrder)}
-                  {!lcaInChain && (
-                    <span className="text-rose-600/60 ml-0.5">(not in path)</span>
+            {steps > 0 && (
+              <>
+                <div className={[
+                  'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium',
+                  isBloodOnly
+                    ? 'bg-rose-950/60 text-rose-300 border border-rose-900/50'
+                    : 'bg-blue-950/60 text-blue-300 border border-blue-900/50',
+                ].join(' ')}>
+                  {isBloodOnly ? (
+                    <>
+                      <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M10 3C7 7 4 10 4 13a6 6 0 0012 0c0-3-3-6-6-10z" />
+                      </svg>
+                      Blood relatives
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                      </svg>
+                      Related by marriage
+                    </>
                   )}
                 </div>
-                {/* Tooltip */}
-                <div className="pointer-events-none absolute bottom-full left-0 mb-2 w-64 opacity-0 group-hover/lca:opacity-100 transition-opacity duration-150 z-10">
-                  <div className="bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl p-3">
-                    <p className="text-[11px] font-semibold text-zinc-100 mb-1">Lowest Common Ancestor</p>
-                    <p className="text-[10px] text-zinc-400 leading-relaxed">
-                      The nearest ancestor from whom both persons directly descend. Among equidistant candidates, a male ancestor is preferred.
-                    </p>
-                    {!lcaInChain && (
-                      <p className="text-[10px] text-rose-400/80 mt-1.5 leading-relaxed">
-                        This ancestor is not shown in the path above because the connection was found via a sibling relation.
-                      </p>
-                    )}
+
+                {lcaId && (
+                  <div className="relative group/lca">
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-rose-950/60 text-rose-300 border border-rose-900/50 cursor-default select-none">
+                      <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m8-9h1M3 12H2m15.07-6.07l.707.707M5.636 18.364l-.707.707M18.364 18.364l.707-.707M5.636 5.636l-.707-.707" />
+                      </svg>
+                      <span className="text-rose-500/70 mr-0.5">LCA:</span>
+                      {displayPersonName(byId.get(lcaId) ?? {}, nameOrder)}
+                      {!lcaInChain && (
+                        <span className="text-rose-600/60 ml-0.5">(not in path)</span>
+                      )}
+                    </div>
+                    {/* Tooltip */}
+                    <div className="pointer-events-none absolute bottom-full left-0 mb-2 w-64 opacity-0 group-hover/lca:opacity-100 transition-opacity duration-150 z-10">
+                      <div className="bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl p-3">
+                        <p className="text-[11px] font-semibold text-zinc-100 mb-1">Lowest Common Ancestor</p>
+                        <p className="text-[10px] text-zinc-400 leading-relaxed">
+                          The nearest ancestor from whom both persons directly descend. Among equidistant candidates, a male ancestor is preferred.
+                        </p>
+                        {!lcaInChain && (
+                          <p className="text-[10px] text-rose-400/80 mt-1.5 leading-relaxed">
+                            This ancestor is not shown in the path above because the connection was found via a sibling relation.
+                          </p>
+                        )}
+                      </div>
+                      <div className="w-2 h-2 bg-zinc-800 border-b border-r border-zinc-700 rotate-45 ml-4 -mt-1" />
+                    </div>
                   </div>
-                  <div className="w-2 h-2 bg-zinc-800 border-b border-r border-zinc-700 rotate-45 ml-4 -mt-1" />
-                </div>
-              </div>
+                )}
+
+                <span className="text-[11px] text-zinc-600">
+                  {steps} {steps === 1 ? 'step' : 'steps'}
+                </span>
+              </>
             )}
 
-            <span className="text-[11px] text-zinc-600 ml-auto">
-              {steps} {steps === 1 ? 'step' : 'steps'}
-            </span>
+            <button
+              onClick={async () => {
+                setExporting(true)
+                try {
+                  await exportRelationPathPNG(chainPersons, path!, highlightMap, personA, personB, nameOrder, lcaId, byId, isBloodOnly, steps)
+                } finally {
+                  setExporting(false)
+                }
+              }}
+              disabled={exporting}
+              className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {exporting ? (
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                </svg>
+              ) : (
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              )}
+              {exporting ? 'Exporting…' : 'Export PNG'}
+            </button>
           </div>
         )}
       </div>

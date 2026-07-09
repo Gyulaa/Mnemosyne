@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage
 from . import scanner as scanner_mod
 from . import clusterer
 from . import export_utils
@@ -32,6 +32,7 @@ from .schemas import (
     SourceCreate, SourceUpdate, CitationCreate, PromoteToSourceRequest,
     NoteCreate, NoteUpdate, NoteCitationCreate,
     EventCreate, EventUpdate, EventImageAdd, EventPersonAdd,
+    BulkDownloadRequest,
 )
 from .image_utils import load_image_bgr, crop_thumbnail
 
@@ -2000,6 +2001,139 @@ def delete_document(doc_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@app.post("/api/documents/bulk-download")
+def bulk_download_documents(body: BulkDownloadRequest, db: Session = Depends(get_db)):
+    import zipfile as _zf
+    import re as _re
+
+    _person_ref_re = _re.compile(r"@\[([^\]]+)\]\(#pid-\d+\)")
+    _md_link_re    = _re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+    def _plain(text: str) -> str:
+        text = _person_ref_re.sub(r"\1", text)
+        text = _md_link_re.sub(r"\1", text)
+        return text.strip()
+
+    docs = (
+        db.query(DBDocument)
+        .filter(DBDocument.id.in_(body.ids))
+        .all()
+    )
+    if not docs:
+        raise HTTPException(404, "No documents found")
+
+    docs_dir = _docs_dir()
+
+    # Build deduplicated archive filenames
+    used: dict[str, int] = {}
+    archive_names: dict[int, str] = {}
+    for doc in docs:
+        base = doc.filename or doc.stored_name
+        if base not in used:
+            used[base] = 0
+            archive_names[doc.id] = base
+        else:
+            used[base] += 1
+            name, _, ext = base.rpartition(".")
+            archive_names[doc.id] = f"{name} ({used[base]}).{ext}" if ext else f"{base} ({used[base]})"
+
+    buf = io.BytesIO()
+    with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED, allowZip64=True) as zf:
+
+        index_parts: list[str] = []
+
+        for i, doc in enumerate(docs, 1):
+            # Add the file
+            file_path = docs_dir / doc.stored_name
+            if file_path.exists():
+                zf.write(str(file_path), archive_names[doc.id])
+
+            if body.include_notes:
+                # ── Build index entry ─────────────────────────────────────
+                header_parts = []
+                if doc.doc_type:
+                    header_parts.append(doc.doc_type.replace("_", " ").title())
+                if doc.year:
+                    header_parts.append(str(doc.year))
+                header_meta = " | ".join(header_parts)
+
+                persons = (
+                    db.query(DBPerson)
+                    .join(DBDocumentPerson, DBDocumentPerson.person_id == DBPerson.id)
+                    .filter(DBDocumentPerson.document_id == doc.id)
+                    .order_by(DBPerson.name)
+                    .all()
+                )
+                person_names = ", ".join(p.name or "(unnamed)" for p in persons) or "—"
+
+                lines: list[str] = []
+                title = doc.title or doc.filename
+                lines.append(f"[{i}] {title}")
+                lines.append("    " + "─" * max(len(title) + 4, 20))
+                if header_meta:
+                    lines.append(f"    {header_meta}")
+                lines.append(f"    File:    {archive_names[doc.id]}")
+                lines.append(f"    Persons: {person_names}")
+                if doc.description:
+                    lines.append(f"    Description: {_plain(doc.description)}")
+
+                notes = (
+                    db.query(DBDocumentNote)
+                    .filter(DBDocumentNote.document_id == doc.id)
+                    .order_by(DBDocumentNote.sort_order)
+                    .all()
+                )
+                if notes:
+                    lines.append("")
+                    lines.append("    Notes:")
+                    for note in notes:
+                        if note.title:
+                            lines.append(f"    ▸ {note.title}")
+                        content = _plain(note.content or "")
+                        for line in content.splitlines():
+                            lines.append(f"      {line}")
+                        cites = sorted(note.note_citations, key=lambda c: c.marker)
+                        if cites:
+                            cite_strs = []
+                            for nc in cites:
+                                if nc.source:
+                                    s = nc.source
+                                    label = s.title
+                                    if s.year:
+                                        label += f" ({s.year})"
+                                    if nc.detail:
+                                        label += f" — {nc.detail}"
+                                elif nc.custom_label:
+                                    label = nc.custom_label
+                                    if nc.detail:
+                                        label += f" — {nc.detail}"
+                                else:
+                                    label = f"[{nc.marker}]"
+                                cite_strs.append(f"      [{nc.marker}] {label}")
+                            lines.append("      Sources:")
+                            lines.extend(cite_strs)
+
+                index_parts.append("\n".join(lines))
+
+        if body.include_notes and index_parts:
+            header = (
+                "Documents Export\n"
+                "================\n"
+                f"Exported: {datetime.utcnow().strftime('%Y-%m-%d')}\n"
+                f"Files: {len(docs)}\n"
+                "\n"
+            )
+            index_text = header + "\n\n".join(index_parts) + "\n"
+            zf.writestr("_index.txt", index_text.encode("utf-8"))
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="documents.zip"'},
+    )
+
+
 # ── Sources ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/sources")
@@ -2268,6 +2402,123 @@ def delete_note_citation(nc_id: int, db: Session = Depends(get_db)):
     nc = db.get(DBNoteCitation, nc_id)
     if not nc:
         raise HTTPException(404, "Note citation not found")
+    db.delete(nc)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Document notes ────────────────────────────────────────────────────────────
+
+def _doc_note_citation_dict(nc: "DBDocumentNoteCitation") -> dict:
+    src = nc.source
+    return {
+        "id": nc.id, "note_id": nc.note_id,
+        "source_id": nc.source_id,
+        "marker": nc.marker, "detail": nc.detail,
+        "custom_label": nc.custom_label,
+        "source_title": src.title if src else None,
+        "source_type": src.source_type if src else None,
+        "source_document_id": src.document_id if src else None,
+        "source_event_id": src.event_id if src else None,
+        "source_year": src.year if src else None,
+        "source_author": src.author if src else None,
+    }
+
+
+def _doc_note_dict(n: "DBDocumentNote") -> dict:
+    return {
+        "id": n.id, "document_id": n.document_id,
+        "title": n.title, "content": n.content,
+        "sort_order": n.sort_order,
+        "created_at": n.created_at, "updated_at": n.updated_at,
+        "citations": sorted(
+            [_doc_note_citation_dict(nc) for nc in n.note_citations],
+            key=lambda x: x["marker"],
+        ),
+    }
+
+
+@app.get("/api/documents/{doc_id}/notes")
+def list_doc_notes(doc_id: int, db: Session = Depends(get_db)):
+    notes = (
+        db.query(DBDocumentNote)
+        .filter_by(document_id=doc_id)
+        .order_by(DBDocumentNote.sort_order, DBDocumentNote.id)
+        .all()
+    )
+    return [_doc_note_dict(n) for n in notes]
+
+
+@app.post("/api/documents/{doc_id}/notes", status_code=201)
+def create_doc_note(doc_id: int, body: NoteCreate, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    now = datetime.utcnow().isoformat()
+    n = DBDocumentNote(
+        document_id=doc_id,
+        title=body.title,
+        content=body.content or "",
+        sort_order=body.sort_order or 0,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(n)
+    db.commit()
+    db.refresh(n)
+    return _doc_note_dict(n)
+
+
+@app.patch("/api/document-notes/{note_id}")
+def update_doc_note(note_id: int, body: NoteUpdate, db: Session = Depends(get_db)):
+    n = db.get(DBDocumentNote, note_id)
+    if not n:
+        raise HTTPException(404, "Note not found")
+    if body.title is not None:
+        n.title = body.title
+    if body.content is not None:
+        n.content = body.content
+    n.updated_at = datetime.utcnow().isoformat()
+    db.commit()
+    db.refresh(n)
+    return _doc_note_dict(n)
+
+
+@app.delete("/api/document-notes/{note_id}")
+def delete_doc_note(note_id: int, db: Session = Depends(get_db)):
+    n = db.get(DBDocumentNote, note_id)
+    if not n:
+        raise HTTPException(404, "Note not found")
+    db.delete(n)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/document-notes/{note_id}/citations", status_code=201)
+def add_doc_note_citation(note_id: int, body: NoteCitationCreate, db: Session = Depends(get_db)):
+    n = db.get(DBDocumentNote, note_id)
+    if not n:
+        raise HTTPException(404, "Note not found")
+    if body.source_id is None and not body.custom_label:
+        raise HTTPException(400, "Either source_id or custom_label is required")
+    nc = DBDocumentNoteCitation(
+        note_id=note_id,
+        source_id=body.source_id,
+        marker=body.marker,
+        detail=body.detail,
+        custom_label=body.custom_label,
+    )
+    db.add(nc)
+    db.commit()
+    db.refresh(nc)
+    return _doc_note_citation_dict(nc)
+
+
+@app.delete("/api/document-note-citations/{nc_id}")
+def delete_doc_note_citation(nc_id: int, db: Session = Depends(get_db)):
+    nc = db.get(DBDocumentNoteCitation, nc_id)
+    if not nc:
+        raise HTTPException(404, "Citation not found")
     db.delete(nc)
     db.commit()
     return {"ok": True}

@@ -107,6 +107,7 @@ class Document(Base):
     person = relationship("Person", back_populates="documents")
     source = relationship("Source", back_populates="document", uselist=False)
     linked_persons = relationship("DocumentPerson", back_populates="document", cascade="all, delete-orphan")
+    document_notes = relationship("DocumentNote", back_populates="document", cascade="all, delete-orphan")
 
 
 class DocumentPerson(Base):
@@ -148,6 +149,31 @@ class NoteCitation(Base):
     detail = Column(String, nullable=True)     # page / timestamp / extra info
     custom_label = Column(String, nullable=True)  # free-text label when source_id is NULL
     note = relationship("PersonNote", back_populates="note_citations")
+    source = relationship("Source")
+
+
+class DocumentNote(Base):
+    __tablename__ = "document_notes"
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    title = Column(String, nullable=True)
+    content = Column(String, nullable=False, default='')
+    sort_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(String, nullable=True)
+    updated_at = Column(String, nullable=True)
+    document = relationship("Document", back_populates="document_notes")
+    note_citations = relationship("DocumentNoteCitation", back_populates="note", cascade="all, delete-orphan")
+
+
+class DocumentNoteCitation(Base):
+    __tablename__ = "document_note_citations"
+    id = Column(Integer, primary_key=True, index=True)
+    note_id = Column(Integer, ForeignKey("document_notes.id"), nullable=False, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True)
+    marker = Column(Integer, nullable=False)
+    detail = Column(String, nullable=True)
+    custom_label = Column(String, nullable=True)
+    note = relationship("DocumentNote", back_populates="note_citations")
     source = relationship("Source")
 
 
@@ -423,6 +449,30 @@ def init_db_schema(engine):
                 event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
                 image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
                 UNIQUE(event_id, image_id)
+            )
+        """))
+        conn.commit()
+
+        # Document notes + citations
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS document_notes (
+                id          INTEGER PRIMARY KEY,
+                document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                title       TEXT,
+                content     TEXT NOT NULL DEFAULT '',
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT,
+                updated_at  TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS document_note_citations (
+                id           INTEGER PRIMARY KEY,
+                note_id      INTEGER NOT NULL REFERENCES document_notes(id) ON DELETE CASCADE,
+                source_id    INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+                marker       INTEGER NOT NULL,
+                detail       TEXT,
+                custom_label TEXT
             )
         """))
         conn.commit()

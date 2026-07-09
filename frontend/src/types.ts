@@ -229,6 +229,17 @@ export interface PersonNote {
   citations: NoteCitation[]
 }
 
+export interface DocumentNote {
+  id: number
+  document_id: number
+  title: string | null
+  content: string
+  sort_order: number
+  created_at: string | null
+  updated_at: string | null
+  citations: NoteCitation[]
+}
+
 export interface Citation {
   id: number
   source_id: number

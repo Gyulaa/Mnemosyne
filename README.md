@@ -92,6 +92,10 @@ The genealogy module is the heart of the application.
 - Image preview (JPEG, PNG) and PDF link in the document viewer modal
 - Each document shows its associated person with a one-click link to their profile
 - Documents are searchable via the global search palette
+- **Table view** with columns: thumbnail/icon, title, type, year, linked persons, and per-row actions
+- **Filter bar**: text search, type dropdown, searchable person combobox (shows birth/death year and occupation to distinguish persons with identical names)
+- **Notes**: notes with citations and @person mentions can be attached to documents, editable directly in the viewer modal
+- **Bulk selection and ZIP download**: see [Document bulk download](#document-bulk-download) below
 
 ### Global Search
 - **Ctrl+K** (or **Cmd+K** on macOS) opens the search palette from anywhere in the app
@@ -102,8 +106,9 @@ The genealogy module is the heart of the application.
 ### Relationship Path Finder
 - Select any two persons and find the shortest relationship path between them
 - Snake-layout chain display (up to 5 persons per row)
-- Blood-relative vs. marriage-relative badge
+- Blood-relative vs. marriage-relative badge, Lowest Common Ancestor (LCA) annotation
 - Available from the person profile panel
+- **Export as PNG** — exports the displayed chain as a high-resolution image; see [Relationship path export](#relationship-path-export) below
 
 ---
 
@@ -113,6 +118,74 @@ The genealogy module is the heart of the application.
 - Create, rename, and delete collections — including the currently active one
 - Use the project switcher in the header to switch between projects
 - Each project lives in its own directory (`projects/<id>/`) with its own SQLite database
+
+### Relationship path export
+
+The relationship path modal includes an **Export PNG** button in its footer. Clicking it renders the currently displayed snake-layout chain to an offscreen Canvas and downloads it as `relationship_<nameA>_<nameB>.png`.
+
+**What the image contains**
+
+- Dark (#09090b) background at 2× pixel density (crisp on HiDPI screens)
+- Header with both person names
+- Full snake-layout chain — same row/column structure as the modal, scaled up for legibility (120 px card slots, 72 px connectors)
+- Each card shows: circular avatar (photo or initials), full name truncated with ellipsis if needed, birth–death years
+- Highlight rings: violet for endpoints, rose for the Lowest Common Ancestor, blue for marriage-bridge persons
+- Edge labels on horizontal connectors (solid line for blood, dashed for marriage) and vertical turn connectors between rows
+- Footer with blood-vs-marriage badge, step count, and LCA name (when applicable)
+
+The function is entirely client-side (Canvas 2D API); avatar images are pre-loaded before drawing so they appear in the export.
+
+### Document bulk download
+
+Individual documents can be downloaded from the Documents tab as a ZIP archive without exporting the entire project database.
+
+**How to use**
+
+1. Open the **Documents** tab.
+2. Click the checkbox that appears on hover at the left of any row to select it. The header checkbox selects or deselects all currently visible (filtered) rows.
+3. A floating action bar appears at the bottom of the tab showing the count of selected documents.
+4. Toggle **Include notes** (on by default) to control whether a `_index.txt` manifest is added to the archive.
+5. Click **Download ZIP** — the browser downloads `documents.zip`.
+
+**Archive contents**
+
+| Path | Description |
+|------|-------------|
+| `<filename>` | The original document file (e.g. `birth_cert.pdf`). If two selected documents share the same filename the second is renamed to `<name> (2).<ext>`. |
+| `_index.txt` | Plain-text manifest listing each document's title, type, year, linked persons, description, and the full text of all attached notes with source citations. Included only when *Include notes* is enabled. |
+
+**`_index.txt` format example**
+
+```
+Documents Export
+================
+Exported: 2026-07-09
+Files: 3
+
+[1] Nyelvvizsga
+    ─────────────────────────
+    Document | 2024
+    File:    anglob2.jpg
+    Persons: Miklós Gyula
+    Description: language exam
+
+    Notes:
+    ▸ Exam note
+      Passed B2 English. See Miklós Gyula for more context.
+      Sources:
+        [1] Parish register 1872 — p. 14
+
+[2] Birth Certificate
+    ...
+```
+
+Person mention syntax (`@[Name](#pid-ID)`) and Markdown links are automatically stripped to plain text in the index file.
+
+**Backend endpoint**
+
+`POST /api/documents/bulk-download` — accepts `{ ids: number[], include_notes: boolean }`, streams back a `application/zip` response.
+
+---
 
 ### ZIP export
 
