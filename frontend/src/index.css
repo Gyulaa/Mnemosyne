@@ -18,3 +18,24 @@
   0%   { transform: translateX(-100%); }
   100% { transform: translateX(350%); }
 }
+
+/* Note editor — rendered markdown styles */
+.note-preview a.note-ref,
+.note-content a.note-ref {
+  color: #d97706; /* amber-600 */
+  text-decoration: none;
+  font-size: 0.7em;
+  vertical-align: super;
+}
+.note-preview a.note-ref:hover,
+.note-content a.note-ref:hover { text-decoration: underline; }
+
+.note-preview a.note-person-ref,
+.note-content a.note-person-ref {
+  color: #a855f7; /* brand-400 */
+  text-decoration: none;
+  font-weight: 500;
+  cursor: pointer;
+}
+.note-preview a.note-person-ref:hover,
+.note-content a.note-person-ref:hover { text-decoration: underline; }

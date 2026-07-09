@@ -49,7 +49,8 @@ _MD_PATTERNS = [
     (re.compile(r'_{1,3}'), ''),                 # bold/italic underscores
     (re.compile(r'~~'), ''),                     # strikethrough
     (re.compile(r'`([^`]*)`'), r'\1'),           # inline code
-    (re.compile(r'\[([^\]]*)\]\([^)]*\)'), r'\1'),  # [text](url)
+    (re.compile(r'@\[([^\]]+)\]\(#pid-\d+\)'), r'\1'),  # @[Name](#pid-ID) → Name
+    (re.compile(r'\[([^\]]*)\]\([^)]*\)'), r'\1'),       # [text](url) → text
     (re.compile(r'^>\s*', re.M), ''),            # blockquote
     (re.compile(r'^[-*+]\s+', re.M), ''),        # list markers
     (re.compile(r'\[\d+\]'), ''),                # citation markers [n]
@@ -340,9 +341,14 @@ def build_gedcom_zip(
                     cites = sorted(cites_by_note.get(note['id'], []), key=lambda c: c['marker'])
                     refs = []
                     for nc in cites:
-                        src = sources_by_id.get(nc['source_id'])
+                        src = sources_by_id.get(nc['source_id']) if nc['source_id'] else None
                         if src:
                             ref = f"[{nc['marker']}] {src['title']}"
+                            if nc['detail']:
+                                ref += f", {nc['detail']}"
+                            refs.append(ref)
+                        elif nc['custom_label']:
+                            ref = f"[{nc['marker']}] {nc['custom_label']}"
                             if nc['detail']:
                                 ref += f", {nc['detail']}"
                             refs.append(ref)

@@ -98,9 +98,10 @@ class NoteUpdate(BaseModel):
 
 
 class NoteCitationCreate(BaseModel):
-    source_id: int
+    source_id: Optional[int] = None   # NULL for custom-text citations
     marker: int
     detail: Optional[str] = None
+    custom_label: Optional[str] = None  # free-text label when source_id is absent
 
 
 class EventCreate(BaseModel):

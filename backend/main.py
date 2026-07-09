@@ -2141,6 +2141,7 @@ def _note_citation_dict(nc: "DBNoteCitation") -> dict:
         "source_id": nc.source_id,
         "marker": nc.marker,
         "detail": nc.detail,
+        "custom_label": getattr(nc, 'custom_label', None),
         "source_title": nc.source.title if nc.source else None,
         "source_type": nc.source.source_type if nc.source else None,
         "source_document_id": nc.source.document_id if nc.source else None,
@@ -2233,13 +2234,16 @@ def add_note_citation(note_id: int, body: NoteCitationCreate, db: Session = Depe
     n = db.get(DBPersonNote, note_id)
     if not n:
         raise HTTPException(404, "Note not found")
-    if not db.get(DBSource, body.source_id):
+    if body.source_id is not None and not db.get(DBSource, body.source_id):
         raise HTTPException(404, "Source not found")
+    if body.source_id is None and not body.custom_label:
+        raise HTTPException(400, "Either source_id or custom_label is required")
     nc = DBNoteCitation(
         note_id=note_id,
         source_id=body.source_id,
         marker=body.marker,
         detail=body.detail,
+        custom_label=body.custom_label,
     )
     db.add(nc)
     db.commit()
