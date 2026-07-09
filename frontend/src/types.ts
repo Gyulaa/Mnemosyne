@@ -206,9 +206,10 @@ export interface Source {
 export interface NoteCitation {
   id: number
   note_id: number
-  source_id: number
+  source_id: number | null
   marker: number
   detail: string | null
+  custom_label: string | null
   source_title: string | null
   source_type: string | null
   source_document_id: number | null

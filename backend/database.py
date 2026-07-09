@@ -143,9 +143,10 @@ class NoteCitation(Base):
     __tablename__ = "note_citations"
     id = Column(Integer, primary_key=True, index=True)
     note_id = Column(Integer, ForeignKey("person_notes.id"), nullable=False, index=True)
-    source_id = Column(Integer, ForeignKey("sources.id"), nullable=False)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True)   # NULL for custom-text citations
     marker = Column(Integer, nullable=False)   # 1, 2, 3 … — the [n] in text
-    detail = Column(String, nullable=True)     # page / timestamp
+    detail = Column(String, nullable=True)     # page / timestamp / extra info
+    custom_label = Column(String, nullable=True)  # free-text label when source_id is NULL
     note = relationship("PersonNote", back_populates="note_citations")
     source = relationship("Source")
 
@@ -315,14 +316,39 @@ def init_db_schema(engine):
         """))
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS note_citations (
-                id        INTEGER PRIMARY KEY,
-                note_id   INTEGER NOT NULL REFERENCES person_notes(id) ON DELETE CASCADE,
-                source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-                marker    INTEGER NOT NULL,
-                detail    TEXT
+                id           INTEGER PRIMARY KEY,
+                note_id      INTEGER NOT NULL REFERENCES person_notes(id) ON DELETE CASCADE,
+                source_id    INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+                marker       INTEGER NOT NULL,
+                detail       TEXT,
+                custom_label TEXT
             )
         """))
         conn.commit()
+
+        # Migration: add custom_label + make source_id nullable (recreate table if needed)
+        try:
+            col_info = conn.execute(text("PRAGMA table_info(note_citations)")).mappings().all()
+            col_names = {r['name'] for r in col_info}
+            source_notnull = next((r['notnull'] for r in col_info if r['name'] == 'source_id'), 0)
+            if 'custom_label' not in col_names or source_notnull:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS note_citations_v2 (
+                        id           INTEGER PRIMARY KEY,
+                        note_id      INTEGER NOT NULL REFERENCES person_notes(id) ON DELETE CASCADE,
+                        source_id    INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+                        marker       INTEGER NOT NULL,
+                        detail       TEXT,
+                        custom_label TEXT
+                    )
+                """))
+                existing_cols = ', '.join(c for c in ['id','note_id','source_id','marker','detail','custom_label'] if c in col_names)
+                conn.execute(text(f"INSERT INTO note_citations_v2 ({existing_cols}) SELECT {existing_cols} FROM note_citations"))
+                conn.execute(text("DROP TABLE note_citations"))
+                conn.execute(text("ALTER TABLE note_citations_v2 RENAME TO note_citations"))
+                conn.commit()
+        except Exception:
+            pass
 
         # Migrate old Person.notes → first PersonNote entry (idempotent)
         try:

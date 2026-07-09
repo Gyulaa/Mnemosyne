@@ -320,7 +320,7 @@ export const api = {
       patch<PersonNote>(`${BASE}/notes/${id}`, fields),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/notes/${id}`, { method: 'DELETE' }),
-    addCitation: (noteId: number, fields: { source_id: number; marker: number; detail?: string }) =>
+    addCitation: (noteId: number, fields: { source_id?: number; marker: number; detail?: string; custom_label?: string }) =>
       post<NoteCitation>(`${BASE}/notes/${noteId}/citations`, fields),
     updateCitation: (id: number, fields: { source_id?: number; marker?: number; detail?: string }) =>
       patch<NoteCitation>(`${BASE}/note-citations/${id}`, fields),

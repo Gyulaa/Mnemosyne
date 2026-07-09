@@ -2170,9 +2170,12 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   key={note.id}
                   note={note}
                   sources={sources}
+                  persons={persons}
+                  relations={relations}
                   onUpdated={() => refetchNotes()}
                   onDeleted={() => refetchNotes()}
                   onNavToEvent={onNavToEvent}
+                  onNavToPerson={onNavigateTo}
                   personId={person.id}
                 />
               ))}
@@ -2180,6 +2183,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 <NoteEditorComponent
                   note={newNoteShell}
                   sources={sources}
+                  persons={persons}
+                  relations={relations}
+                  onNavToPerson={onNavigateTo}
                   onSaved={() => { refetchNotes(); setCreatingNote(false); setNewNoteShell(null) }}
                   onDeleted={() => { refetchNotes(); setCreatingNote(false); setNewNoteShell(null) }}
                   onCancel={async () => {

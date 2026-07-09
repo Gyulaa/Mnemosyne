@@ -177,7 +177,7 @@ def build_export_db(
 
         # ── Sources & Citations ───────────────────────────────────────────────
         if not include_sources:
-            conn.execute("DELETE FROM note_citations")
+            conn.execute("DELETE FROM note_citations WHERE source_id IS NOT NULL")
             conn.execute("DELETE FROM citations")
             conn.execute("DELETE FROM sources")
             conn.commit()
