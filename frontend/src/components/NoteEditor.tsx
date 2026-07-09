@@ -3,8 +3,17 @@ import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import type { PersonNote, NoteCitation, Source, PersonEvent, PersonFull, Relation } from '../types'
+import type { PersonNote, DocumentNote, NoteCitation, Source, PersonEvent, PersonFull, Relation } from '../types'
 import { api } from '../api'
+
+// ── NoteOps — injectable API operations (supports person notes & document notes) ─
+
+export interface NoteOps {
+  update: (id: number, fields: { title?: string | null; content?: string }) => Promise<{ id: number; title: string | null; content: string; updated_at: string | null }>
+  delete: (id: number) => Promise<unknown>
+  addCitation: (noteId: number, fields: { source_id?: number; marker: number; detail?: string; custom_label?: string }) => Promise<NoteCitation>
+  deleteCitation: (id: number) => Promise<unknown>
+}
 import { useSettings, displayPersonName } from '../SettingsContext'
 
 // ── Markdown renderer ─────────────────────────────────────────────────────────
@@ -55,18 +64,20 @@ function ToolbarBtn({ onClick, title, children }: { onClick: () => void; title: 
 // ── NoteEditor ────────────────────────────────────────────────────────────────
 
 interface Props {
-  note: PersonNote
+  note: PersonNote | DocumentNote
   sources: Source[]
   persons?: PersonFull[]
   relations?: Relation[]
+  ops?: NoteOps
   onNavToPerson?: (id: number) => void
-  onSaved: (updated: PersonNote) => void
+  onSaved: (updated: PersonNote | DocumentNote) => void
   onDeleted: () => void
   onCancel: () => void
   autoFocusContent?: boolean
 }
 
-export default function NoteEditor({ note, sources, persons = [], relations = [], onNavToPerson, onSaved, onDeleted, onCancel, autoFocusContent }: Props) {
+export default function NoteEditor({ note, sources, persons = [], relations = [], ops, onNavToPerson, onSaved, onDeleted, onCancel, autoFocusContent }: Props) {
+  const noteOps: NoteOps = ops ?? api.notes
   const { nameOrder } = useSettings()
   const [title, setTitle] = useState(note.title ?? '')
   const [content, setContent] = useState(note.content)
@@ -270,19 +281,19 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
   const save = useCallback(async () => {
     setSaving(true)
     try {
-      const updated = await api.notes.update(note.id, { title: title.trim() || null, content })
+      const updated = await noteOps.update(note.id, { title: title.trim() || null, content })
 
       const existingIds = new Set(note.citations.map(c => c.id))
       const currentIds = new Set(citations.filter(c => c.id > 0).map(c => c.id))
 
       for (const c of note.citations) {
-        if (!currentIds.has(c.id)) await api.notes.deleteCitation(c.id)
+        if (!currentIds.has(c.id)) await noteOps.deleteCitation(c.id)
       }
 
       const finalCitations: NoteCitation[] = []
       for (const c of citations) {
         if (c.id < 0) {
-          const saved = await api.notes.addCitation(note.id, {
+          const saved = await noteOps.addCitation(note.id, {
             source_id: c.source_id ?? undefined,
             marker: c.marker,
             detail: c.detail ?? undefined,
@@ -294,15 +305,15 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
         }
       }
 
-      onSaved({ ...updated, citations: finalCitations })
+      onSaved({ ...updated, citations: finalCitations } as PersonNote | DocumentNote)
     } finally {
       setSaving(false)
     }
-  }, [note, title, content, citations, onSaved])
+  }, [note, title, content, citations, onSaved, noteOps])
 
   async function doDelete() {
     setDeleting(true)
-    try { await api.notes.delete(note.id); onDeleted() }
+    try { await noteOps.delete(note.id); onDeleted() }
     finally { setDeleting(false) }
   }
 
@@ -577,18 +588,19 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
 // ── NoteCard (display mode) ───────────────────────────────────────────────────
 
 interface CardProps {
-  note: PersonNote
+  note: PersonNote | DocumentNote
   sources: Source[]
   persons?: PersonFull[]
   relations?: Relation[]
-  onUpdated: (n: PersonNote) => void
+  ops?: NoteOps
+  onUpdated: (n: PersonNote | DocumentNote) => void
   onDeleted: () => void
   onNavToEvent?: (eventId: number) => void
   onNavToPerson?: (id: number) => void
   personId?: number
 }
 
-export function NoteCard({ note, sources, persons, relations, onUpdated, onDeleted, onNavToEvent, onNavToPerson, personId }: CardProps) {
+export function NoteCard({ note, sources, persons, relations, ops, onUpdated, onDeleted, onNavToEvent, onNavToPerson, personId }: CardProps) {
   const [editing, setEditing] = useState(false)
   const qc = useQueryClient()
 
@@ -645,6 +657,7 @@ export function NoteCard({ note, sources, persons, relations, onUpdated, onDelet
         sources={sources}
         persons={persons}
         relations={relations}
+        ops={ops}
         onNavToPerson={onNavToPerson}
         onSaved={updated => { onUpdated(updated); setEditing(false) }}
         onDeleted={onDeleted}

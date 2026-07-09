@@ -173,11 +173,14 @@ def build_export_db(
         if not include_notes:
             conn.execute("DELETE FROM note_citations")
             conn.execute("DELETE FROM person_notes")
+            conn.execute("DELETE FROM document_note_citations")
+            conn.execute("DELETE FROM document_notes")
             conn.commit()
 
         # ── Sources & Citations ───────────────────────────────────────────────
         if not include_sources:
             conn.execute("DELETE FROM note_citations WHERE source_id IS NOT NULL")
+            conn.execute("DELETE FROM document_note_citations WHERE source_id IS NOT NULL")
             conn.execute("DELETE FROM citations")
             conn.execute("DELETE FROM sources")
             conn.commit()

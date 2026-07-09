@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
-import type { PersonDocument, PersonFull } from '../types'
+import type { PersonDocument, PersonFull, DocumentNote, Source } from '../types'
 import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import { NoteCard } from './NoteEditor'
+import NoteEditorComponent from './NoteEditor'
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   birth_cert:    'Birth certificate',
@@ -38,23 +40,43 @@ function PersonAvatar({ person }: { person: PersonFull }) {
   return <span className="text-sm font-bold text-zinc-300">{init}</span>
 }
 
+
 interface Props {
   doc: PersonDocument
   onClose: () => void
   onNavToPerson: (personId: number) => void
+  onNavToDocument?: (docId: number, editMode?: boolean) => void
 }
 
-export default function DocumentViewer({ doc, onClose, onNavToPerson }: Props) {
+export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDocument }: Props) {
   const { nameOrder } = useSettings()
-  const { data: persons = [] } = useQuery<PersonFull[]>({ queryKey: ['persons'], queryFn: api.persons.list })
-  const { data: types = [] }   = useQuery({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
-  const typeMap = new Map(types.map(t => [t.key, t.label]))
+  const { data: persons = [] }   = useQuery<PersonFull[]>({ queryKey: ['persons'], queryFn: api.persons.list })
+  const { data: types = [] }     = useQuery({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
+  const { data: sources = [] }   = useQuery<Source[]>({ queryKey: ['sources'], queryFn: api.sources.list })
+  const {
+    data: docNotes = [],
+    refetch: refetchNotes,
+  } = useQuery<DocumentNote[]>({
+    queryKey: ['document-notes', doc.id],
+    queryFn: () => api.documentNotes.list(doc.id),
+  })
 
+  const [creatingNote, setCreatingNote] = useState(false)
+  const [newNoteShell, setNewNoteShell] = useState<DocumentNote | null>(null)
+
+  const typeMap = new Map(types.map(t => [t.key, t.label]))
   const fileUrl = api.documents.fileUrl(doc.id)
   const displayName = doc.title || doc.filename
   const typeLabel = typeMap.get(doc.doc_type ?? '') ?? DOC_TYPE_LABELS[doc.doc_type ?? ''] ?? doc.doc_type ?? 'Document'
-
   const linkedPersons = (doc.persons ?? []).map(lp => persons.find(p => p.id === lp.id)).filter(Boolean) as PersonFull[]
+
+  async function startNewNote() {
+    const created = await api.documentNotes.create(doc.id, { content: '' })
+    setNewNoteShell(created)
+    setCreatingNote(true)
+  }
+
+  const docNoteOps = api.documentNotes
 
   return (
     <div
@@ -63,7 +85,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson }: Props) {
     >
       <div
         className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
-        style={{ width: 480, maxWidth: '92vw', maxHeight: '90vh' }}
+        style={{ width: 520, maxWidth: '92vw', maxHeight: '90vh' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -89,11 +111,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson }: Props) {
           {/* Preview */}
           {isImage(doc.mime_type) && (
             <div className="bg-zinc-950 flex items-center justify-center" style={{ maxHeight: 280, minHeight: 120 }}>
-              <img
-                src={fileUrl}
-                alt={displayName}
-                className="max-w-full max-h-[280px] object-contain"
-              />
+              <img src={fileUrl} alt={displayName} className="max-w-full max-h-[280px] object-contain" />
             </div>
           )}
 
@@ -117,8 +135,8 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson }: Props) {
             </div>
           )}
 
-          {/* Metadata */}
-          <div className="px-5 py-4 space-y-4">
+          {/* Metadata + notes */}
+          <div className="px-5 py-4 space-y-5">
 
             {/* Description */}
             {doc.description && (
@@ -164,11 +182,71 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson }: Props) {
               )}
             </div>
 
+            {/* Notes */}
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">
+                  Notes {docNotes.length > 0 ? `(${docNotes.length})` : ''}
+                </p>
+                <button onClick={startNewNote} className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
+                  + Add
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {docNotes.map(note => (
+                  <NoteCard
+                    key={note.id}
+                    note={note}
+                    sources={sources}
+                    persons={persons}
+                    ops={docNoteOps}
+                    onUpdated={() => refetchNotes()}
+                    onDeleted={() => refetchNotes()}
+                    onNavToPerson={id => { onClose(); onNavToPerson(id) }}
+                  />
+                ))}
+
+                {creatingNote && newNoteShell && (
+                  <NoteEditorComponent
+                    note={newNoteShell}
+                    sources={sources}
+                    persons={persons}
+                    ops={docNoteOps}
+                    onNavToPerson={id => { onClose(); onNavToPerson(id) }}
+                    onSaved={() => { refetchNotes(); setCreatingNote(false); setNewNoteShell(null) }}
+                    onDeleted={() => { refetchNotes(); setCreatingNote(false); setNewNoteShell(null) }}
+                    onCancel={async () => {
+                      await api.documentNotes.delete(newNoteShell.id)
+                      setCreatingNote(false)
+                      setNewNoteShell(null)
+                    }}
+                    autoFocusContent
+                  />
+                )}
+
+                {docNotes.length === 0 && !creatingNote && (
+                  <p className="text-xs text-zinc-600 italic">No notes yet</p>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
 
-        {/* Footer actions */}
+        {/* Footer */}
         <div className="shrink-0 px-5 py-3 border-t border-zinc-800 flex items-center gap-3">
+          {onNavToDocument && (
+            <button
+              onClick={() => { onClose(); onNavToDocument(doc.id, true) }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-600 rounded-lg text-xs text-zinc-300 hover:text-white transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
+              </svg>
+              Edit
+            </button>
+          )}
           <a
             href={api.documents.fileUrl(doc.id, true)}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-600 rounded-lg text-xs text-zinc-300 hover:text-white transition-colors"
@@ -179,10 +257,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson }: Props) {
             Download
           </a>
           {(isImage(doc.mime_type) || isPdf(doc.mime_type) || isAudio(doc.mime_type)) && (
-            <a
-              href={fileUrl}
-              target="_blank"
-              rel="noreferrer"
+            <a href={fileUrl} target="_blank" rel="noreferrer"
               className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-600 rounded-lg text-xs text-zinc-300 hover:text-white transition-colors"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
