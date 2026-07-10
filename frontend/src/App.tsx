@@ -10,6 +10,7 @@ import DocumentsTab from './components/DocumentsTab'
 import ProjectSwitcher from './components/ProjectSwitcher'
 import SearchPalette from './components/SearchPalette'
 import DocumentViewer from './components/DocumentViewer'
+import UpdateBanner from './components/UpdateBanner'
 import type { PersonDocument } from './types'
 import { SettingsProvider, useSettings } from './SettingsContext'
 
@@ -45,7 +46,7 @@ function AppInner() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const aboutRef    = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
-  const { nameOrder, setNameOrder } = useSettings()
+  const { nameOrder, setNameOrder, autoCheckUpdates, setAutoCheckUpdates } = useSettings()
 
   useEffect(() => {
     if (!aboutOpen) return
@@ -147,6 +148,7 @@ function AppInner() {
               ))}
             </nav>
             <div className="ml-auto flex items-center gap-2">
+              <UpdateBanner />
               <button
                 onClick={() => setSearchOpen(true)}
                 title="Search (Ctrl+K)"
@@ -191,6 +193,29 @@ function AppInner() {
                           <span className="block text-[10px] font-normal opacity-70">e.g. Doe Jane</span>
                         </button>
                       </div>
+                    </div>
+                    <div className="mt-3 pt-3 border-t border-zinc-800">
+                      <p className="text-[11px] text-zinc-500 mb-2">Updates</p>
+                      <label className="flex items-center justify-between cursor-pointer gap-3">
+                        <span className="text-xs text-zinc-300">Auto-check on startup</span>
+                        <button
+                          role="switch"
+                          aria-checked={autoCheckUpdates}
+                          onClick={() => setAutoCheckUpdates(!autoCheckUpdates)}
+                          className={`inline-flex items-center rounded-full transition-colors shrink-0 ${autoCheckUpdates ? 'bg-brand-500' : 'bg-zinc-700'}`}
+                          style={{ width: '32px', height: '18px' }}
+                        >
+                          <span
+                            className="inline-block w-3.5 h-3.5 rounded-full bg-white shadow transition-transform"
+                            style={{ transform: autoCheckUpdates ? 'translateX(16px)' : 'translateX(2px)' }}
+                          />
+                        </button>
+                      </label>
+                      {!autoCheckUpdates && (
+                        <p className="text-[10px] text-zinc-600 mt-1.5 leading-snug">
+                          Click the cloud icon in the header to check manually.
+                        </p>
+                      )}
                     </div>
                   </div>
                 )}

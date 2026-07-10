@@ -422,3 +422,17 @@ export interface PersonEvent {
   persons: EventPerson[]
   images: EventImage[]
 }
+
+export interface UpdateStatus {
+  status: 'idle' | 'checking' | 'up_to_date' | 'update_available' | 'downloading' | 'ready' | 'applying' | 'error'
+  current_version: string
+  latest_version: string | null
+  release_name: string | null
+  release_url: string | null
+  download_url: string | null
+  downloaded: number
+  total: number
+  zip_path: string | null
+  error: string | null
+}
+

@@ -2726,6 +2726,43 @@ def list_image_events(image_id: int, db: Session = Depends(get_db)):
     return [_event_dict(ev) for ev in events]
 
 
+# ── Auto-update ───────────────────────────────────────────────────────────────
+
+from . import updater as _updater  # noqa: E402
+
+
+@app.get('/api/update/status')
+def update_status():
+    return _updater.get_state()
+
+
+@app.post('/api/update/check')
+def update_check():
+    _updater.trigger_check()
+    return {'ok': True}
+
+
+@app.post('/api/update/download')
+def update_download():
+    state = _updater.get_state()
+    if state['status'] not in ('update_available',):
+        raise HTTPException(400, 'Nincs elérhető frissítés letöltéshez.')
+    _updater.start_download()
+    return {'ok': True}
+
+
+@app.post('/api/update/apply')
+def update_apply():
+    state = _updater.get_state()
+    if state['status'] != 'ready':
+        raise HTTPException(400, 'A frissítés még nincs letöltve.')
+    try:
+        _updater.apply_update()   # writes script + schedules os._exit(0)
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc))
+    return {'ok': True}
+
+
 # ── Static frontend (production build) ────────────────────────────────────────
 # Must be registered LAST so /api/* routes always take precedence.
 _bundle_dir = Path(os.environ.get('MNEMOSYNE_BUNDLE_DIR', str(Path(__file__).parent.parent)))
