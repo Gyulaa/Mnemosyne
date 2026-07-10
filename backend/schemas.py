@@ -47,6 +47,11 @@ class BatchFaceAssignRequest(BaseModel):
 class CreateClusterRequest(BaseModel):
     face_ids: Optional[list[int]] = None
     person_name: Optional[str] = None
+    title: Optional[str] = None
+    last_name: Optional[str] = None
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None
+    nickname: Optional[str] = None
 
 
 class SourceCreate(BaseModel):

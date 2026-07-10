@@ -22,6 +22,7 @@ export interface Cluster {
   id: number
   label: number
   face_count: number
+  dismissed_count?: number
   person_id: number | null
   person_name: string | null
   preview_face_ids: number[]
@@ -34,6 +35,7 @@ export interface FaceInfo {
   bbox: number[]
   det_score: number
   exif_date?: string | null
+  dismissed?: boolean
 }
 
 export interface ImagePerson {

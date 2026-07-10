@@ -59,6 +59,8 @@ On the very first scan, the app downloads a face-recognition model (~300 MB). Th
 
 Scanning can take a while for large photo libraries. You can close and reopen the app at any time; it will continue from where it left off.
 
+> **Tip:** Try to avoid duplicate or near-identical photos in your scan folder (e.g. burst shots, edited copies saved alongside originals). The face recognition engine treats each photo independently, so duplicates can create extra noise in the unclassified faces view and make grouping less accurate.
+
 ### Step 2 — Name the people
 
 1. Click **Run clustering** (after scanning finishes) to group similar faces together

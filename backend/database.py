@@ -31,6 +31,7 @@ class Face(Base):
     det_score = Column(Float, nullable=False)
     cluster_id = Column(Integer, ForeignKey("clusters.id"), nullable=True, index=True)
     manually_assigned = Column(Boolean, nullable=False, default=False, server_default="0")
+    dismissed = Column(Boolean, nullable=False, default=False, server_default="0")
     image = relationship("Image", back_populates="faces")
     cluster = relationship("Cluster", back_populates="faces")
 
@@ -259,6 +260,7 @@ def init_db_schema(engine):
     with engine.connect() as conn:
         for stmt in [
             "ALTER TABLE faces ADD COLUMN manually_assigned BOOLEAN NOT NULL DEFAULT 0",
+            "ALTER TABLE faces ADD COLUMN dismissed BOOLEAN NOT NULL DEFAULT 0",
             "ALTER TABLE images ADD COLUMN meta_json TEXT",
             "ALTER TABLE persons ADD COLUMN death_year INTEGER",
             "ALTER TABLE persons ADD COLUMN notes TEXT",

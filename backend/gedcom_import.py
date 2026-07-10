@@ -166,8 +166,37 @@ def _parse_indi(xref: str, block: list[tuple[int, str, str]]) -> dict:
                 elif st == 'PLAC':
                     ev['place'] = sv.strip() or None
                 elif st == 'NOTE':
-                    ev['description'] = sv.strip() or None
-            p['events'].append(ev)
+                    text = _collect_text(sv, sub, 3)
+                    ev['description'] = text.strip() or None
+            # Events without a date or place are essentially descriptive text —
+            # store them as person notes instead of calendar events.
+            if not ev['date'] and not ev['year'] and not ev['place']:
+                parts = [ev['title'], ev['description']]
+                note_text = '\n'.join(x for x in parts if x)
+                if note_text:
+                    p['notes'].append(note_text)
+            else:
+                p['events'].append(ev)
+
+        elif tag in ('_HOBBY', '_HOB', 'HOBBYIST'):
+            text = _collect_text(val, sub, 2).strip()
+            if text:
+                p['notes'].append(f'Hobbies: {text}')
+
+        elif tag == 'DSCR':
+            text = _collect_text(val, sub, 2).strip()
+            if text:
+                p['notes'].append(f'Physical description: {text}')
+
+        elif tag == 'RELI':
+            text = _collect_text(val, sub, 2).strip()
+            if text:
+                p['notes'].append(f'Religion: {text}')
+
+        elif tag == 'NATI':
+            text = _collect_text(val, sub, 2).strip()
+            if text:
+                p['notes'].append(f'Nationality: {text}')
 
         elif tag == 'OBJE':
             doc: dict = {'file': None, 'title': None}

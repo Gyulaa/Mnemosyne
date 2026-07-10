@@ -278,14 +278,14 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
 
 function StatsSummary({ stats }: { stats: GedcomImportStats }) {
   const rows: [string, number][] = [
-    ['Új személy', stats.persons_created],
-    ['Merged személy', stats.persons_merged],
-    ['Kihagyva', stats.persons_skipped],
-    ['Kapcsolat hozzáadva', stats.relations_added],
-    ['Esemény hozzáadva', stats.events_added],
-    ['Forrás hozzáadva', stats.sources_added],
-    ['Megjegyzés hozzáadva', stats.notes_added],
-    ['Dokumentum hozzáadva', stats.documents_added],
+    ['Created', stats.persons_created],
+    ['Merged', stats.persons_merged],
+    ['Skipped', stats.persons_skipped],
+    ['Relations added', stats.relations_added],
+    ['Events added', stats.events_added],
+    ['Sources added', stats.sources_added],
+    ['Notes added', stats.notes_added],
+    ['Documents added', stats.documents_added],
   ]
   return (
     <div className="space-y-1.5">
@@ -493,14 +493,14 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
         {/* ── Error ────────────────────────────────────────────────────── */}
         {phase === 'error' && (
           <div className="p-6">
-            <h2 className="text-sm font-semibold text-red-400 mb-2">Hiba</h2>
+            <h2 className="text-sm font-semibold text-red-400 mb-2">Error</h2>
             <p className="text-xs text-zinc-400 mb-4 font-mono whitespace-pre-wrap">{errorMsg}</p>
             <div className="flex gap-3">
               <button onClick={() => setPhase('upload')} className="flex-1 px-4 py-2 text-sm text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors">
-                Vissza
+                Back
               </button>
               <button onClick={onClose} className="flex-1 px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 rounded-lg transition-colors">
-                Bezárás
+                Close
               </button>
             </div>
           </div>
@@ -509,13 +509,13 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
         {/* ── Done ─────────────────────────────────────────────────────── */}
         {phase === 'done' && stats && (
           <div className="p-6">
-            <h2 className="text-sm font-semibold text-zinc-100 mb-4">Importálás kész</h2>
+            <h2 className="text-sm font-semibold text-zinc-100 mb-4">Import complete</h2>
             <StatsSummary stats={stats} />
             <button
               onClick={onClose}
               className="mt-6 w-full px-4 py-2 text-sm font-medium text-white bg-brand-500 hover:bg-brand-400 rounded-lg transition-colors"
             >
-              Bezárás
+              Close
             </button>
           </div>
         )}
@@ -526,17 +526,17 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
             {/* Header */}
             <div className="px-5 pt-5 pb-3 border-b border-zinc-800 shrink-0">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-zinc-100">Import előnézet</h2>
+                <h2 className="text-sm font-semibold text-zinc-100">Import preview</h2>
                 <button onClick={onClose} className="text-zinc-600 hover:text-zinc-300 text-lg leading-none">×</button>
               </div>
               {/* Stats chips */}
               <div className="flex flex-wrap gap-2 mt-2">
                 {([
-                  `${preview.persons.length} személy`,
-                  `${preview.relations_count} kapcsolat`,
-                  preview.events_count    > 0 ? `${preview.events_count} esemény`       : null,
-                  preview.sources_count   > 0 ? `${preview.sources_count} forrás`       : null,
-                  preview.documents_count > 0 ? `${preview.documents_count} dokumentum` : null,
+                  `${preview.persons.length} persons`,
+                  `${preview.relations_count} relations`,
+                  preview.events_count    > 0 ? `${preview.events_count} events`     : null,
+                  preview.sources_count   > 0 ? `${preview.sources_count} sources`   : null,
+                  preview.documents_count > 0 ? `${preview.documents_count} documents` : null,
                 ] as (string | null)[]).filter((x): x is string => x !== null).map(label => (
                   <span key={label} className="text-[11px] px-2 py-0.5 bg-zinc-800 text-zinc-400 rounded-full">{label}</span>
                 ))}
@@ -547,13 +547,13 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
                   onClick={() => applyAll('merge')}
                   className="text-[11px] px-2.5 py-1 bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60 rounded-lg transition-colors"
                 >
-                  Összes egyezőt merge-elj
+                  Merge all matched
                 </button>
                 <button
                   onClick={() => applyAll('create')}
                   className="text-[11px] px-2.5 py-1 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 rounded-lg transition-colors"
                 >
-                  Mindenkit újként
+                  Create all as new
                 </button>
               </div>
             </div>
@@ -563,9 +563,9 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
               <table className="w-full text-left">
                 <thead className="sticky top-0 bg-zinc-900 border-b border-zinc-800 z-10">
                   <tr>
-                    <th className="py-2 px-3 text-[11px] font-medium text-zinc-500 uppercase tracking-wide">Importált személy</th>
-                    <th className="py-2 px-2 text-[11px] font-medium text-zinc-500 uppercase tracking-wide text-center w-20">Egyezés</th>
-                    <th className="py-2 px-3 text-[11px] font-medium text-zinc-500 uppercase tracking-wide">Döntés</th>
+                    <th className="py-2 px-3 text-[11px] font-medium text-zinc-500 uppercase tracking-wide">Incoming person</th>
+                    <th className="py-2 px-2 text-[11px] font-medium text-zinc-500 uppercase tracking-wide text-center w-20">Match</th>
+                    <th className="py-2 px-3 text-[11px] font-medium text-zinc-500 uppercase tracking-wide">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -592,9 +592,9 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
             <div className="px-5 py-4 border-t border-zinc-800 shrink-0">
               {decisionCounts && (
                 <p className="text-xs text-zinc-500 mb-3">
-                  {decisionCounts.creates > 0 && <span className="mr-3 text-brand-300">{decisionCounts.creates} új</span>}
+                  {decisionCounts.creates > 0 && <span className="mr-3 text-brand-300">{decisionCounts.creates} new</span>}
                   {decisionCounts.merges  > 0 && <span className="mr-3 text-emerald-300">{decisionCounts.merges} merge</span>}
-                  {decisionCounts.skips   > 0 && <span className="text-zinc-600">{decisionCounts.skips} kihagyva</span>}
+                  {decisionCounts.skips   > 0 && <span className="text-zinc-600">{decisionCounts.skips} skipped</span>}
                 </p>
               )}
               <div className="flex gap-3">
@@ -602,13 +602,13 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
                   onClick={() => setPhase('upload')}
                   className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
                 >
-                  ← Vissza
+                  ← Back
                 </button>
                 <button
                   onClick={handleConfirm}
                   className="flex-1 px-4 py-2 text-sm font-medium text-white bg-brand-500 hover:bg-brand-400 rounded-lg transition-colors"
                 >
-                  Importálás megerősítése
+                  Confirm import
                 </button>
               </div>
             </div>

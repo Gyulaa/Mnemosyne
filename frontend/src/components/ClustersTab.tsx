@@ -1,9 +1,10 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { Cluster, ClusterConnection, FaceInfo, PersonFull, Relation, SimilarFaceInfo } from '../types'
+import type { Cluster, ClusterConnection, FaceInfo, ImageItem, ImagePerson, PersonEvent, PersonFull, Relation, SimilarFaceInfo } from '../types'
 import ExportModal from './ExportModal'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
+import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
 
 type ModalTab = 'faces' | 'photos' | 'merge' | 'connections' | 'genealogy'
 
@@ -129,24 +130,31 @@ export default function ClustersTab({
         />
       )}
       {/* Unclassified faces — prominent banner at the top */}
-      {noiseCluster && noiseCluster.face_count > 0 && (
-        <div className="bg-amber-950/40 border border-amber-800/50 rounded-xl px-5 py-3.5 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-amber-300 text-sm font-medium">
-              {noiseCluster.face_count} unclassified faces
-            </p>
-            <p className="text-amber-700 text-xs mt-0.5">
-              Review and assign them to complete the organization
-            </p>
+      {noiseCluster && noiseCluster.face_count > 0 && (() => {
+        const dismissed = noiseCluster.dismissed_count ?? 0
+        const pending   = noiseCluster.face_count - dismissed
+        return (
+          <div className="bg-amber-950/40 border border-amber-800/50 rounded-xl px-5 py-3.5 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-amber-300 font-semibold text-base leading-tight">
+                {pending} unclassified face{pending !== 1 ? 's' : ''} to sort
+                {dismissed > 0 && (
+                  <span className="ml-2 text-amber-700 font-normal text-xs">· {noiseCluster.face_count} total</span>
+                )}
+              </p>
+              <p className="text-amber-700 text-xs mt-0.5">
+                Review and assign them to complete the organization
+              </p>
+            </div>
+            <button
+              onClick={() => setSelected(noiseCluster)}
+              className="px-4 py-1.5 bg-amber-800/60 hover:bg-amber-700/70 text-amber-300 text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+            >
+              Review →
+            </button>
           </div>
-          <button
-            onClick={() => setSelected(noiseCluster)}
-            className="px-4 py-1.5 bg-amber-800/60 hover:bg-amber-700/70 text-amber-300 text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
-          >
-            Review →
-          </button>
-        </div>
-      )}
+        )
+      })()}
 
       {/* Summary + filter + search + selection export */}
       <div className="sticky top-0 z-10 bg-zinc-950 pb-3 space-y-2">
@@ -361,25 +369,20 @@ function ClusterModal({
   const [deleting, setDeleting] = useState(false)
   const [jumpTo, setJumpTo] = useState<{ imageId: number } | null>(null)
   const [showPersonPicker, setShowPersonPicker] = useState(false)
-  const [personSearch, setPersonSearch] = useState('')
   const [linking, setLinking] = useState(false)
-  const personPickerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!showPersonPicker) return
-    function handleClick(e: MouseEvent) {
-      if (personPickerRef.current && !personPickerRef.current.contains(e.target as Node)) {
-        setShowPersonPicker(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [showPersonPicker])
+  const { nameOrder } = useSettings()
 
   const { data: allPersons = [] } = useQuery<PersonFull[]>({
     queryKey: ['persons'],
     queryFn: api.persons.list,
     enabled: showPersonPicker || cluster.person_id != null,
+    staleTime: 30_000,
+  })
+
+  const { data: allRelations = [] } = useQuery<Relation[]>({
+    queryKey: ['relations'],
+    queryFn: api.relations.list,
+    enabled: showPersonPicker,
     staleTime: 30_000,
   })
 
@@ -408,9 +411,7 @@ function ClusterModal({
   const [showSplit, setShowSplit] = useState(false)
   const [splitting, setSplitting] = useState(false)
   const [splitMsg, setSplitMsg] = useState<string | null>(null)
-  const [photoSort, setPhotoSort] = useState<'id_asc' | 'exif_date_asc' | 'exif_date_desc'>(() =>
-    (localStorage.getItem('cluster_photo_sort') as 'id_asc' | 'exif_date_asc' | 'exif_date_desc') ?? 'exif_date_desc'
-  )
+  const [photoSort, setPhotoSort] = useState<'id_asc' | 'exif_date_asc' | 'exif_date_desc'>('exif_date_desc')
 
   function handleViewOriginal(imageId: number) {
     setJumpTo({ imageId })
@@ -554,45 +555,20 @@ function ClusterModal({
                         </button>
                       )}
                       {/* Person picker */}
-                      <div className="relative" ref={personPickerRef}>
-                        <button onClick={() => { setShowPersonPicker(p => !p); setPersonSearch('') }}
-                          className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 border border-zinc-700 rounded-lg transition-colors whitespace-nowrap">
-                          {cluster.person_id ? 'Change person' : 'Assign to person →'}
-                        </button>
-                        {showPersonPicker && (
-                          <div className="absolute left-0 top-full mt-1 w-64 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 overflow-hidden">
-                            <div className="p-2 border-b border-zinc-800">
-                              <input autoFocus type="search" value={personSearch}
-                                onChange={e => setPersonSearch(e.target.value)}
-                                placeholder="Search person…"
-                                className="w-full bg-zinc-800 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none" />
-                            </div>
-                            <div className="max-h-56 overflow-y-auto">
-                              {(() => {
-                                const eligible = allPersons.filter(p =>
-                                  p.clusters.length === 0 &&
-                                  p.name?.toLowerCase().includes(personSearch.toLowerCase())
-                                )
-                                if (!eligible.length) return (
-                                  <p className="text-xs text-zinc-600 px-3 py-3">
-                                    {allPersons.filter(p => p.clusters.length === 0).length === 0
-                                      ? 'All persons already have a cluster' : 'No results'}
-                                  </p>
-                                )
-                                return eligible.map(p => (
-                                  <button key={p.id} onClick={() => linkToPerson(p)} disabled={linking}
-                                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-zinc-800 transition-colors">
-                                    <div className="w-7 h-7 rounded-full bg-zinc-700 shrink-0 flex items-center justify-center text-xs text-zinc-400 font-bold">
-                                      {(p.name ?? '?').trim().split(/\s+/).map(w => w[0]).join('').toUpperCase().slice(0, 2)}
-                                    </div>
-                                    <span className="truncate text-zinc-200">{p.name ?? '—'}</span>
-                                  </button>
-                                ))
-                              })()}
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                      <button onClick={() => setShowPersonPicker(true)}
+                        className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 border border-zinc-700 rounded-lg transition-colors whitespace-nowrap">
+                        {cluster.person_id ? 'Change person' : 'Assign to person →'}
+                      </button>
+                      {showPersonPicker && (
+                        <ClusterPersonPickerModal
+                          persons={allPersons}
+                          relations={allRelations}
+                          nameOrder={nameOrder}
+                          linking={linking}
+                          onSelect={linkToPerson}
+                          onClose={() => setShowPersonPicker(false)}
+                        />
+                      )}
                       <button onClick={() => setDeleteConfirm(true)}
                         className="px-3 py-1.5 text-xs text-zinc-600 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors whitespace-nowrap">
                         Delete
@@ -777,10 +753,7 @@ function ClusterModal({
               faces={faces}
               jumpTo={jumpTo}
               sort={photoSort}
-              onSortChange={s => {
-                setPhotoSort(s)
-                localStorage.setItem('cluster_photo_sort', s)
-              }}
+              onSortChange={s => setPhotoSort(s)}
               onNavToImage={onNavToImage ? (imageId) => {
                 onClose()
                 onNavToImage(imageId, cluster.person_id != null ? [cluster.person_id] : [])
@@ -1361,12 +1334,15 @@ function NoiseFaceGrid({
   onViewOriginal?: (imageId: number) => void
 }) {
   const queryClient = useQueryClient()
-  const [selected, setSelected] = useState<Set<number>>(new Set())
-  const [assigning, setAssigning] = useState(false)
-  const [enlarged, setEnlarged] = useState<FaceInfo | null>(null)
-  const [fullPhoto, setFullPhoto] = useState(false)
+  const [selected, setSelected]     = useState<Set<number>>(new Set())
+  const [assigning, setAssigning]   = useState(false)
+  const [showHidden, setShowHidden] = useState(false)
+  const [enlarged, setEnlarged]     = useState<FaceInfo | null>(null)
+  const [fullPhoto, setFullPhoto]   = useState(false)
 
-  const allSelected = faces.length > 0 && selected.size === faces.length
+  const hiddenCount   = faces.filter(f => f.dismissed).length
+  const visibleFaces  = showHidden ? faces : faces.filter(f => !f.dismissed)
+  const allSelected   = visibleFaces.length > 0 && selected.size === visibleFaces.length
 
   function toggle(id: number) {
     setSelected(prev => {
@@ -1381,7 +1357,7 @@ function NoiseFaceGrid({
     if (allSelected) {
       setSelected(new Set())
     } else {
-      setSelected(new Set(faces.map(f => f.id)))
+      setSelected(new Set(visibleFaces.map(f => f.id)))
     }
   }
 
@@ -1392,7 +1368,52 @@ function NoiseFaceGrid({
     queryClient.invalidateQueries({ queryKey: ['clusters'] })
   }
 
-  const selectedFaces = faces.filter(f => selected.has(f.id))
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+
+  // Drag-to-select (long-press activates)
+  const isDragging   = useRef(false)
+  const dragAction   = useRef<'add' | 'remove'>('add')
+  const pressTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wasLongPress = useRef(false)
+
+  useEffect(() => {
+    const stop = () => {
+      isDragging.current = false
+      if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null }
+    }
+    window.addEventListener('mouseup', stop)
+    return () => window.removeEventListener('mouseup', stop)
+  }, [])
+
+  async function handleDismiss() {
+    const ids = [...selected].filter(id => !faces.find(f => f.id === id)?.dismissed)
+    if (!ids.length) return
+    await api.face.batchDismiss(ids)
+    setSelected(new Set())
+    queryClient.invalidateQueries({ queryKey: ['cluster-faces', noiseClusterId] })
+  }
+
+  async function handleRestore() {
+    const ids = [...selected].filter(id => faces.find(f => f.id === id)?.dismissed)
+    if (!ids.length) return
+    await api.face.batchRestore(ids)
+    setSelected(new Set())
+    queryClient.invalidateQueries({ queryKey: ['cluster-faces', noiseClusterId] })
+  }
+
+  async function handleDelete() {
+    const ids = [...selected]
+    if (!ids.length) return
+    await api.face.batchDelete(ids)
+    setSelected(new Set())
+    setDeleteConfirm(false)
+    queryClient.invalidateQueries({ queryKey: ['cluster-faces', noiseClusterId] })
+    queryClient.invalidateQueries({ queryKey: ['clusters'] })
+  }
+
+  const selectedFaces    = visibleFaces.filter(f => selected.has(f.id))
+  const selHasDismissed  = selectedFaces.some(f => f.dismissed)
+  const selHasVisible    = selectedFaces.some(f => !f.dismissed)
 
   if (!faces.length) {
     return <p className="text-center text-zinc-600 py-10 text-sm">No unclassified faces.</p>
@@ -1400,30 +1421,85 @@ function NoiseFaceGrid({
 
   return (
     <>
-      {/* Toolbar — sticky at top of the modal scroll area.
-          -top-4 counteracts the container's pt-4 so no transparent gap appears when sticky triggers. */}
+      {/* Toolbar */}
       <div className="sticky -top-4 z-10 -mx-4 -mt-4 px-4 pt-3 pb-2.5 mb-3 bg-zinc-900 border-b border-zinc-800 flex items-center gap-3">
         <button
           onClick={toggleAll}
-          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors shrink-0"
         >
           {allSelected ? 'Deselect all' : 'Select all'}
         </button>
-        <span className="text-xs text-zinc-600 tabular-nums">
-          {selected.size > 0 ? `${selected.size} selected` : `${faces.length} faces`}
+
+        <span className="text-xs text-zinc-600 tabular-nums shrink-0">
+          {selected.size > 0 ? `${selected.size} selected` : `${visibleFaces.length} faces`}
         </span>
+
+        {/* Hidden toggle */}
+        {hiddenCount > 0 && selected.size === 0 && (
+          <button
+            onClick={() => { setShowHidden(v => !v); setSelected(new Set()) }}
+            className={`ml-auto flex items-center gap-1.5 text-xs transition-colors ${
+              showHidden ? 'text-amber-400 hover:text-amber-300' : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              {showHidden
+                ? <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                : <><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></>
+              }
+            </svg>
+            {showHidden ? `Hide hidden` : `${hiddenCount} hidden`}
+          </button>
+        )}
+
+        {/* Selection actions */}
         {selected.size > 0 && (
           <>
             <div className="w-px h-4 bg-zinc-700 shrink-0" />
             <button
               onClick={() => setAssigning(true)}
-              className="px-3 py-1.5 bg-brand-500 hover:bg-brand-400 text-white text-xs font-medium rounded-lg transition-colors"
+              className="px-2.5 py-1.5 bg-brand-500 hover:bg-brand-400 text-white text-xs font-medium rounded-lg transition-colors shrink-0"
             >
               Assign {selected.size} →
             </button>
+            {selHasVisible && (
+              <button
+                onClick={handleDismiss}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs font-medium rounded-lg border border-zinc-700 transition-colors shrink-0"
+                title="Hide selected faces"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                </svg>
+                Hide
+              </button>
+            )}
+            {selHasDismissed && (
+              <button
+                onClick={handleRestore}
+                className="flex items-center gap-1 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-400 hover:text-amber-300 text-xs font-medium rounded-lg border border-zinc-700 transition-colors shrink-0"
+                title="Restore hidden faces"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                Restore
+              </button>
+            )}
+            <button
+              onClick={() => setDeleteConfirm(true)}
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-zinc-800 hover:bg-red-900/60 text-red-400 hover:text-red-300 text-xs font-medium rounded-lg border border-zinc-700 hover:border-red-800 transition-colors shrink-0"
+              title="Permanently delete selected faces"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Delete
+            </button>
             <button
               onClick={() => setSelected(new Set())}
-              className="ml-auto text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
+              className="ml-auto text-xs text-zinc-600 hover:text-zinc-300 transition-colors shrink-0"
             >
               Deselect all
             </button>
@@ -1431,30 +1507,105 @@ function NoiseFaceGrid({
         )}
       </div>
 
+      {/* Delete confirmation dialog */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/60">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 w-80 shadow-2xl">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-full bg-red-900/40 flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-zinc-100">Delete {selected.size} face{selected.size !== 1 ? 's' : ''}?</p>
+                <p className="text-xs text-zinc-500 mt-0.5">This cannot be undone.</p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end mt-5">
+              <button
+                onClick={() => setDeleteConfirm(false)}
+                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-medium rounded-lg transition-colors"
+              >
+                Delete permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Grid */}
       <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
-        {faces.map(f => {
-          const isSelected = selected.has(f.id)
+        {visibleFaces.map(f => {
+          const isSelected  = selected.has(f.id)
+          const isDismissed = !!f.dismissed
           return (
             <div
               key={f.id}
-              onClick={() => setEnlarged(f)}
+              onMouseDown={e => {
+                if (e.button !== 0) return
+                e.preventDefault()
+                wasLongPress.current = false
+                pressTimer.current = setTimeout(() => {
+                  pressTimer.current = null
+                  wasLongPress.current = true
+                  isDragging.current = true
+                  const adding = !selected.has(f.id)
+                  dragAction.current = adding ? 'add' : 'remove'
+                  setSelected(prev => {
+                    const next = new Set(prev)
+                    if (adding) next.add(f.id); else next.delete(f.id)
+                    return next
+                  })
+                }, 280)
+              }}
+              onMouseEnter={() => {
+                if (!isDragging.current) return
+                setSelected(prev => {
+                  const next = new Set(prev)
+                  if (dragAction.current === 'add') next.add(f.id)
+                  else next.delete(f.id)
+                  return next
+                })
+              }}
+              onClick={() => {
+                if (wasLongPress.current) { wasLongPress.current = false; return }
+                setEnlarged(f)
+              }}
               className={`relative aspect-square rounded-lg overflow-hidden bg-zinc-800 cursor-pointer select-none group ${
-                isSelected ? 'ring-2 ring-brand-400' : 'hover:ring-1 hover:ring-zinc-600'
+                isSelected
+                  ? isDismissed ? 'ring-2 ring-amber-400' : 'ring-2 ring-brand-400'
+                  : 'hover:ring-1 hover:ring-zinc-600'
               }`}
             >
               <img
                 src={api.faceThumbnailUrl(f.id)}
                 alt=""
                 loading="lazy"
-                className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-200"
+                className={`w-full h-full object-cover group-hover:scale-110 transition-transform duration-200 ${isDismissed ? 'opacity-30' : ''}`}
               />
-              {/* Selection checkbox — click toggles selection, does NOT open enlarged view */}
+              {/* Hidden indicator */}
+              {isDismissed && (
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <svg className="w-5 h-5 text-zinc-400 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                  </svg>
+                </div>
+              )}
+              {/* Selection checkbox */}
               <div
                 onClick={e => { e.stopPropagation(); toggle(f.id) }}
                 className={`absolute top-1 right-1 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all cursor-pointer ${
                   isSelected
-                    ? 'bg-brand-400 border-brand-400 opacity-100'
+                    ? isDismissed
+                      ? 'bg-amber-400 border-amber-400 opacity-100'
+                      : 'bg-brand-400 border-brand-400 opacity-100'
                     : 'bg-black/40 border-white/50 opacity-0 group-hover:opacity-100'
                 }`}
               >
@@ -1470,65 +1621,58 @@ function NoiseFaceGrid({
       </div>
 
       {/* Enlarged face view */}
-      {enlarged && (
+      {enlarged && !fullPhoto && (
         <div
           className="fixed inset-0 bg-black/85 flex items-center justify-center z-60 p-4"
-          onClick={() => { setEnlarged(null); setFullPhoto(false) }}
+          onClick={() => setEnlarged(null)}
         >
-          {fullPhoto ? (
-            <div className="relative max-w-4xl w-full" onClick={e => e.stopPropagation()}>
-              <img
-                src={api.imageViewUrl(enlarged.image_id, 1600)}
-                alt=""
-                className="w-full max-h-[85vh] object-contain rounded-xl shadow-2xl"
-              />
+          <div className="max-w-xs w-full space-y-3" onClick={e => e.stopPropagation()}>
+            <img
+              src={api.faceThumbnailUrl(enlarged.id, 320)}
+              alt=""
+              className="w-full rounded-xl shadow-2xl"
+            />
+            {enlarged.exif_date && (
+              <p className="text-sm text-zinc-300 font-medium text-center">
+                {new Date(enlarged.exif_date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+              </p>
+            )}
+            <p className="text-xs text-zinc-500 font-mono break-all text-center">{enlarged.image_path}</p>
+            <p className="text-xs text-zinc-600 text-center">confidence {enlarged.det_score.toFixed(3)}</p>
+            <div className="flex gap-2">
               <button
-                onClick={() => setFullPhoto(false)}
-                className="absolute top-3 left-3 px-3 py-1.5 bg-black/70 hover:bg-black/90 text-zinc-300 hover:text-white text-xs rounded-lg transition-colors"
+                onClick={() => setFullPhoto(true)}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 rounded-lg text-sm text-zinc-300 transition-colors"
               >
-                ← Face
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Full photo
               </button>
-            </div>
-          ) : (
-            <div className="max-w-xs w-full space-y-3" onClick={e => e.stopPropagation()}>
-              <img
-                src={api.faceThumbnailUrl(enlarged.id, 320)}
-                alt=""
-                className="w-full rounded-xl shadow-2xl"
-              />
-              {enlarged.exif_date && (
-                <p className="text-sm text-zinc-300 font-medium text-center">
-                  {new Date(enlarged.exif_date).toLocaleDateString('hu-HU', { year: 'numeric', month: 'long', day: 'numeric' })}
-                </p>
-              )}
-              <p className="text-xs text-zinc-500 font-mono break-all text-center">{enlarged.image_path}</p>
-              <p className="text-xs text-zinc-600 text-center">confidence {enlarged.det_score.toFixed(3)}</p>
-              <div className="flex gap-2">
+              {onViewOriginal && (
                 <button
-                  onClick={() => setFullPhoto(true)}
+                  onClick={() => { setEnlarged(null); onViewOriginal(enlarged.image_id) }}
                   className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 rounded-lg text-sm text-zinc-300 transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                      d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                   </svg>
-                  Full photo
+                  Open in Photos
                 </button>
-                {onViewOriginal && (
-                  <button
-                    onClick={() => { setEnlarged(null); setFullPhoto(false); onViewOriginal(enlarged.image_id) }}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 hover:border-zinc-500 rounded-lg text-sm text-zinc-300 transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                    Open in Photos
-                  </button>
-                )}
-              </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
+      )}
+
+      {/* Full photo modal */}
+      {enlarged && fullPhoto && (
+        <NoiseImageModal
+          imageId={enlarged.image_id}
+          onBack={() => setFullPhoto(false)}
+          onClose={() => { setEnlarged(null); setFullPhoto(false) }}
+        />
       )}
 
       {assigning && selectedFaces.length > 0 && (
@@ -1540,6 +1684,263 @@ function NoiseFaceGrid({
         />
       )}
     </>
+  )
+}
+
+// ── NoiseImageModal ───────────────────────────────────────────────────────────
+
+function _parseMeta(metaJson: string | null): { width?: number; height?: number; make?: string; model?: string } {
+  if (!metaJson) return {}
+  try { return JSON.parse(metaJson) } catch { return {} }
+}
+
+function NoiseImageModal({ imageId, onBack, onClose, onNavToCluster }: {
+  imageId: number
+  onBack: () => void
+  onClose: () => void
+  onNavToCluster?: (clusterId: number) => void
+}) {
+  const { data: img } = useQuery<ImageItem>({
+    queryKey: ['image', imageId],
+    queryFn: () => api.images.get(imageId),
+    staleTime: 120_000,
+  })
+  const { data: persons = [] } = useQuery<ImagePerson[]>({
+    queryKey: ['image-persons', imageId],
+    queryFn: () => api.images.persons(imageId),
+    staleTime: 120_000,
+  })
+  const { data: linkedEvents = [] } = useQuery<PersonEvent[]>({
+    queryKey: ['image-events', imageId],
+    queryFn: () => api.events.listForImage(imageId),
+    staleTime: 30_000,
+  })
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const exifMeta = _parseMeta(img?.meta_json ?? null)
+
+  return (
+    <div className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center" onClick={onClose}>
+      <div
+        className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col mx-8"
+        style={{ maxHeight: '92vh', width: 'min(860px, calc(100vw - 64px))' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Image */}
+        <div className="bg-zinc-950 flex items-center justify-center overflow-hidden relative" style={{ maxHeight: '68vh', minHeight: 200 }}>
+          <img
+            src={api.imageViewUrl(imageId, 1400)}
+            alt={img?.filename ?? ''}
+            className="max-w-full max-h-full object-contain"
+            style={{ maxHeight: '68vh' }}
+          />
+        </div>
+
+        {/* Metadata + persons */}
+        <div className="px-5 py-4 flex items-start justify-between gap-4 overflow-y-auto">
+          <div className="min-w-0 flex-1 space-y-2">
+            {img && (
+              <>
+                <div>
+                  <p className="font-semibold text-zinc-100 truncate" title={img.filename}>{img.filename}</p>
+                  <p className="text-xs text-zinc-500 truncate mt-0.5" title={img.path}>{img.path}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+                  {img.exif_date && (
+                    <span className="flex items-center gap-1 text-zinc-300 font-medium">
+                      <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      {new Date(img.exif_date).toLocaleString()}
+                    </span>
+                  )}
+                  {(exifMeta.make || exifMeta.model) && (
+                    <span>{[exifMeta.make, exifMeta.model].filter(Boolean).join(' ')}</span>
+                  )}
+                  {exifMeta.width && exifMeta.height && (
+                    <span>{exifMeta.width} × {exifMeta.height}</span>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Linked events */}
+            {linkedEvents.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-zinc-600">Events:</span>
+                {linkedEvents.map(ev => (
+                  <span key={ev.id}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-brand-900/40 border border-brand-700/50 rounded-full text-xs text-brand-300">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    {ev.title ?? ev.event_type}{ev.year ? ` (${ev.year})` : ''}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Persons */}
+            {persons.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-zinc-600">Persons:</span>
+                {persons.map(p => {
+                  const canNav = onNavToCluster && p.cluster_id != null
+                  return canNav ? (
+                    <button key={p.person_id}
+                      onClick={() => { onNavToCluster!(p.cluster_id!); onClose() }}
+                      className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 rounded-full text-xs text-zinc-300 transition-colors">
+                      <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
+                        className="w-4 h-4 rounded-full object-cover shrink-0" />
+                      {p.person_name ?? '(unnamed)'}
+                    </button>
+                  ) : (
+                    <span key={p.person_id}
+                      className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded-full text-xs text-zinc-300">
+                      <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
+                        className="w-4 h-4 rounded-full object-cover shrink-0" />
+                      {p.person_name ?? '(unnamed)'}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-start gap-2 shrink-0">
+            <button onClick={onBack}
+              className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors whitespace-nowrap">
+              ← Face
+            </button>
+            <button onClick={onClose}
+              className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── ClusterPersonPickerModal ──────────────────────────────────────────────────
+
+function _lifespan(p: PersonFull): string {
+  const by = p.birth_date ? parseInt(p.birth_date) : (p.birth_year ?? null)
+  const dy = p.death_date ? parseInt(p.death_date) : (p.death_year ?? null)
+  const years = [by, dy].filter(v => v != null).join('–')
+  if (years && p.birth_place) return `${years} · ${p.birth_place}`
+  return years || p.birth_place || ''
+}
+
+function ClusterPersonPickerModal({ persons, relations, nameOrder, linking, onSelect, onClose }: {
+  persons: PersonFull[]
+  relations: Relation[]
+  nameOrder: import('../SettingsContext').NameOrder
+  linking: boolean
+  onSelect: (p: PersonFull) => void
+  onClose: () => void
+}) {
+  const [search, setSearch] = useState('')
+
+  const personById = useMemo(() => new Map(persons.map(p => [p.id, p])), [persons])
+
+  const parentsOf = useMemo(() => {
+    const map = new Map<number, string[]>()
+    for (const rel of relations) {
+      if (rel.type !== 'parent') continue
+      const name = personById.get(rel.person_a_id)?.name
+      if (!name) continue
+      const list = map.get(rel.person_b_id) ?? []; list.push(name); map.set(rel.person_b_id, list)
+    }
+    return map
+  }, [relations, personById])
+
+  const spousesOf = useMemo(() => {
+    const map = new Map<number, string[]>()
+    for (const rel of relations) {
+      if (rel.type !== 'spouse') continue
+      const nameA = personById.get(rel.person_a_id)?.name
+      const nameB = personById.get(rel.person_b_id)?.name
+      if (nameA) { const l = map.get(rel.person_b_id) ?? []; l.push(nameA); map.set(rel.person_b_id, l) }
+      if (nameB) { const l = map.get(rel.person_a_id) ?? []; l.push(nameB); map.set(rel.person_a_id, l) }
+    }
+    return map
+  }, [relations, personById])
+
+  const q = search.toLowerCase()
+  const eligible = persons.filter(p =>
+    p.clusters.length === 0 && (
+      !q ||
+      p.name?.toLowerCase().includes(q) ||
+      p.first_name?.toLowerCase().includes(q) ||
+      p.last_name?.toLowerCase().includes(q)
+    )
+  )
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
+      <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-96 flex flex-col overflow-hidden"
+        style={{ maxHeight: 520 }} onClick={e => e.stopPropagation()}>
+        <div className="px-4 pt-3 pb-2 border-b border-zinc-700">
+          <p className="text-xs font-semibold text-zinc-300 mb-2">Assign to person</p>
+          <input
+            autoFocus
+            type="search"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search…"
+            className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
+          />
+        </div>
+        <div className="overflow-y-auto flex-1">
+          {eligible.length === 0 ? (
+            <p className="text-sm text-zinc-500 text-center py-6 italic">
+              {persons.filter(p => p.clusters.length === 0).length === 0
+                ? 'All persons already have a cluster' : 'No results'}
+            </p>
+          ) : eligible.map(p => {
+            const lifespan = _lifespan(p)
+            const parents  = parentsOf.get(p.id) ?? []
+            const spouses  = spousesOf.get(p.id) ?? []
+            const init     = displayInitials(p)
+            return (
+              <button key={p.id} onClick={() => { onSelect(p); onClose() }} disabled={linking}
+                className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-zinc-700 transition-colors border-b border-zinc-700/40 last:border-0 disabled:opacity-50">
+                <div className="shrink-0">
+                  {p.thumbnail_face_id ? (
+                    <img src={api.faceThumbnailUrl(p.thumbnail_face_id, 64)} alt=""
+                      className="w-8 h-8 rounded-full object-cover" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-xs font-bold text-zinc-300">
+                      {init}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm text-zinc-200 truncate">{displayPersonName(p, nameOrder)}</span>
+                    {p.sex && <span className="text-[10px] text-zinc-600 shrink-0">{p.sex === 'M' ? '♂' : '♀'}</span>}
+                  </div>
+                  {lifespan  && <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{lifespan}</p>}
+                  {parents.length > 0 && <p className="text-[10px] text-zinc-600 mt-0.5 truncate"><span className="text-zinc-700">Parents: </span>{parents.join(', ')}</p>}
+                  {spouses.length > 0 && <p className="text-[10px] text-zinc-600 mt-0.5 truncate"><span className="text-zinc-700">Spouse: </span>{spouses.join(', ')}</p>}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1562,8 +1963,9 @@ function AssignFacesOverlay({
   onClose: () => void
   onAssigned: () => void
 }) {
-  const [newName, setNewName] = useState('')
+  const [nameParts, setNameParts] = useState<NameParts>({ title: '', last_name: '', first_name: '', middle_name: '', nickname: '' })
   const [busy, setBusy] = useState(false)
+  const [showNewCluster, setShowNewCluster] = useState(false)
   const [clusterSearch, setClusterSearch] = useState('')
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null)
 
@@ -1593,7 +1995,8 @@ function AssignFacesOverlay({
     if (busy) return
     setBusy(true)
     try {
-      const result = await api.cluster.create(faceIds, newName.trim() || undefined)
+      const displayName = deriveDisplayName(nameParts)
+      const result = await api.cluster.create(faceIds, displayName || undefined, displayName ? nameParts : undefined)
       await finishWithSuggestions(result.cluster_id, result.person_name)
     } finally {
       setBusy(false)
@@ -1665,28 +2068,36 @@ function AssignFacesOverlay({
           </div>
 
           {/* Create new cluster */}
-          <div className="bg-zinc-800/60 border border-zinc-700 rounded-xl p-4 space-y-2.5">
-            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-              Create new cluster
-            </p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newName}
-                onChange={e => setNewName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && createAndAssign()}
-                placeholder="Name (optional)…"
-                className="flex-1 bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400"
-              />
-              <button
-                onClick={createAndAssign}
-                disabled={busy}
-                className="px-4 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
-              >
-                {busy ? '…' : 'Create'}
-              </button>
+          {!showNewCluster ? (
+            <button
+              onClick={() => setShowNewCluster(true)}
+              className="w-full flex items-center justify-center gap-2 border border-dashed border-zinc-600 hover:border-brand-400 hover:text-brand-400 rounded-xl py-3 text-sm text-zinc-400 transition-colors"
+            >
+              <span className="text-lg leading-none">+</span> New cluster
+            </button>
+          ) : (
+            <div className="bg-zinc-800/60 border border-zinc-700 rounded-xl p-4 space-y-3">
+              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                New cluster
+              </p>
+              <NameEditor value={nameParts} onChange={setNameParts} autoFocus size="md" />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => { setShowNewCluster(false); setNameParts({ title: '', last_name: '', first_name: '', middle_name: '', nickname: '' }) }}
+                  className="px-4 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-sm font-medium rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={createAndAssign}
+                  disabled={busy}
+                  className="px-4 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  {busy ? '…' : 'Create'}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Assign to existing cluster */}
           {allClusters.length > 0 && (
