@@ -7,6 +7,12 @@ echo "  Mnemosyne | macOS build"
 echo " ======================================"
 echo ""
 
+# 0. Version
+GIT_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "dev")
+printf "%s" "$GIT_TAG" > version.txt
+echo " Verzió: $GIT_TAG"
+echo ""
+
 # 1. Build frontend
 echo "[1/3] Frontend build (npm run build)..."
 cd frontend

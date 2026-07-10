@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus } from './types'
 
 const BASE = '/api'
 
@@ -387,4 +387,10 @@ export const api = {
     `${BASE}/faces/${id}/thumbnail?size=${size}`,
   imageViewUrl: (id: number, maxSize = 1200) =>
     `${BASE}/images/${id}/view?max_size=${maxSize}`,
+  update: {
+    getStatus: () => fetchJson<UpdateStatus>(`${BASE}/update/status`),
+    check:     () => post<{ ok: boolean }>(`${BASE}/update/check`),
+    download:  () => post<{ ok: boolean }>(`${BASE}/update/download`),
+    apply:     () => post<{ ok: boolean }>(`${BASE}/update/apply`),
+  },
 }

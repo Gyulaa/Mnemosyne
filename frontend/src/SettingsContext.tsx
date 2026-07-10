@@ -5,13 +5,23 @@ export type NameOrder = 'en' | 'hu'
 interface Settings {
   nameOrder: NameOrder
   setNameOrder: (o: NameOrder) => void
+  autoCheckUpdates: boolean
+  setAutoCheckUpdates: (v: boolean) => void
 }
 
-const SettingsContext = createContext<Settings>({ nameOrder: 'en', setNameOrder: () => {} })
+const SettingsContext = createContext<Settings>({
+  nameOrder: 'en',
+  setNameOrder: () => {},
+  autoCheckUpdates: true,
+  setAutoCheckUpdates: () => {},
+})
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [nameOrder, setNameOrderState] = useState<NameOrder>(
     () => (localStorage.getItem('mnemosyne_nameOrder') as NameOrder) ?? 'en'
+  )
+  const [autoCheckUpdates, setAutoCheckUpdatesState] = useState<boolean>(
+    () => localStorage.getItem('mnemosyne_autoCheckUpdates') !== 'false'
   )
 
   function setNameOrder(o: NameOrder) {
@@ -19,8 +29,13 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('mnemosyne_nameOrder', o)
   }
 
+  function setAutoCheckUpdates(v: boolean) {
+    setAutoCheckUpdatesState(v)
+    localStorage.setItem('mnemosyne_autoCheckUpdates', String(v))
+  }
+
   return (
-    <SettingsContext.Provider value={{ nameOrder, setNameOrder }}>
+    <SettingsContext.Provider value={{ nameOrder, setNameOrder, autoCheckUpdates, setAutoCheckUpdates }}>
       {children}
     </SettingsContext.Provider>
   )

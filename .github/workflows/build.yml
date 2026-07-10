@@ -39,6 +39,17 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt pyinstaller aiofiles
 
+      - name: Write version (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $date = (Get-Date -Format "yyyyMMdd")
+          "build-$date-${{ github.run_number }}" | Out-File -FilePath version.txt -Encoding utf8 -NoNewline
+
+      - name: Write version (macOS)
+        if: runner.os == 'macOS'
+        run: printf "build-$(date +%%Y%%m%%d)-${{ github.run_number }}" > version.txt
+
       - name: Build with PyInstaller
         run: pyinstaller mnemosyne.spec --clean --noconfirm
 

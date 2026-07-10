@@ -1,10 +1,155 @@
 # Mnemosyne
 
-A personal photo organizer and genealogy tool powered by face recognition. It scans your photo
-library, automatically detects and clusters faces, and lets you build a full family history —
-complete with a family tree, events, documents, notes, and GEDCOM interoperability.
+A private app that runs on your computer to organize family photos and build a family tree — complete with face recognition, documents, notes, and a fully interactive tree view.
 
-## Features
+No account, no cloud, no subscription. Everything stays on your machine.
+
+---
+
+# For users
+
+## What is Mnemosyne?
+
+Mnemosyne (pronounced *"neh-MO-zih-nee"*) is a desktop application for families who want to keep their photos and genealogy in one place — privately, on their own computer.
+
+You point it at a folder of photos, and it automatically finds and groups faces. You then name the people it found, connect them to your family tree, attach documents (birth certificates, letters, old photos), write notes, and build a complete family history.
+
+**Nothing is ever uploaded anywhere.** The app works entirely offline.
+
+---
+
+## System requirements
+
+| | |
+|---|---|
+| **Windows** | Windows 10 or newer (64-bit) |
+| **macOS** | macOS 11 Big Sur or newer |
+
+No Python, no Node.js, no technical setup needed — just download and run.
+
+---
+
+## Installation
+
+1. Go to the [**Releases**](../../releases) page on GitHub
+2. Download the file for your computer:
+   - **Windows** → `Mnemosyne-windows.zip`
+   - **Mac** → `Mnemosyne-mac.zip`
+3. Unzip the downloaded file
+4. **Windows**: open the unzipped folder and double-click `Mnemosyne.exe`
+   **Mac**: open the unzipped folder, double-click `Mnemosyne.app`
+
+> **Mac note:** On first launch macOS may say the app "cannot be opened because the developer cannot be verified." If that happens, right-click (or Control-click) the app and choose **Open** — then click Open again in the dialog that appears. You only need to do this once.
+
+The app opens in your browser automatically (at `http://localhost:7842`). The browser tab is the user interface — don't close the terminal/icon that launched it.
+
+---
+
+## Getting started
+
+When you open Mnemosyne for the first time, you'll see a mostly empty screen. Here's how to get going:
+
+### Step 1 — Choose a folder to scan
+
+1. Click the **Scan** tab at the top
+2. Click **Choose folder** and select the folder where your photos are stored
+3. Click **Start scan**
+
+On the very first scan, the app downloads a face-recognition model (~300 MB). This is a one-time download — it won't happen again.
+
+Scanning can take a while for large photo libraries. You can close and reopen the app at any time; it will continue from where it left off.
+
+### Step 2 — Name the people
+
+1. Click **Run clustering** (after scanning finishes) to group similar faces together
+2. Go to the **Clusters** tab
+3. You'll see groups of face thumbnails — each group represents one person
+4. Click a group and type the person's name
+
+### Step 3 — Build your family tree
+
+1. Click the **Genealogy** tab
+2. Click **Add person** to create a family member
+3. Use the person panel on the right to fill in names, birth and death dates, and relationships (parents, children, spouses)
+4. To connect a person to their face cluster from the photo library, use the **Link cluster** button in their profile
+
+From here you can also attach documents, write notes with citations, and find the relationship path between any two people.
+
+---
+
+## What you can do
+
+### Photos
+- Browse and search all your scanned photos
+- See which people appear in each photo
+- Filter photos by person — useful for "show me all photos with Grandma"
+
+### Family tree
+- An interactive tree you can zoom and pan
+- Click any person to see their full profile
+- Control how many generations and cousins are shown
+- Export the tree as a PNG image (screen or print quality)
+
+### People profiles
+- Full name, birth/death/christening/burial details
+- Age is calculated automatically
+- Parents, children, siblings, and spouses are listed with links
+- Attach documents (PDFs, images, audio) directly to a person
+- Write notes in plain text — they support **bold**, *italic*, headings, and lists
+- Add footnote citations to your notes and link them to sources
+
+### Documents
+- Attach birth certificates, passports, letters, land records, wills, and more
+- Documents can be linked to multiple people at once
+- Preview images and PDFs right in the app
+- Select multiple documents and download them as a ZIP
+
+### Events
+- Record family events: births, marriages, military service, emigration, and more
+- Associate multiple people with each event
+- See events on a chronological timeline
+
+### Connections
+- See who appears in photos together most often
+- Interactive force-directed graph showing social connections within your family
+
+### Search
+- Press **Ctrl+K** (Windows) or **Cmd+K** (Mac) to search everything at once — names, documents, notes — from anywhere in the app
+
+### Relationship finder
+- Select any two people and find the shortest path between them in the family tree
+- Shows the chain of relationships step by step
+- Export the chain as a PNG image
+
+---
+
+## Updating
+
+Mnemosyne can update itself automatically. Here's how:
+
+1. When you open the app, it quietly checks if a new version is available (after about 5 seconds)
+2. If an update is found, a small **colored dot** appears on the cloud icon in the top-right corner of the header
+3. Click the cloud icon to open the update window
+4. Click **Download update** and wait for it to finish (you can keep using the app while it downloads)
+5. Click **Apply & Restart** — the app will close, update itself, and reopen
+
+**Your family tree, photos, and settings are completely safe.** The update process copies your data to the new version before making any changes.
+
+If you prefer to check for updates manually, go to **Settings** (gear icon, top right) → turn off **Auto-check on startup** → then click the cloud icon whenever you want to check.
+
+---
+
+## Your data
+
+- **Your source photos are never modified.** Mnemosyne only reads them; it never moves, renames, or changes the original files.
+- **Nothing leaves your computer.** The app works fully offline. The only network connection it makes is to check for updates on GitHub (and that can be turned off).
+- All your data (family tree, notes, documents) is stored in a folder called `projects/` next to the app. You can back it up by simply copying that folder.
+
+---
+
+# For developers
+
+## Features (technical detail)
 
 ### Scan
 - Face detection and ArcFace embedding (insightface `buffalo_l` model)
@@ -16,323 +161,120 @@ complete with a family tree, events, documents, notes, and GEDCOM interoperabili
 ### Clusters
 - Rename, merge, and delete clusters
 - Assign unknown faces to existing or new clusters (with similarity suggestions)
-- Link a cluster to a person in the genealogy
+- Link a cluster to a genealogy person (1 person : 1 cluster)
 - Preview of the 4 most recent photos per cluster (sorted by EXIF date)
-- Photos and faces in reverse chronological order
-- Select multiple clusters and batch-delete them
-- Empty clusters are automatically removed after re-clustering (linked person is preserved)
-- Sticky filter/search toolbar
+- Batch-delete clusters; empty clusters removed automatically after re-clustering (linked person preserved)
 - Export selected clusters to a ZIP archive
 
 ### Connections
-- Connection strength between people, with two metrics:
-  - **Shared photos**: how many images two people appear in together
-  - **Weighted**: small group photos carry more weight (`Σ 1/n`)
+- Connection strength between people: **shared photos** count and **weighted** score (Σ 1/n for group photos)
 - Force-directed graph view (interactive: zoom, pan, drag)
-- Ranked list view: strongest connections sorted in order
-- Filter by person, adjustable minimum shared-photo threshold
-- Click a graph node or ranked row to navigate to that cluster
-- Click a connection line to filter the Images tab to the two people's shared photos
-
-### Images
-- Browse photos in list and grid view
-- Filter by status, people, and filename
-- AND/OR filter mode for multiple people
-- Clickable person badges in the preview modal → navigates to that cluster
-- Delete images from the database (source files are never touched)
+- Ranked list view sorted by strength
+- Click a connection line to filter the Images tab to those two people's shared photos
 
 ### Genealogy
 
-The genealogy module is the heart of the application.
-
-**Family tree view**
+**Family tree**
 - Interactive proband-centric tree with Reingold-Tilford layout and Ahnentafel ancestor positioning
-- Ancestor depth and cousin-degree controls (how many generations and lateral relatives to show)
-- Collapse/expand subtrees with a click — collapsed nodes show a hidden-person count
-- Shift+click on any node to refocus the tree on that person
-- Zoom, pan, Reset View button
-- Link face clusters to persons (1 person = 1 cluster)
-- **Export as PNG** — settings: 1× (screen) or 2× (print quality), dark or light background, with or without embedded face photos
+- Ancestor depth and cousin-degree (lateral depth) controls
+- Collapse/expand subtrees; collapsed nodes show a hidden-person count
+- Shift+click any node to refocus the tree on that person
+- Export as PNG: 1× or 2× DPI, dark or light background, with or without face photos
 
-**Person profile panel**
-- Biographical details: full name (title, given, middle, surname, nickname), birth/death/christening/burial date and place, occupation
-- Age calculation: "Lived N years" (deceased) or "N years old today" (living), using available year data
+**Person profile**
+- Full name: title, given, middle, surname, nickname
+- Birth/death/christening/burial: date and place (partial ISO dates supported)
+- Age calculation: "Lived N years" or "N years old today"
 - Relations section: parents, children, siblings, spouses — sorted chronologically
-- Duplicate relationship detection: warns before creating a relation that already exists
-- Documents linked to this person (certificates, photographs, audio recordings, etc.)
-- Sources section for citation tracking
+- Duplicate relationship detection
 
 **Notes**
-- Each person can have any number of structured notes with an optional title
-- Notes are written in Markdown — headings (`##`), **bold**, *italic*, ~~strikethrough~~, lists, blockquotes, inline code
-- **Footnote citations** — the Cite button inserts a `[n]` marker at the cursor; two citation types are supported:
-  - *Source citation*: links to an existing Source record from the database; citation marker renders as a clickable superscript that navigates to the linked document or event
-  - *Custom-text citation*: free-form text (e.g. "Oral interview, grandmother, 1998") stored independently of the sources table; displayed in the References panel with an amber label
-  - Auto-cleanup: if a `[n]` marker is deleted from the text, the corresponding citation is automatically removed from the references panel
-- **@ mentions** — type `@` anywhere in a note to get a person picker; selecting a person inserts `@[Name](#pid-ID)` which renders as a clickable link (navigates to that person's panel); the `@` popup shows biographical data and close family (spouse, parents, children) for the highlighted match
-- Notes are fully searchable via the global search palette (title and content)
+- Markdown (headings, bold, italic, strikethrough, lists, blockquotes, code)
+- Footnote citations: `[n]` markers — source citations (links to a Source record) or custom-text citations (free-form)
+- Auto-cleanup: deleting a `[n]` marker removes the corresponding citation record
+- `@` mentions: type `@` for a person picker; inserts `@[Name](#pid-ID)` which renders as a clickable link
+- Fully searchable via global search palette
 
 **Sources**
-- Each source record holds: title, type, author, year, publisher, location, URL, description
-- Sources can be linked to a document or event in the application
-- Only sources that are actively used (have at least one citation, or are linked to a document or event) appear in the note citation picker
+- Fields: title, type, author, year, publisher, location, URL, description
+- Linkable to a document or event
+- Only sources with at least one citation (or linked to a document/event) appear in the citation picker
 
 **GEDCOM interoperability**
-- **Import**: load a `.ged` file — persons, parent-child and spouse relations, events, notes, sources, and documents are imported; a preview wizard lets you choose whether to merge each incoming person with an existing record or create a new one
-- **Export**: download the current genealogy as a standards-compliant `.ged` file (see [GEDCOM export](#gedcom-export) for details)
+- **Import**: `.ged` file → persons, relations, events, notes, sources, documents; preview wizard for merge/create/skip decisions per person
+- **Export**: standards-compliant GEDCOM 5.5.1 with UTF-8 encoding; see [GEDCOM export](#gedcom-export) below
 
 ### Events
-- Personal and family events: birth, death, marriage, emigration, military service, education, occupation, and more
-- Associate any number of persons with each event
-- Date, place, and description fields
-- Chronological timeline view, grouped by event
+- Types: birth, death, marriage, emigration, military, education, occupation, religious, travel, award, and custom
+- Any number of persons per event; date, place, description fields
+- Chronological timeline view
 
 ### Documents
-- Attach genealogical documents to persons: birth, death, and marriage certificates, passports, military records, land records, wills, letters, photographs, audio recordings
-- Image preview (JPEG, PNG) and PDF link in the document viewer modal
-- Each document shows its associated person with a one-click link to their profile
-- Documents are searchable via the global search palette
-- **Table view** with columns: thumbnail/icon, title, type, year, linked persons, and per-row actions
-- **Filter bar**: text search, type dropdown, searchable person combobox (shows birth/death year and occupation to distinguish persons with identical names)
-- **Notes**: notes with citations and @person mentions can be attached to documents, editable directly in the viewer modal
-- **Bulk selection and ZIP download**: see [Document bulk download](#document-bulk-download) below
+- Types: birth/death/marriage certificates, passports, military records, land records, wills, letters, photographs, audio
+- Image preview and PDF link in the document viewer modal
+- Notes with citations and @ mentions attachable to documents
+- Bulk selection and ZIP download; see [Document bulk download](#document-bulk-download)
 
 ### Global Search
-- **Ctrl+K** (or **Cmd+K** on macOS) opens the search palette from anywhere in the app
-- Searches across persons (name, first name, last name, **nickname**), events, documents, and **note titles and content** simultaneously
-- Up to 3 matching notes shown, clicking navigates to the person's Notes tab
+- **Ctrl+K** / **Cmd+K** — searches persons (name, nickname), events, documents, and note content simultaneously
 - Keyboard navigation: ↑ ↓ to move, Enter to open, Escape to close
 
 ### Relationship Path Finder
-- Select any two persons and find the shortest relationship path between them
+- BFS shortest path between any two persons
 - Snake-layout chain display (up to 5 persons per row)
-- Blood-relative vs. marriage-relative badge, Lowest Common Ancestor (LCA) annotation
-- Available from the person profile panel
-- **Export as PNG** — exports the displayed chain as a high-resolution image; see [Relationship path export](#relationship-path-export) below
+- Blood vs. marriage-relative badge, Lowest Common Ancestor annotation
+- **Export as PNG** — see [Relationship path export](#relationship-path-export)
 
 ---
 
-## Projects and Export
+## Auto-update (implementation detail)
 
-### Projects
-- Create, rename, and delete collections — including the currently active one
-- Use the project switcher in the header to switch between projects
-- Each project lives in its own directory (`projects/<id>/`) with its own SQLite database
-
-### Relationship path export
-
-The relationship path modal includes an **Export PNG** button in its footer. Clicking it renders the currently displayed snake-layout chain to an offscreen Canvas and downloads it as `relationship_<nameA>_<nameB>.png`.
-
-**What the image contains**
-
-- Dark (#09090b) background at 2× pixel density (crisp on HiDPI screens)
-- Header with both person names
-- Full snake-layout chain — same row/column structure as the modal, scaled up for legibility (120 px card slots, 72 px connectors)
-- Each card shows: circular avatar (photo or initials), full name truncated with ellipsis if needed, birth–death years
-- Highlight rings: violet for endpoints, rose for the Lowest Common Ancestor, blue for marriage-bridge persons
-- Edge labels on horizontal connectors (solid line for blood, dashed for marriage) and vertical turn connectors between rows
-- Footer with blood-vs-marriage badge, step count, and LCA name (when applicable)
-
-The function is entirely client-side (Canvas 2D API); avatar images are pre-loaded before drawing so they appear in the export.
-
-### Document bulk download
-
-Individual documents can be downloaded from the Documents tab as a ZIP archive without exporting the entire project database.
-
-**How to use**
-
-1. Open the **Documents** tab.
-2. Click the checkbox that appears on hover at the left of any row to select it. The header checkbox selects or deselects all currently visible (filtered) rows.
-3. A floating action bar appears at the bottom of the tab showing the count of selected documents.
-4. Toggle **Include notes** (on by default) to control whether a `_index.txt` manifest is added to the archive.
-5. Click **Download ZIP** — the browser downloads `documents.zip`.
-
-**Archive contents**
-
-| Path | Description |
-|------|-------------|
-| `<filename>` | The original document file (e.g. `birth_cert.pdf`). If two selected documents share the same filename the second is renamed to `<name> (2).<ext>`. |
-| `_index.txt` | Plain-text manifest listing each document's title, type, year, linked persons, description, and the full text of all attached notes with source citations. Included only when *Include notes* is enabled. |
-
-**`_index.txt` format example**
+The updater module lives in `backend/updater.py`. It runs as a state machine:
 
 ```
-Documents Export
-================
-Exported: 2026-07-09
-Files: 3
-
-[1] Nyelvvizsga
-    ─────────────────────────
-    Document | 2024
-    File:    anglob2.jpg
-    Persons: Miklós Gyula
-    Description: language exam
-
-    Notes:
-    ▸ Exam note
-      Passed B2 English. See Miklós Gyula for more context.
-      Sources:
-        [1] Parish register 1872 — p. 14
-
-[2] Birth Certificate
-    ...
+idle → checking → up_to_date
+                → update_available → downloading → ready → applying
+any  → error
 ```
 
-Person mention syntax (`@[Name](#pid-ID)`) and Markdown links are automatically stripped to plain text in the index file.
+State is held in a module-level dict (`_state`) protected by a `threading.Lock`. All state transitions happen in daemon background threads.
 
-**Backend endpoint**
+**Version format**: `build-YYYYMMDD-N` where N is `github.run_number` (not zero-padded). Comparison uses `_parse_version()` which returns `(int(date), int(run_number))` tuples — necessary because `"9" > "14"` as strings.
 
-`POST /api/documents/bulk-download` — accepts `{ ids: number[], include_notes: boolean }`, streams back a `application/zip` response.
+**Platform behaviour**:
 
----
+| Platform | ZIP structure | Updater script | Relaunch |
+|---|---|---|---|
+| Windows | Files at ZIP root (CI: `Compress-Archive -Path dist\Mnemosyne\*`) | `%TEMP%\mnemosyne_updater.bat` — `robocopy /E /IS /IT` | `start "" "%APP%\Mnemosyne.exe"` |
+| macOS | `Mnemosyne.app/` at ZIP root | `/tmp/mnemosyne_updater.sh` — `mv`; falls back to `osascript` admin prompt if in `/Applications` | `open "$OLD"` + `xattr -cr` to clear quarantine |
 
-### ZIP export
+`MNEMOSYNE_APP_DIR` env var (set by `launcher.py`): on Windows = directory containing `Mnemosyne.exe`; on macOS = `Mnemosyne.app/Contents/MacOS/`.
 
-A ZIP archive packages the database and all referenced media into a single self-contained file that can be imported on any machine.
+The app exits via `os._exit(0)` (not `sys.exit`) one second after launching the updater script, to guarantee the process terminates even if FastAPI shutdown hooks are slow.
 
-**What goes into the ZIP**
-
-| Entry | Description |
-|---|---|
-| `project.json` | Project name and metadata |
-| `project.db` | SQLite database (schema + all data) |
-| `images/<id>_<filename>` | Every included photo, one file per image |
-| `documents/<stored_name>` | Every document file still referenced in the exported DB |
-
-Image paths in the database are rewritten from absolute to relative (`images/<id>_<filename>`) during export. On import they are rewritten back to absolute paths in the new project directory.
-
-**Export pipeline — step by step**
-
-1. **Copy**: `VACUUM INTO` creates a byte-perfect, WAL-free copy of the source database. This captures the full schema including all columns (such as `note_citations.custom_label`).
-
-2. **Person/cluster filter** (three mutually exclusive modes):
-   - *Person list* (`person_ids`): keeps only the specified persons and cluster images linked to them; all other persons, clusters, and images are removed.
-   - *Cluster list* (`cluster_ids`): keeps only those clusters and the images they contain; faces from unselected named clusters are moved to the noise cluster (embeddings preserved for re-clustering). If genealogy is included, only persons linked to the remaining clusters are kept.
-   - *Full project*: no filtering by person or cluster.
-
-3. **Content toggles** (applied after person/cluster filtering, independent of each other):
-
-   | Toggle | What is removed when OFF |
-   |---|---|
-   | Include genealogy | All persons, relations, and all genealogy content (master toggle) |
-   | Include images | All images and face records |
-   | Include faceless images | Images that have no detected face (i.e. only face-containing photos are kept) |
-   | Include notes | `person_notes` and `note_citations` (both source-linked and custom-label) |
-   | Include sources | `citations`, `sources`, and `note_citations` where `source_id IS NOT NULL`; custom-label citations (`source_id IS NULL`) are **preserved** |
-   | Include events | `events`, `event_persons`, `event_images` |
-   | Include documents | `documents`, `document_persons` |
-
-   When events are included, events that lost all participants during person filtering are automatically cleaned up (orphaned events are removed).
-
-4. **Path rewrite**: each remaining image's path is updated in the DB to `images/<id>_<filename>`.
-
-5. **Pack**: the filtered DB, rewritten images, and referenced documents are written into a ZIP with DEFLATE compression.
-
-**Import pipeline**
-
-1. All member paths in the ZIP are validated against the project directory (protection against Zip Slip attacks).
-2. The archive is extracted into a new project directory under `projects/<new_id>/`.
-3. `project.db` is renamed to `photo_organizer.db`.
-4. Image paths are rewritten from relative back to absolute (prefixed with the new project directory).
-5. The project appears as inactive in the project switcher; activate it to start using it.
-
-**Callers of the ZIP export**
-
-Three UI surfaces trigger a ZIP export, each passing a different scope:
-
-| Caller | Scope |
-|---|---|
-| Project switcher | Full project (no cluster or person filter) |
-| Clusters tab | Selected cluster IDs only |
-| Family tree tab | Selected subtree (`person_ids` derived from the tree selection) |
-
-All three callers pass the same set of content toggles (notes, sources, events, documents, images, faceless).
-
----
-
-### GEDCOM export
-
-Produces a ZIP containing `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF line endings) and a `media/` folder with photos and documents.
-
-**INDI records** (one per person)
-- `NAME` with `/surname/` convention; `GIVN`, `SURN`, `NICK`, `NPFX` sub-tags
-- `SEX` — explicit value, or inferred from FAM roles (HUSB → M, WIFE → F) when not set
-- Vital events: `BIRT`, `CHR`, `DEAT`, `BURI` — each with `DATE` and `PLAC` if available; partial ISO dates (`YYYY-MM`) are converted to GEDCOM month abbreviations
-- `OCCU` if set
-- `NOTE` — from both the legacy plain-text notes field and structured notes (see below)
-- `EVEN` — one per event the person participated in, with `TYPE`, `DATE`, `PLAC`, `NOTE`
-- `OBJE` — one per document and one per photo (depending on photo mode)
-- `FAMS` / `FAMC` — links to FAM records
-
-**FAM records**
-- `HUSB` / `WIFE` (sex-aware assignment; defaults to A=HUSB, B=WIFE)
-- `CHIL` for each child
-- `MARR` with `DATE` and `PLAC` if available
-- `DIV` with `DATE` and `PLAC` if available
-
-**SOUR records** — one per source, with `TITL`, `AUTH`, `PUBL` (publisher + year + location), `NOTE` (description), `WWW` (URL)
-
-**Note serialisation**
-Notes are converted from Markdown to plain text before being written to GEDCOM `NOTE` records (multiline text uses `CONT` continuation lines). The following transformations are applied in order:
-
-| Input | Output |
-|---|---|
-| `@[Kovács János](#pid-42)` | `Kovács János` (@ and link removed, name preserved) |
-| `[text](url)` | `text` |
-| `## Heading` | `Heading` (hash prefix removed) |
-| `**bold**`, `*italic*`, `~~strike~~` | plain text (markers stripped) |
-| `` `code` `` | `code` |
-| `> quote` | `quote` (chevron removed) |
-| `- list item` | `list item` (bullet removed) |
-| `[1]`, `[2]` (citation markers) | removed from text body |
-
-After stripping, inline citation references are appended as a semicolon-separated list at the end of the note text:
-- Source citations: `[1] Parish register of Győr, detail`
-- Custom-text citations: `[2] Oral interview, grandmother, 1998`
-
-Both citation types are included.
-
-**Photo modes** (selectable at export time)
-
-| Mode | Behaviour |
-|---|---|
-| `none` | No photos exported |
-| `primary` | One thumbnail face photo per person (from `thumbnail_face_id`) |
-| `all` | Every photo in which the person appears (cluster-based) |
-
-**Content toggles** — `include_notes`, `include_sources`, `include_events`, `include_documents` work the same way as in ZIP export, controlling which data is written to the GEDCOM file.
-
----
-
-## Security
-
-- The server binds **exclusively to `127.0.0.1`** (localhost) — not reachable from the network
-- CORS is restricted to `http://localhost` and `http://127.0.0.1` origins only
-- Imported ZIP archives are path-validated (protection against Zip Slip attacks)
-- The application **never sends any data** to any external server; it works entirely offline
+The update UI is suppressed in dev mode: `has_update` is false when `current_version == 'dev'`, and `apply_update()` raises `RuntimeError` when `IS_FROZEN` is false.
 
 ---
 
 ## Prerequisites
 
-| Tool    | Minimum version |
-|---------|----------------|
-| Python  | 3.11+          |
-| Node.js | 18+            |
+| Tool | Version |
+|---|---|
+| Python | 3.11+ |
+| Node.js | 18+ |
 
-> **Windows:** building `insightface` may require the
-> [Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-> ("Desktop development with C++" workload).
+> **Windows:** building `insightface` may require the [Visual C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) ("Desktop development with C++" workload).
 
-## Installation
+---
+
+## Running from source
 
 ```bash
 git clone <repo-url>
 cd Image-Organizer
 ```
 
-### 1. Python backend
+### Python backend
 
 ```bash
 python -m venv .venv
@@ -344,7 +286,7 @@ source .venv/bin/activate       # macOS / Linux
 pip install -r requirements.txt
 ```
 
-### 2. Frontend
+### Frontend
 
 ```bash
 cd frontend
@@ -352,7 +294,7 @@ npm install
 cd ..
 ```
 
-## Running
+### Start
 
 **Terminal 1 — backend:**
 ```bash
@@ -368,25 +310,9 @@ cd frontend
 npm run dev
 ```
 
-Then open: **http://localhost:5173**
+Open: **http://localhost:5173**
 
-## First run
-
-1. On the **Scan** tab, select the folder containing your photos
-2. Click **Start scan** — on the first run, insightface downloads the `buffalo_l` model (~300 MB, one-time only)
-3. After scanning, click **Run clustering**
-4. On the **Clusters** tab, name the people
-5. On the **Genealogy** tab, build the family tree and link people to their clusters
-
-> The application **never modifies** your source photos — it only reads them.
-
-## Projects and database
-
-Each project lives in its own directory (`projects/<id>/`) with its own SQLite database.
-The schema version is stored in the database (`schema_version` table), so future updates
-migrate existing data automatically. Migrations run at startup and are idempotent.
-
-Database files (`*.db`) and `config.json` are **not** tracked by git.
+---
 
 ## Project structure
 
@@ -396,57 +322,162 @@ Image-Organizer/
 │   ├── main.py              # FastAPI app, all REST API endpoints
 │   ├── scanner.py           # Background, resumable file scanner
 │   ├── clusterer.py         # DBSCAN + centroid-based clustering
-│   ├── database.py          # SQLAlchemy models, SQLite schema, startup migrations
+│   ├── database.py          # SQLite schema, SQLAlchemy models, startup migrations
 │   ├── schemas.py           # Pydantic request/response models
 │   ├── project_manager.py   # Multi-project management
-│   ├── export_utils.py      # ZIP export/import pipeline (build_export_db, create_project_zip, import_project_zip)
-│   ├── gedcom_import.py     # GEDCOM .ged file importer
-│   ├── gedcom_export.py     # GEDCOM 5.5.1 exporter (build_gedcom_zip)
-│   ├── image_utils.py       # Image loading, HEIC conversion, thumbnail cropping
-│   └── schemas.py           # Pydantic request/response models
+│   ├── updater.py           # Auto-update state machine + platform scripts
+│   ├── export_utils.py      # ZIP export/import pipeline
+│   ├── gedcom_import.py     # GEDCOM .ged importer
+│   ├── gedcom_export.py     # GEDCOM 5.5.1 exporter
+│   └── image_utils.py       # HEIC conversion, thumbnail cropping
 ├── frontend/
 │   └── src/
 │       ├── App.tsx                    # Tab navigation, global search, cross-tab routing
-│       ├── api.ts                     # Typed API client (all backend calls)
+│       ├── api.ts                     # Typed API client
 │       ├── types.ts                   # TypeScript interfaces
+│       ├── SettingsContext.tsx        # Global settings (name order, auto-update toggle)
 │       └── components/
 │           ├── ScanTab.tsx
 │           ├── ClustersTab.tsx
 │           ├── ConnectionsTab.tsx
 │           ├── ImagesTab.tsx
-│           ├── EventsTab.tsx          # Events tab + event CRUD
-│           ├── EventTimeline.tsx      # Chronological event timeline
-│           ├── FamilyTreeTab.tsx      # Genealogy tab shell
+│           ├── EventsTab.tsx
+│           ├── EventTimeline.tsx
+│           ├── FamilyTreeTab.tsx
 │           ├── TreeView.tsx           # Interactive family tree (layout + pan/zoom)
-│           ├── TreeExportModal.tsx    # PNG export (resolution, theme, photos)
-│           ├── PersonPanel.tsx        # Person profile panel (details, relations, docs, notes)
-│           ├── NoteEditor.tsx         # Note editor + NoteCard display (Markdown, citations, @ mentions)
-│           ├── ExportModal.tsx        # ZIP export settings panel (content toggles)
-│           ├── RelationPathModal.tsx  # Shortest relationship path finder
-│           ├── SearchPalette.tsx      # Global search palette (Ctrl+K)
+│           ├── TreeExportModal.tsx    # PNG export
+│           ├── PersonPanel.tsx        # Person profile (details, relations, docs, notes)
+│           ├── NoteEditor.tsx         # Markdown notes + citations + @ mentions
+│           ├── RelationPathModal.tsx  # Relationship path finder + PNG export
+│           ├── ExportModal.tsx        # ZIP export settings
+│           ├── SearchPalette.tsx      # Global search (Ctrl+K)
 │           ├── DocumentViewer.tsx     # Document preview modal
 │           ├── GedcomImportModal.tsx  # GEDCOM import wizard
-│           ├── StatisticsView.tsx     # Family statistics
+│           ├── UpdateBanner.tsx       # Auto-update icon + modal
+│           ├── StatisticsView.tsx
 │           ├── ProjectSwitcher.tsx
 │           ├── FolderPicker.tsx
 │           └── NameEditor.tsx
+├── version.txt              # Written by CI before build; "dev" in local checkouts
+├── mnemosyne.spec           # PyInstaller build spec
 ├── requirements.txt
 ├── config.json              # ← gitignored (active project name)
 └── projects/                # ← gitignored (databases, user data)
     └── <project-id>/
         ├── project.json
         ├── photo_organizer.db
-        └── documents/       # uploaded genealogical documents
+        └── documents/
 ```
+
+---
+
+## Projects and database
+
+Each project has its own directory (`projects/<id>/`) with its own SQLite database. The schema version is stored in `schema_version` table; migrations run at startup and are idempotent.
+
+Database files (`*.db`) and `config.json` are not tracked by git.
+
+---
+
+## Relationship path export
+
+The relationship path modal includes an **Export PNG** button. It renders the snake-layout chain to an offscreen Canvas at 2× DPI and downloads it as `relationship_<nameA>_<nameB>.png`.
+
+- Dark (`#09090b`) background; 120 px card slots, 72 px connectors
+- Each card: circular avatar (photo or initials), full name, birth–death years
+- Highlight rings: violet for endpoints, rose for LCA, blue for marriage-bridge persons
+- Edge labels on horizontal and vertical connectors (solid = blood, dashed = marriage)
+
+Entirely client-side (Canvas 2D API); images are pre-loaded before drawing.
+
+---
+
+## Document bulk download
+
+`POST /api/documents/bulk-download` — accepts `{ ids: number[], include_notes: boolean }`, returns `application/zip`.
+
+The ZIP contains the original files (collisions renamed `<name> (2).<ext>`) and an optional `_index.txt` plain-text manifest with titles, types, years, linked persons, descriptions, and full note text with citations.
+
+---
+
+## ZIP export
+
+A ZIP archive packages the database and all referenced media into a portable, self-contained file that can be imported on any machine.
+
+**Contents**
+
+| Entry | Description |
+|---|---|
+| `project.json` | Project name and metadata |
+| `project.db` | SQLite database |
+| `images/<id>_<filename>` | Included photos |
+| `documents/<stored_name>` | Referenced document files |
+
+**Export pipeline**
+
+1. `VACUUM INTO` creates a WAL-free copy of the source database
+2. **Person/cluster filter** (mutually exclusive): person list, cluster list, or full project
+3. **Content toggles**: notes, sources, events, documents, images, faceless images — each independently removable
+4. **Path rewrite**: image paths updated to `images/<id>_<filename>` (absolute → relative)
+5. Pack with DEFLATE compression
+
+**Import pipeline**
+
+1. All member paths validated against project directory (Zip Slip protection)
+2. Extracted to `projects/<new_id>/`
+3. `project.db` → `photo_organizer.db`
+4. Image paths rewritten back to absolute
+
+**Callers**
+
+| Caller | Scope |
+|---|---|
+| Project switcher | Full project |
+| Clusters tab | Selected cluster IDs |
+| Family tree tab | Selected subtree (`person_ids`) |
+
+---
+
+## GEDCOM export
+
+Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` folder.
+
+**INDI records** — `NAME` with `/surname/`; `GIVN`, `SURN`, `NICK`, `NPFX`; vital events (`BIRT`, `CHR`, `DEAT`, `BURI`) with `DATE` and `PLAC`; `OCCU`; `NOTE`; `EVEN` (one per event); `OBJE` (documents + photos); `FAMS`/`FAMC`
+
+**FAM records** — `HUSB`/`WIFE` (sex-aware); `CHIL`; `MARR` and `DIV` with date and place
+
+**SOUR records** — `TITL`, `AUTH`, `PUBL`, `NOTE`, `WWW`
+
+**Note serialisation** — Markdown stripped to plain text before writing to `NOTE` records:
+
+| Input | Output |
+|---|---|
+| `@[Name](#pid-42)` | `Name` |
+| `[text](url)` | `text` |
+| `## Heading` | `Heading` |
+| `**bold**`, `*italic*`, `~~strike~~` | plain text |
+| `` `code` `` | `code` |
+| `> quote` | `quote` |
+| `- list item` | `list item` |
+| `[1]`, `[2]` (citation markers) | removed; appended as a list at end of note |
+
+**Photo modes**: `none`, `primary` (one thumbnail per person), `all` (every photo the person appears in)
+
+---
+
+## Security
+
+- The server binds exclusively to `127.0.0.1` — not reachable from the network
+- CORS restricted to `http://localhost` and `http://127.0.0.1`
+- ZIP imports are path-validated (Zip Slip protection)
+- The app never sends any data to any external server; the only outbound connection is the optional GitHub update check
 
 ---
 
 ## Keeping this document up to date
 
-When adding or changing export behaviour, update the relevant section above:
-
-- **New content toggle** (ZIP) → add a row to the *Content toggles* table in [ZIP export](#zip-export); update `build_export_db` in `export_utils.py`, the endpoint in `main.py`, `api.ts`, `ExportModal.tsx`, and all three callers (`ProjectSwitcher`, `ClustersTab`, `FamilyTreeTab`).
-- **New content toggle** (GEDCOM) → add to the *Content toggles* note in [GEDCOM export](#gedcom-export); update `build_gedcom_zip` in `gedcom_export.py` and the endpoint in `main.py`.
-- **New note field or syntax** → update *Note serialisation* table in [GEDCOM export](#gedcom-export) and add the corresponding entry to `_MD_PATTERNS` in `gedcom_export.py`; update *Notes* in [Person profile panel](#person-profile-panel).
-- **New data table** → update `_delete_persons` in `export_utils.py` if the table has a `person_id` foreign key, so it is correctly cleaned up during person filtering.
-- **Schema change to `note_citations`** → because SQLite does not support `ALTER COLUMN`, add an idempotent migration block in `database.py` using the `PRAGMA table_info` + table-recreate pattern already used for the `custom_label` column.
+- **New content toggle (ZIP)** → add row to *ZIP export* content table; update `build_export_db` in `export_utils.py`, endpoint in `main.py`, `api.ts`, `ExportModal.tsx`, and all three callers
+- **New content toggle (GEDCOM)** → update *GEDCOM export*; update `build_gedcom_zip` in `gedcom_export.py` and endpoint in `main.py`
+- **New note syntax** → update *Note serialisation* table; add entry to `_MD_PATTERNS` in `gedcom_export.py`
+- **New data table with `person_id` FK** → update `_delete_persons` in `export_utils.py`
+- **Schema change to `note_citations`** → add idempotent migration in `database.py` using the `PRAGMA table_info` + table-recreate pattern

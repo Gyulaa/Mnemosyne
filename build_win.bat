@@ -6,6 +6,13 @@ echo   Mnemosyne ^| Windows build
 echo  ======================================
 echo.
 
+:: 0. Version
+FOR /F "delims=" %%I IN ('git describe --tags --abbrev^=0 2^>nul') DO SET GIT_TAG=%%I
+IF NOT DEFINED GIT_TAG SET GIT_TAG=dev
+echo %GIT_TAG%> version.txt
+echo  Verzio: %GIT_TAG%
+echo.
+
 :: 1. Build frontend
 echo [1/3] Frontend build (npm run build)...
 cd frontend
