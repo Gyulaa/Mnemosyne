@@ -1582,16 +1582,16 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
         {confirmDelete && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 rounded-none">
             <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 shadow-2xl w-64 text-center">
-              <p className="text-zinc-100 font-medium mb-1 text-sm">Töröljük a személyt?</p>
-              <p className="text-zinc-400 text-xs mb-4 leading-relaxed">{displayPersonName(person, nameOrder)} véglegesen törlődik az összes kapcsolatával együtt.</p>
+              <p className="text-zinc-100 font-medium mb-1 text-sm">Delete this person?</p>
+              <p className="text-zinc-400 text-xs mb-4 leading-relaxed">{displayPersonName(person, nameOrder)} will be permanently deleted along with all their relationships.</p>
               <div className="flex gap-2 justify-center">
                 <button onClick={() => setConfirmDelete(false)}
                   className="px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-300 text-xs hover:bg-zinc-600 transition-colors">
-                  Mégsem
+                  Cancel
                 </button>
                 <button onClick={handleDeletePerson} disabled={deleting}
                   className="px-3 py-1.5 rounded-lg bg-red-700 text-white text-xs hover:bg-red-600 transition-colors disabled:opacity-50">
-                  {deleting ? 'Törlés…' : 'Törlés'}
+                  {deleting ? 'Deleting…' : 'Delete'}
                 </button>
               </div>
             </div>
@@ -1601,23 +1601,23 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
         {mergePending && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 rounded-none">
             <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 shadow-2xl w-72 text-center">
-              <p className="text-zinc-100 font-medium mb-1 text-sm">Összevonás megerősítése</p>
+              <p className="text-zinc-100 font-medium mb-1 text-sm">Confirm merge</p>
               <p className="text-zinc-400 text-xs mb-1 leading-relaxed">
                 <span className="text-zinc-200">{displayPersonName(person, nameOrder)}</span>
-                {' '}adatai beolvadnak ide:
+                {' '}will be merged into:
               </p>
               <p className="text-zinc-200 text-sm font-medium mb-1">{displayPersonName(mergePending, nameOrder)}</p>
               <p className="text-zinc-600 text-[10px] mb-4 leading-relaxed">
-                Az alapadatok (amelyek már kitöltöttek) megmaradnak. A kapcsolatok, események és dokumentumok átkerülnek. A forrásszemély törlődik.
+                Existing fields on the target are kept. Relationships, events, and documents are transferred. The source person is deleted.
               </p>
               <div className="flex gap-2 justify-center">
                 <button onClick={() => setMergePending(null)}
                   className="px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-300 text-xs hover:bg-zinc-600 transition-colors">
-                  Mégsem
+                  Cancel
                 </button>
                 <button onClick={handleMergePerson} disabled={merging}
                   className="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs hover:bg-brand-500 transition-colors disabled:opacity-50">
-                  {merging ? 'Összevonás…' : 'Összevon'}
+                  {merging ? 'Merging…' : 'Merge'}
                 </button>
               </div>
             </div>

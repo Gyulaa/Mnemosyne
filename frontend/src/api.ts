@@ -48,10 +48,10 @@ export const api = {
       fetchJson<{ ok: boolean }>(`${BASE}/clusters/${id}`, { method: 'DELETE' }),
     batchDelete: (ids: number[]) =>
       post<{ ok: boolean; count: number }>(`${BASE}/clusters/batch-delete`, { cluster_ids: ids }),
-    create: (faceIds?: number[], personName?: string) =>
+    create: (faceIds?: number[], personName?: string, nameParts?: { title?: string | null; last_name?: string | null; first_name?: string | null; middle_name?: string | null; nickname?: string | null }) =>
       post<{ ok: boolean; cluster_id: number; label: number; person_id: number | null; person_name: string | null }>(
         `${BASE}/clusters`,
-        { face_ids: faceIds ?? null, person_name: personName ?? null },
+        { face_ids: faceIds ?? null, person_name: personName ?? null, ...nameParts },
       ),
     mergeInto: (sourceId: number, targetId: number) =>
       post<{ ok: boolean; target_cluster_id: number }>(
@@ -85,6 +85,21 @@ export const api = {
     batchUnclassify: (faceIds: number[]) =>
       post<{ ok: boolean; count: number }>(
         `${BASE}/faces/batch-unclassify`,
+        { face_ids: faceIds },
+      ),
+    batchDismiss: (faceIds: number[]) =>
+      post<{ ok: boolean; count: number }>(
+        `${BASE}/faces/batch-dismiss`,
+        { face_ids: faceIds },
+      ),
+    batchRestore: (faceIds: number[]) =>
+      post<{ ok: boolean; count: number }>(
+        `${BASE}/faces/batch-restore`,
+        { face_ids: faceIds },
+      ),
+    batchDelete: (faceIds: number[]) =>
+      post<{ ok: boolean; count: number }>(
+        `${BASE}/faces/batch-delete`,
         { face_ids: faceIds },
       ),
   },
@@ -224,6 +239,8 @@ export const api = {
       fetchJson<{ ok: boolean }>(`${BASE}/images/${id}`, { method: 'DELETE' }),
     bulkDelete: (ids: number[]) =>
       post<{ ok: boolean; count: number }>(`${BASE}/images/bulk-delete`, { image_ids: ids }),
+    get: (id: number) =>
+      fetchJson<ImageItem>(`${BASE}/images/${id}`),
     persons: (id: number) =>
       fetchJson<ImagePerson[]>(`${BASE}/images/${id}/persons`),
     withEvents: () =>

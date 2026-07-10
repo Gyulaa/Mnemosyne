@@ -738,6 +738,28 @@ def bulk_delete_images(body: dict, db: Session = Depends(get_db)):
     return {"ok": True, "count": count}
 
 
+@app.get("/api/images/{image_id}")
+def get_image(image_id: int, db: Session = Depends(get_db)):
+    img = db.get(DBImage, image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+    face_count = db.query(func.count(DBFace.id)).filter(DBFace.image_id == image_id).scalar() or 0
+    first_face = db.query(DBFace.id).filter(DBFace.image_id == image_id).order_by(DBFace.id).first()
+    return {
+        "id": img.id,
+        "path": img.path,
+        "filename": Path(img.path).name,
+        "folder": str(Path(img.path).parent),
+        "scan_status": img.scan_status,
+        "error_msg": img.error_msg,
+        "scanned_at": img.scanned_at.isoformat() if img.scanned_at else None,
+        "exif_date": img.exif_date.isoformat() if img.exif_date else None,
+        "meta_json": img.meta_json,
+        "face_count": face_count,
+        "first_face_id": first_face[0] if first_face else None,
+    }
+
+
 @app.delete("/api/images/{image_id}")
 def delete_image(image_id: int, db: Session = Depends(get_db)):
     img = db.get(DBImage, image_id)
@@ -819,6 +841,7 @@ def list_clusters(db: Session = Depends(get_db)):
             "id": c.id,
             "label": c.label,
             "face_count": len(c.faces),
+            "dismissed_count": sum(1 for f in c.faces if f.dismissed),
             "person_id": c.person_id,
             "person_name": c.person.name if c.person else None,
             "preview_face_ids": _preview_face_ids(c.id, db),
@@ -1005,7 +1028,9 @@ def create_cluster(req: CreateClusterRequest, db: Session = Depends(get_db)):
     person_name = None
     if req.person_name and req.person_name.strip():
         person_name = req.person_name.strip()
-        person = DBPerson(name=person_name)
+        name_kwargs = {k: getattr(req, k) for k in ("title", "last_name", "first_name", "middle_name", "nickname") if getattr(req, k) is not None}
+        first_face_id = req.face_ids[0] if req.face_ids else None
+        person = DBPerson(name=person_name, thumbnail_face_id=first_face_id, **name_kwargs)
         db.add(person)
         db.flush()
         cluster.person_id = person.id
@@ -1131,6 +1156,40 @@ def batch_unclassify_faces(body: dict, db: Session = Depends(get_db)):
     return {"ok": True, "count": len(face_ids)}
 
 
+@app.post("/api/faces/batch-dismiss")
+def batch_dismiss_faces(body: dict, db: Session = Depends(get_db)):
+    """Soft-hide faces from the unclassified view without removing them from the database."""
+    face_ids = body.get("face_ids", [])
+    if not face_ids:
+        raise HTTPException(400, "face_ids cannot be empty")
+    db.execute(sql_update(DBFace).where(DBFace.id.in_(face_ids)).values(dismissed=True))
+    db.commit()
+    return {"ok": True, "count": len(face_ids)}
+
+
+@app.post("/api/faces/batch-restore")
+def batch_restore_faces(body: dict, db: Session = Depends(get_db)):
+    """Un-hide previously dismissed faces."""
+    face_ids = body.get("face_ids", [])
+    if not face_ids:
+        raise HTTPException(400, "face_ids cannot be empty")
+    db.execute(sql_update(DBFace).where(DBFace.id.in_(face_ids)).values(dismissed=False))
+    db.commit()
+    return {"ok": True, "count": len(face_ids)}
+
+
+@app.post("/api/faces/batch-delete")
+def batch_delete_faces(body: dict, db: Session = Depends(get_db)):
+    """Permanently delete face records. Cannot be undone."""
+    face_ids = body.get("face_ids", [])
+    if not face_ids:
+        raise HTTPException(400, "face_ids cannot be empty")
+    db.query(DBFace).filter(DBFace.id.in_(face_ids)).delete(synchronize_session=False)
+    db.commit()
+    _purge_empty_named_clusters(db)
+    return {"ok": True, "count": len(face_ids)}
+
+
 @app.post("/api/clusters/{cluster_id}/split")
 def split_cluster(
     cluster_id: int,
@@ -1248,6 +1307,7 @@ def get_cluster_faces(
             "bbox": json.loads(f.bbox_json),
             "det_score": round(f.det_score, 3),
             "exif_date": f.image.exif_date.isoformat() if f.image.exif_date else None,
+            "dismissed": bool(f.dismissed),
         }
         for f in faces
     ]
@@ -1645,8 +1705,15 @@ def merge_persons(source_id: int, target_id: int, db: Session = Depends(get_db))
     tgt.hidden_auto_events = json.dumps(merged_hidden) if merged_hidden else None
 
     # 2. Re-link clusters from source → target
-    for cluster in list(src.clusters):
-        cluster.person_id = target_id
+    # Raw SQL avoids SQLAlchemy nullifying person_id when src is later deleted:
+    # setting cluster.person_id via ORM doesn't update src.clusters in-memory, so
+    # db.delete(src) would emit UPDATE SET person_id=NULL before the DELETE.
+    db.execute(
+        sql_update(DBCluster)
+        .where(DBCluster.person_id == source_id)
+        .values(person_id=target_id)
+    )
+    db.expire(src)  # force reload of src.clusters from DB (now empty) before delete
 
     # 3. Transfer relations (avoid self-loops and duplicates)
     def _rel_key(rel):
@@ -2531,9 +2598,12 @@ def face_thumbnail(face_id: int, size: int = 160, db: Session = Depends(get_db))
     face = db.get(DBFace, face_id)
     if not face:
         raise HTTPException(404, "Face not found")
-    img = load_image_bgr(Path(face.image.path))
+    p = Path(face.image.path)
+    if not p.exists():
+        raise HTTPException(404, "Source image no longer on disk")
+    img = load_image_bgr(p)
     if img is None:
-        raise HTTPException(500, "Cannot load source image")
+        raise HTTPException(404, "Cannot load source image")
     thumb = crop_thumbnail(img, np.array(json.loads(face.bbox_json)), size)
     _, buf = cv2.imencode(".jpg", thumb)
     return Response(content=bytes(buf), media_type="image/jpeg")

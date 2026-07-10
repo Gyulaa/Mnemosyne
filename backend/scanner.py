@@ -83,6 +83,8 @@ def _run(root_path: str, session_factory, det_size: int):
             p for p in root.rglob("*")
             if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
         )
+        all_path_strs = {str(p) for p in all_paths}
+
         for p in all_paths:
             mtime = p.stat().st_mtime
             existing = db.query(DBImage).filter(DBImage.path == str(p)).first()
@@ -94,6 +96,29 @@ def _run(root_path: str, session_factory, det_size: int):
                 existing.scan_status = "pending"
                 existing.scanned_at = None
                 existing.error_msg = None
+
+        # Remove DB records for images under this root that no longer exist on disk
+        root_prefix = str(root)
+        stale = [
+            img for img in db.query(DBImage).all()
+            if img.path.startswith(root_prefix) and img.path not in all_path_strs
+        ]
+        for img in stale:
+            db.query(DBFace).filter(DBFace.image_id == img.id).delete()
+            db.delete(img)
+
+        if stale:
+            db.commit()
+            # Remove named clusters that are now empty (faces deleted above)
+            from sqlalchemy import text as _text
+            db.execute(_text("""
+                DELETE FROM clusters
+                WHERE label >= 0
+                  AND id NOT IN (
+                      SELECT DISTINCT cluster_id FROM faces WHERE cluster_id IS NOT NULL
+                  )
+            """))
+
         db.commit()
 
         # Phase 2: process pending images one by one
