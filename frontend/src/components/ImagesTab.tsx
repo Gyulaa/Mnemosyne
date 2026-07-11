@@ -5,7 +5,7 @@ import { api } from '../api'
 import type { Cluster, ImageItem, ImagePerson, PersonEvent } from '../types'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
 
-type FilterType = 'all' | 'done' | 'no_face' | 'error' | 'pending'
+type FilterType = 'all' | 'done' | 'no_face' | 'error' | 'pending' | 'private'
 type SortOrder = 'id_desc' | 'exif_date_desc' | 'exif_date_asc' | 'filename_asc'
 type ViewMode = 'list' | 'grid'
 
@@ -177,6 +177,11 @@ export default function ImagesTab({
     }
   }
 
+  async function togglePrivacySingle(id: number, isPrivate: boolean) {
+    await api.images.togglePrivacy(id, isPrivate)
+    invalidate()
+  }
+
   function toggleItem(id: number) {
     setSelected(prev => {
       const n = new Set(prev)
@@ -327,12 +332,13 @@ export default function ImagesTab({
     }
   }
 
-  const filterTabs: { key: FilterType; label: string; count: number | undefined }[] = [
+  const filterTabs: { key: FilterType; label: string; count: number | undefined; amber?: boolean }[] = [
     { key: 'all',     label: 'All',       count: counts ? counts.done + counts.no_face + counts.error + counts.pending : undefined },
     { key: 'done',    label: 'Has faces', count: counts?.done },
     { key: 'no_face', label: 'No face',   count: counts?.no_face },
     { key: 'error',   label: 'Error',     count: counts?.error },
     { key: 'pending', label: 'Pending',   count: counts?.pending },
+    { key: 'private', label: 'Private',   count: data?.private_count, amber: true },
   ]
 
   return (
@@ -344,14 +350,27 @@ export default function ImagesTab({
             key={f.key}
             onClick={() => changeFilter(f.key)}
             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
-              filter === f.key
-                ? 'bg-zinc-700 text-zinc-100'
-                : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+              f.amber
+                ? filter === f.key
+                  ? 'bg-amber-900/50 text-amber-300'
+                  : 'text-amber-600 hover:text-amber-400 hover:bg-amber-900/30'
+                : filter === f.key
+                  ? 'bg-zinc-700 text-zinc-100'
+                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
             }`}
           >
+            {f.amber && (
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+              </svg>
+            )}
             {f.label}
             {f.count != null && (
-              <span className={`text-xs tabular-nums ${filter === f.key ? 'text-zinc-400' : 'text-zinc-600'}`}>
+              <span className={`text-xs tabular-nums ${
+                f.amber
+                  ? filter === f.key ? 'text-amber-500' : 'text-amber-700'
+                  : filter === f.key ? 'text-zinc-400' : 'text-zinc-600'
+              }`}>
                 {f.count.toLocaleString()}
               </span>
             )}
@@ -589,6 +608,7 @@ export default function ImagesTab({
                   onPreview={dragPreview(() => setPreviewIdx(i))}
                   onDragMouseDown={handleDragMouseDown(img.id)}
                   onDragMouseEnter={() => handleDragMouseEnter(img.id)}
+                  onTogglePrivacy={togglePrivacySingle}
                 />
               ))}
             </div>
@@ -615,6 +635,7 @@ export default function ImagesTab({
                 onPreview={dragPreview(() => setPreviewIdx(i))}
                 onDragMouseDown={handleDragMouseDown(img.id)}
                 onDragMouseEnter={() => handleDragMouseEnter(img.id)}
+                onTogglePrivacy={togglePrivacySingle}
               />
             ))}
           </div>
@@ -642,7 +663,10 @@ export default function ImagesTab({
       )}
 
       {/* Floating bulk toolbar */}
-      {selected.size > 0 && (
+      {selected.size > 0 && (() => {
+        const selItems = pageItems.filter(i => selected.has(i.id))
+        const allPrivate = selItems.length > 0 && selItems.every(i => i.is_private)
+        return (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-6 py-3.5 bg-zinc-900/90 backdrop-blur-xl border border-zinc-700/60 rounded-2xl shadow-2xl">
           <span className="text-sm text-zinc-200 font-semibold tabular-nums">{selected.size} selected</span>
           <div className="w-px h-5 bg-zinc-700 shrink-0" />
@@ -667,14 +691,20 @@ export default function ImagesTab({
             {exportingSelected ? 'Building ZIP…' : `Export ${selected.size}`}
           </button>
           <button
-            onClick={() => markSelectedPrivate(true)}
+            onClick={() => markSelectedPrivate(!allPrivate)}
             disabled={bulkPrivacying || bulkDeleting || exportingSelected}
             className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-800/70 hover:bg-amber-700/80 disabled:opacity-50 text-amber-200 text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
           >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
-            </svg>
-            {bulkPrivacying ? 'Saving…' : 'Make private'}
+            {allPrivate ? (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+              </svg>
+            )}
+            {bulkPrivacying ? 'Saving…' : allPrivate ? 'Make public' : 'Make private'}
           </button>
           <button
             onClick={deleteSelected}
@@ -690,7 +720,8 @@ export default function ImagesTab({
             Clear
           </button>
         </div>
-      )}
+        )
+      })()}
 
       {showAttachModal && (
         <AttachToEventModal
@@ -707,6 +738,7 @@ export default function ImagesTab({
           onChange={setPreviewIdx}
           onClose={() => setPreviewIdx(null)}
           onNavToCluster={onNavToCluster}
+          onTogglePrivacy={togglePrivacySingle}
         />
       )}
 
@@ -725,6 +757,7 @@ function ImageCard({
   onPreview,
   onDragMouseDown,
   onDragMouseEnter,
+  onTogglePrivacy,
 }: {
   img: ImageItem
   selected: boolean
@@ -734,6 +767,7 @@ function ImageCard({
   onPreview: () => void
   onDragMouseDown: (e: React.MouseEvent) => void
   onDragMouseEnter: () => void
+  onTogglePrivacy: (id: number, isPrivate: boolean) => void
 }) {
   const meta = STATUS_META[img.scan_status]
 
@@ -788,6 +822,21 @@ function ImageCard({
         img.scan_status === 'pending' ? 'bg-amber-500' : 'bg-zinc-600'
       }`} />
 
+      {/* Private badge */}
+      {img.is_private && (
+        <button
+          onClick={e => { e.stopPropagation(); onTogglePrivacy(img.id, false) }}
+          onMouseDown={e => e.stopPropagation()}
+          title="Private — not exported. Click to make public."
+          className="absolute bottom-8 right-2 flex items-center gap-1 px-1.5 py-0.5 bg-amber-900/80 hover:bg-amber-800/90 text-amber-300 rounded-md text-[10px] font-medium transition-colors"
+        >
+          <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+          </svg>
+          Private
+        </button>
+      )}
+
       {/* Delete button */}
       <button
         onClick={e => { e.stopPropagation(); onDelete() }}
@@ -820,12 +869,13 @@ function ImageCard({
 
 // ── ImagePreviewModal ─────────────────────────────────────────────────────────
 
-function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster }: {
+function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster, onTogglePrivacy }: {
   images: ImageItem[]
   idx: number
   onChange: (i: number) => void
   onClose: () => void
   onNavToCluster?: (clusterId: number) => void
+  onTogglePrivacy: (id: number, isPrivate: boolean) => void
 }) {
   const img = images[idx]
 
@@ -962,6 +1012,26 @@ function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster }: {
                 {meta.label}
               </span>
             )}
+            <button
+              onClick={() => onTogglePrivacy(img.id, !img.is_private)}
+              title={img.is_private ? 'Private — not exported. Click to make public.' : 'Mark as private (excluded from all exports)'}
+              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                img.is_private
+                  ? 'text-amber-300 bg-amber-900/40 hover:bg-amber-900/60'
+                  : 'text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700'
+              }`}
+            >
+              {img.is_private ? (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+                </svg>
+              )}
+              {img.is_private ? 'Private' : 'Make private'}
+            </button>
             <button onClick={onClose}
               className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -986,6 +1056,7 @@ function ImageRow({
   onPreview,
   onDragMouseDown,
   onDragMouseEnter,
+  onTogglePrivacy,
 }: {
   img: ImageItem
   selected: boolean
@@ -995,6 +1066,7 @@ function ImageRow({
   onPreview: () => void
   onDragMouseDown: (e: React.MouseEvent) => void
   onDragMouseEnter: () => void
+  onTogglePrivacy: (id: number, isPrivate: boolean) => void
 }) {
   const meta = STATUS_META[img.scan_status] ?? { label: img.scan_status, cls: 'bg-zinc-800 text-zinc-400 border-zinc-700' }
 
@@ -1042,6 +1114,19 @@ function ImageRow({
               </svg>
               Event
             </span>
+          )}
+          {img.is_private && (
+            <button
+              onClick={e => { e.stopPropagation(); onTogglePrivacy(img.id, false) }}
+              onMouseDown={e => e.stopPropagation()}
+              title="Private — not exported. Click to make public."
+              className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-900/60 text-amber-300 border border-amber-700/50 hover:bg-amber-800/80 transition-colors"
+            >
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+              </svg>
+              Private
+            </button>
           )}
         </div>
         <p className="text-xs text-zinc-600 truncate" title={img.folder}>

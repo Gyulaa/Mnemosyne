@@ -637,10 +637,13 @@ def list_images(
         .group_by(DBImage.scan_status)
         .all()
     )
+    private_count = q_base.filter(DBImage.is_private == True).count()  # noqa: E712
 
     # Add status filter for the paginated results.
     q = q_base
-    if filter != "all":
+    if filter == "private":
+        q = q.filter(DBImage.is_private == True)  # noqa: E712
+    elif filter != "all":
         q = q.filter(DBImage.scan_status == filter)
 
     total = q.count()
@@ -682,6 +685,7 @@ def list_images(
             "error": status_counts.get("error", 0),
             "pending": status_counts.get("pending", 0),
         },
+        "private_count": private_count,
         "items": [
             {
                 "id": img.id,
@@ -695,6 +699,7 @@ def list_images(
                 "meta_json": img.meta_json,
                 "face_count": face_counts.get(img.id, 0),
                 "first_face_id": first_face_ids.get(img.id),
+                "is_private": bool(img.is_private),
             }
             for img in items
         ],
@@ -778,6 +783,7 @@ def bulk_delete_images(body: dict, db: Session = Depends(get_db)):
     image_ids = body.get("image_ids", [])
     if not image_ids:
         return {"ok": True, "count": 0}
+    db.query(DBEventImage).filter(DBEventImage.image_id.in_(image_ids)).delete(synchronize_session=False)
     images = db.query(DBImage).filter(DBImage.id.in_(image_ids)).all()
     count = len(images)
     for img in images:
@@ -814,6 +820,7 @@ def delete_image(image_id: int, db: Session = Depends(get_db)):
     img = db.get(DBImage, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
+    db.query(DBEventImage).filter(DBEventImage.image_id == image_id).delete(synchronize_session=False)
     db.delete(img)
     db.commit()
     _purge_empty_named_clusters(db)

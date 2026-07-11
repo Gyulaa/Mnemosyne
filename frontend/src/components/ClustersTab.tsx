@@ -34,6 +34,7 @@ export default function ClustersTab({
   const [checkedClusters, setCheckedClusters] = useState<Set<number>>(new Set())
   const [exportingClusters, setExportingClusters] = useState(false)
   const [deletingClusters, setDeletingClusters] = useState(false)
+  const [bulkPrivacying, setBulkPrivacying] = useState(false)
   const [showExportModal, setShowExportModal] = useState(false)
 
   const { data: clusters = [], isLoading, isError } = useQuery({
@@ -85,6 +86,18 @@ export default function ClustersTab({
       alert(`Delete failed: ${e}`)
     } finally {
       setDeletingClusters(false)
+    }
+  }
+
+  async function doMakePrivate(isPrivate: boolean) {
+    if (bulkPrivacying) return
+    setBulkPrivacying(true)
+    try {
+      await Promise.all([...checkedClusters].map(id => api.cluster.togglePrivacy(id, isPrivate)))
+      setCheckedClusters(new Set())
+      qc.invalidateQueries({ queryKey: ['clusters'] })
+    } finally {
+      setBulkPrivacying(false)
     }
   }
 
@@ -189,7 +202,10 @@ export default function ClustersTab({
             placeholder="Search by name…"
             className="flex-1 max-w-xs bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 transition-colors"
           />
-          {checkedClusters.size > 0 && (
+          {checkedClusters.size > 0 && (() => {
+            const selectedClusters = filteredNamed.filter(c => checkedClusters.has(c.id))
+            const allPrivate = selectedClusters.length > 0 && selectedClusters.every(c => c.is_private)
+            return (
             <>
               <div className="h-4 w-px bg-zinc-700 shrink-0" />
               <span className="text-xs text-zinc-500 whitespace-nowrap">{checkedClusters.size} selected</span>
@@ -203,7 +219,7 @@ export default function ClustersTab({
               )}
               <button
                 onClick={() => setShowExportModal(true)}
-                disabled={exportingClusters || deletingClusters}
+                disabled={exportingClusters || deletingClusters || bulkPrivacying}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 disabled:cursor-wait text-white text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -212,8 +228,24 @@ export default function ClustersTab({
                 {exportingClusters ? 'Building ZIP…' : `Export ${checkedClusters.size}`}
               </button>
               <button
+                onClick={() => doMakePrivate(!allPrivate)}
+                disabled={exportingClusters || deletingClusters || bulkPrivacying}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-800/70 hover:bg-amber-700/80 disabled:opacity-50 disabled:cursor-wait text-amber-200 text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
+              >
+                {allPrivate ? (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+                  </svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+                  </svg>
+                )}
+                {bulkPrivacying ? 'Saving…' : allPrivate ? 'Make public' : 'Make private'}
+              </button>
+              <button
                 onClick={doDeleteSelected}
-                disabled={exportingClusters || deletingClusters}
+                disabled={exportingClusters || deletingClusters || bulkPrivacying}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-wait text-white text-xs font-medium rounded-lg transition-colors whitespace-nowrap"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -228,7 +260,8 @@ export default function ClustersTab({
                 Clear
               </button>
             </>
-          )}
+            )
+          })()}
         </div>
         {(exportingClusters || deletingClusters) && (
           <div className="h-0.5 rounded-full bg-zinc-800 overflow-hidden">
@@ -296,11 +329,36 @@ function ClusterCard({
   onTogglePrivacy: (clusterId: number, isPrivate: boolean) => void
 }) {
   const previews = cluster.preview_face_ids.slice(0, 4)
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wasLongPress = useRef(false)
+
+  function startPress() {
+    wasLongPress.current = false
+    pressTimer.current = setTimeout(() => {
+      wasLongPress.current = true
+      onToggle()
+    }, 500)
+  }
+
+  function cancelPress() {
+    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null }
+  }
+
+  function handleClick() {
+    if (wasLongPress.current) { wasLongPress.current = false; return }
+    onClick()
+  }
+
+  useEffect(() => () => { if (pressTimer.current) clearTimeout(pressTimer.current) }, [])
 
   return (
     <div
-      onClick={onClick}
-      className={`relative bg-zinc-900 border rounded-xl overflow-hidden hover:border-zinc-600 hover:shadow-lg transition-all text-left group cursor-pointer ${
+      onMouseDown={startPress}
+      onMouseUp={cancelPress}
+      onMouseLeave={cancelPress}
+      onDragStart={e => e.preventDefault()}
+      onClick={handleClick}
+      className={`relative bg-zinc-900 border rounded-xl overflow-hidden hover:border-zinc-600 hover:shadow-lg transition-all text-left group cursor-pointer select-none ${
         checked ? 'border-brand-400 ring-1 ring-brand-400/40' : 'border-zinc-800'
       }`}
     >
@@ -327,6 +385,7 @@ function ClusterCard({
               <img
                 src={api.faceThumbnailUrl(previews[i])}
                 alt=""
+                draggable={false}
                 loading="lazy"
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               />
@@ -400,6 +459,7 @@ function ClusterModal({
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [jumpTo, setJumpTo] = useState<{ imageId: number } | null>(null)
+  const [isPrivate, setIsPrivate] = useState(cluster.is_private ?? false)
   const [showPersonPicker, setShowPersonPicker] = useState(false)
   const [linking, setLinking] = useState(false)
   const { nameOrder } = useSettings()
@@ -639,6 +699,32 @@ function ClusterModal({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 20h18" />
                   </svg>
                   Show on tree
+                </button>
+              )}
+              {!isNoise && (
+                <button
+                  onClick={async () => {
+                    await api.cluster.togglePrivacy(cluster.id, !isPrivate)
+                    setIsPrivate(p => !p)
+                    queryClient.invalidateQueries({ queryKey: ['clusters'] })
+                  }}
+                  title={isPrivate ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
+                    isPrivate
+                      ? 'text-amber-300 bg-amber-900/40 hover:bg-amber-900/60'
+                      : 'text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700'
+                  }`}
+                >
+                  {isPrivate ? (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+                    </svg>
+                  )}
+                  {isPrivate ? 'Private' : 'Make private'}
                 </button>
               )}
               <button
