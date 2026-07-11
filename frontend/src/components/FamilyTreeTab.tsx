@@ -416,7 +416,7 @@ export default function FamilyTreeTab({
   onNavToEvent,
   onNavToDocument,
 }: {
-  onExportStart?: () => void
+  onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
   navTarget?: { personId: number; key: number } | null
   onNavConsumed?: () => void
@@ -502,7 +502,8 @@ export default function FamilyTreeTab({
     if (!activeGroup || exporting) return
     setShowExportModal(false)
     setExporting(true)
-    onExportStart?.()
+    const controller = new AbortController()
+    onExportStart?.(() => controller.abort())
     try {
       let personIds = activeGroup.persons.map(p => p.id)
       if (excludeLiving) {
@@ -510,7 +511,7 @@ export default function FamilyTreeTab({
           .filter(p => p.death_year != null || p.death_date != null)
           .map(p => p.id)
       }
-      const blob = await api.project.exportZip(undefined, name, true, personIds, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages)
+      const blob = await api.project.exportZip(undefined, name, true, personIds, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, controller.signal)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -519,7 +520,8 @@ export default function FamilyTreeTab({
       URL.revokeObjectURL(url)
       onExportEnd?.()
     } catch (e) {
-      onExportEnd?.(String(e))
+      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
+      else onExportEnd?.(String(e))
     } finally {
       setExporting(false)
     }
@@ -554,7 +556,8 @@ export default function FamilyTreeTab({
     setShowGedcomModal(false)
     if (exportingGedcom) return
     setExportingGedcom(true)
-    onExportStart?.()
+    const controller = new AbortController()
+    onExportStart?.(() => controller.abort())
     try {
       const blob = await api.project.exportGedcom({
         photoMode: opts.photoMode,
@@ -562,7 +565,7 @@ export default function FamilyTreeTab({
         includeEvents: opts.includeEvents,
         includeSources: opts.includeSources,
         includeNotes: opts.includeNotes,
-      })
+      }, controller.signal)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -571,7 +574,8 @@ export default function FamilyTreeTab({
       URL.revokeObjectURL(url)
       onExportEnd?.()
     } catch (e) {
-      onExportEnd?.(String(e))
+      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
+      else onExportEnd?.(String(e))
     } finally {
       setExportingGedcom(false)
     }

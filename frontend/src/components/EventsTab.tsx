@@ -1,105 +1,235 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
-import type { PersonEvent, PersonFull, EventImage } from '../types'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
+import type { PersonEvent, PersonFull, EventImage, ImageItem, ImagePerson } from '../types'
 import { api } from '../api'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
 
-// ── EventLightbox ─────────────────────────────────────────────────────────────
+marked.setOptions({ breaks: true, gfm: true })
 
-function EventLightbox({ images, idx, onChange, onClose }: {
+function renderMd(text: string): string {
+  const html = marked.parse(text) as string
+  return DOMPurify.sanitize(html, { ADD_ATTR: ['href', 'class', 'title'] })
+}
+
+// ── Toolbar button ─────────────────────────────────────────────────────────────
+
+function TBtn({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) {
+  return (
+    <button type="button" onMouseDown={e => { e.preventDefault(); onClick() }} title={title}
+      className="px-2 py-0.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 rounded transition-colors font-mono">
+      {children}
+    </button>
+  )
+}
+
+// ── EventImagePreviewModal ─────────────────────────────────────────────────────
+
+function EventImagePreviewModal({ images, currentIdx, onNavigate, onClose }: {
   images: EventImage[]
-  idx: number
-  onChange: (i: number) => void
+  currentIdx: number
+  onNavigate: (i: number) => void
   onClose: () => void
 }) {
+  const imageId = images[currentIdx]?.image_id
+
+  const { data: imgData } = useQuery<ImageItem>({
+    queryKey: ['image-detail', imageId],
+    queryFn: () => api.images.get(imageId),
+    enabled: !!imageId,
+    staleTime: 60_000,
+  })
+
+  const { data: persons = [] } = useQuery<ImagePerson[]>({
+    queryKey: ['image-persons', imageId],
+    queryFn: () => api.images.persons(imageId),
+    enabled: !!imageId,
+    staleTime: 60_000,
+  })
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') { onClose(); return }
-      if (e.key === 'ArrowLeft')  onChange(Math.max(0, idx - 1))
-      if (e.key === 'ArrowRight') onChange(Math.min(images.length - 1, idx + 1))
+      if (e.key === 'ArrowLeft')  onNavigate(Math.max(0, currentIdx - 1))
+      if (e.key === 'ArrowRight') onNavigate(Math.min(images.length - 1, currentIdx + 1))
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [idx, images.length, onClose, onChange])
+  }, [currentIdx, images.length, onClose, onNavigate])
+
+  const meta: Record<string, unknown> | null = imgData?.meta_json
+    ? (() => { try { return JSON.parse(imgData.meta_json) } catch { return null } })()
+    : null
+
+  function mv(key: string): string | null {
+    const v = meta?.[key]
+    return v != null ? String(v) : null
+  }
+
+  const metaRows = [
+    { label: 'File',     val: imgData?.filename ?? null },
+    { label: 'Date',     val: imgData?.exif_date ?? mv('DateTimeOriginal') ?? mv('DateTime') },
+    { label: 'Camera',   val: [mv('Make'), mv('Model')].filter(Boolean).join(' ') || null },
+    { label: 'Exposure', val: mv('ExposureTime') ? `${mv('ExposureTime')} s` : null },
+    { label: 'Aperture', val: mv('FNumber') ? `f/${mv('FNumber')}` : null },
+    { label: 'ISO',      val: mv('ISOSpeedRatings') ?? mv('ISO') },
+    { label: 'Focal',    val: mv('FocalLength') ? `${mv('FocalLength')} mm` : null },
+  ].filter(r => r.val)
+
+  if (!imageId) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-[300] bg-black/95 flex items-center justify-center" onClick={onClose}>
-      {/* Prev */}
-      <button
-        onClick={e => { e.stopPropagation(); onChange(Math.max(0, idx - 1)) }}
-        disabled={idx === 0}
-        className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-20 flex items-center justify-center text-white text-2xl transition-colors z-10">
-        ‹
-      </button>
-      {/* Next */}
-      <button
-        onClick={e => { e.stopPropagation(); onChange(Math.min(images.length - 1, idx + 1)) }}
-        disabled={idx === images.length - 1}
-        className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-20 flex items-center justify-center text-white text-2xl transition-colors z-10">
-        ›
-      </button>
-      {/* Close */}
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white text-lg transition-colors z-10">
-        ✕
-      </button>
-      {/* Counter */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 rounded-full px-3 py-1 text-xs text-zinc-400 tabular-nums z-10">
-        {idx + 1} / {images.length}
+    <div className="fixed inset-0 z-[300] bg-black/96 flex" onClick={onClose}>
+      {/* Left — image */}
+      <div className="flex-1 flex items-center justify-center relative min-w-0" onClick={e => e.stopPropagation()}>
+        <button
+          onClick={() => onNavigate(Math.max(0, currentIdx - 1))}
+          disabled={currentIdx === 0}
+          className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-20 flex items-center justify-center text-white text-xl transition-colors z-10">
+          ‹
+        </button>
+        <button
+          onClick={() => onNavigate(Math.min(images.length - 1, currentIdx + 1))}
+          disabled={currentIdx === images.length - 1}
+          className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-20 flex items-center justify-center text-white text-xl transition-colors z-10">
+          ›
+        </button>
+        <img
+          key={imageId}
+          src={api.imageViewUrl(imageId, 1600)}
+          alt=""
+          className="max-w-full max-h-full object-contain select-none"
+          style={{ maxHeight: '100vh', maxWidth: 'calc(100% - 64px)' }}
+        />
+        {images.length > 1 && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 rounded-full px-3 py-1 text-xs text-zinc-400 tabular-nums z-10">
+            {currentIdx + 1} / {images.length}
+          </div>
+        )}
       </div>
-      {/* Image */}
-      <img
-        key={images[idx].image_id}
-        src={api.imageViewUrl(images[idx].image_id, 1600)}
-        alt=""
-        className="max-w-full max-h-full object-contain select-none"
-        style={{ maxHeight: '92vh', maxWidth: 'calc(100vw - 120px)' }}
+
+      {/* Right — metadata + people sidebar */}
+      <div
+        className="w-72 shrink-0 bg-zinc-900 border-l border-zinc-800 flex flex-col overflow-y-auto"
         onClick={e => e.stopPropagation()}
-      />
-      {/* Thumbnail strip */}
-      {images.length > 1 && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 mt-8" style={{ marginTop: 0, top: 'auto', bottom: 56 }}>
-          {images.map((ei, i) => (
-            <button
-              key={ei.id}
-              onClick={e => { e.stopPropagation(); onChange(i) }}
-              className={`w-10 h-10 rounded-md overflow-hidden border-2 transition-all ${i === idx ? 'border-brand-400' : 'border-transparent opacity-60 hover:opacity-100'}`}>
-              <img src={api.imageViewUrl(ei.image_id, 120)} alt="" className="w-full h-full object-cover" />
-            </button>
-          ))}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
+          <span className="text-xs font-semibold text-zinc-400">Image details</span>
+          <button onClick={onClose}
+            className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
-      )}
+
+        {metaRows.length > 0 && (
+          <div className="px-4 py-3 border-b border-zinc-800/60">
+            <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2.5">Metadata</h4>
+            <div className="space-y-1.5">
+              {metaRows.map(r => (
+                <div key={r.label} className="flex gap-2">
+                  <span className="text-[10px] text-zinc-500 shrink-0 w-16">{r.label}</span>
+                  <span className="text-[11px] text-zinc-300 break-all">{r.val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {persons.length > 0 && (
+          <div className="px-4 py-3">
+            <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2.5">People</h4>
+            <div className="flex flex-wrap gap-2">
+              {persons.map(p => (
+                <div key={p.person_id} className="flex items-center gap-1.5 bg-zinc-800 rounded-full px-2.5 py-1">
+                  <img
+                    src={api.faceThumbnailUrl(p.face_id, 32)}
+                    alt=""
+                    className="w-5 h-5 rounded-full object-cover shrink-0"
+                  />
+                  <span className="text-[11px] text-zinc-200">{p.person_name ?? '?'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {metaRows.length === 0 && persons.length === 0 && (
+          <p className="px-4 py-4 text-xs text-zinc-600 italic">No metadata available.</p>
+        )}
+      </div>
     </div>,
     document.body,
   )
 }
 
-// ── EventDetailPanel ──────────────────────────────────────────────────────────
+// ── EventDetailView ────────────────────────────────────────────────────────────
 
-function EventDetailPanel({ ev, persons, onEdit, onClose }: {
+function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated }: {
   ev: PersonEvent
   persons: PersonFull[]
+  onBack: () => void
   onEdit: () => void
-  onClose: () => void
+  onEventUpdated: (updated: PersonEvent) => void
 }) {
   const qc = useQueryClient()
-  const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+  const [previewIdx, setPreviewIdx] = useState<number | null>(null)
+  const [editingDesc, setEditingDesc] = useState(false)
+  const [descDraft, setDescDraft] = useState('')
+  const [savingDesc, setSavingDesc] = useState(false)
   const [creatingSource, setCreatingSource] = useState(false)
   const [sourceCreated, setSourceCreated] = useState(false)
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (lightboxIdx !== null) return  // lightbox handles its own keys
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [lightboxIdx, onClose])
+  const descRef = useRef<HTMLTextAreaElement>(null)
 
   const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
   const dateStr = formatEventDate(ev.date, ev.year)
+
+  function startEditDesc() {
+    setDescDraft(ev.description ?? '')
+    setEditingDesc(true)
+    requestAnimationFrame(() => descRef.current?.focus())
+  }
+
+  function wrapDesc(before: string, after: string) {
+    const ta = descRef.current
+    if (!ta) return
+    const s = ta.selectionStart, e = ta.selectionEnd
+    const sel = descDraft.slice(s, e)
+    const next = descDraft.slice(0, s) + before + sel + after + descDraft.slice(e)
+    setDescDraft(next)
+    requestAnimationFrame(() => {
+      ta.selectionStart = s + before.length
+      ta.selectionEnd = s + before.length + sel.length
+      ta.focus()
+    })
+  }
+
+  function prefixDesc(p: string) {
+    const ta = descRef.current
+    if (!ta) return
+    const s = ta.selectionStart
+    const ls = descDraft.lastIndexOf('\n', s - 1) + 1
+    const next = descDraft.slice(0, ls) + p + descDraft.slice(ls)
+    setDescDraft(next)
+    requestAnimationFrame(() => {
+      ta.selectionStart = ta.selectionEnd = s + p.length
+      ta.focus()
+    })
+  }
+
+  async function saveDesc() {
+    setSavingDesc(true)
+    try {
+      const updated = await api.events.update(ev.id, { description: descDraft.trim() || undefined })
+      onEventUpdated(updated)
+      setEditingDesc(false)
+    } finally {
+      setSavingDesc(false)
+    }
+  }
 
   async function handleCreateSource() {
     if (creatingSource || sourceCreated) return
@@ -119,28 +249,74 @@ function EventDetailPanel({ ev, persons, onEdit, onClose }: {
     }
   }
 
-  return createPortal(
-    <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 z-40 bg-black/50" onClick={onClose} />
+  return (
+    <div className="max-w-4xl mx-auto px-6 py-8">
 
-      {/* Side panel */}
-      <div className="fixed right-0 top-0 bottom-0 z-50 flex flex-col bg-zinc-900 border-l border-zinc-800 shadow-2xl"
-        style={{ width: 480 }}>
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 mb-6">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-1.5 text-sm text-zinc-500 hover:text-zinc-200 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          Events
+        </button>
+        <svg className="w-3.5 h-3.5 text-zinc-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+        <span className="text-sm font-semibold text-zinc-300 truncate">{ev.title || typeLabel}</span>
+      </div>
 
-        {/* Header */}
-        <div className="shrink-0 px-5 py-4 border-b border-zinc-800">
-          <div className="flex items-start justify-between gap-3">
+      {/* Header card */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden mb-6">
+        {/* Cover photo strip */}
+        {ev.images.length > 0 && (
+          <div
+            className={`grid gap-px ${
+              ev.images.length === 1 ? 'grid-cols-1'
+              : ev.images.length === 2 ? 'grid-cols-2'
+              : ev.images.length === 3 ? 'grid-cols-3'
+              : 'grid-cols-4'
+            }`}
+            style={{ height: ev.images.length === 1 ? 260 : 180 }}
+          >
+            {ev.images.slice(0, 4).map((ei, i) => (
+              <button
+                key={ei.id}
+                onClick={() => setPreviewIdx(i)}
+                className="relative overflow-hidden bg-zinc-800 hover:opacity-90 transition-opacity group"
+              >
+                <img src={api.imageViewUrl(ei.image_id, 600)} alt="" className="w-full h-full object-cover" />
+                {i === 3 && ev.images.length > 4 && (
+                  <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                    <span className="text-white font-semibold text-lg">+{ev.images.length - 4}</span>
+                  </div>
+                )}
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                  <div className="opacity-0 group-hover:opacity-100 w-9 h-9 rounded-full bg-black/40 flex items-center justify-center transition-opacity">
+                    <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Title + actions */}
+        <div className="px-6 py-4">
+          <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 mb-1">
                 <EventIcon type={ev.event_type} />
-                <h2 className="text-base font-semibold text-zinc-100 truncate">
-                  {ev.title || typeLabel}
-                </h2>
+                <h1 className="text-xl font-bold text-zinc-100">{ev.title || typeLabel}</h1>
               </div>
-              {ev.title && <p className="text-xs text-zinc-500 ml-6">{typeLabel}</p>}
+              {ev.title && <p className="text-sm text-zinc-500 ml-7">{typeLabel}</p>}
               {(dateStr || ev.place) && (
-                <p className="text-sm text-zinc-400 mt-1">
+                <p className="text-base text-zinc-400 mt-1 ml-7">
                   {[dateStr, ev.place].filter(Boolean).join(' · ')}
                 </p>
               )}
@@ -149,7 +325,6 @@ function EventDetailPanel({ ev, persons, onEdit, onClose }: {
               <button
                 onClick={handleCreateSource}
                 disabled={creatingSource || sourceCreated}
-                title="Create a citeable source from this event"
                 className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
                   sourceCreated
                     ? 'text-green-400 bg-green-900/30 cursor-default'
@@ -158,90 +333,136 @@ function EventDetailPanel({ ev, persons, onEdit, onClose }: {
               >
                 {sourceCreated ? '✓ Source created' : creatingSource ? '…' : 'Use as source'}
               </button>
-              <button onClick={onEdit}
-                className="px-3 py-1.5 text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors">
-                Edit
-              </button>
-              <button onClick={onClose}
-                className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
+              <button
+                onClick={onEdit}
+                className="px-3 py-1.5 text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+              >
+                Edit event
               </button>
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto">
+      {/* Body — two column */}
+      <div className="grid grid-cols-3 gap-6">
+
+        {/* Left — description + full photo grid */}
+        <div className="col-span-2 space-y-6">
 
           {/* Description */}
-          {ev.description && (
-            <div className="px-5 py-4 border-b border-zinc-800/60">
-              <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-line">{ev.description}</p>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800/60">
+              <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Description</h2>
+              {!editingDesc && (
+                <button
+                  onClick={startEditDesc}
+                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
+                >
+                  {ev.description ? 'Edit' : '+ Add'}
+                </button>
+              )}
             </div>
-          )}
 
-          {/* Photo gallery */}
-          {ev.images.length > 0 && (
-            <div className="px-5 py-4 border-b border-zinc-800/60">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3">
-                Photos ({ev.images.length})
-              </h3>
-              <div className={`grid gap-1.5 ${ev.images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
-                {ev.images.map((ei, i) => (
+            {editingDesc ? (
+              <div>
+                {/* Markdown toolbar */}
+                <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-zinc-800 bg-zinc-900/40">
+                  <TBtn onClick={() => wrapDesc('**', '**')} title="Bold"><strong>B</strong></TBtn>
+                  <TBtn onClick={() => wrapDesc('*', '*')} title="Italic"><em>I</em></TBtn>
+                  <TBtn onClick={() => wrapDesc('~~', '~~')} title="Strikethrough"><span className="line-through">S</span></TBtn>
+                  <span className="w-px h-4 bg-zinc-700 mx-1" />
+                  <TBtn onClick={() => prefixDesc('## ')} title="Heading">H</TBtn>
+                  <TBtn onClick={() => prefixDesc('- ')} title="Bullet list">• —</TBtn>
+                  <TBtn onClick={() => prefixDesc('> ')} title="Blockquote">"</TBtn>
+                </div>
+                <textarea
+                  ref={descRef}
+                  value={descDraft}
+                  onChange={e => setDescDraft(e.target.value)}
+                  placeholder="Write in Markdown… use **bold**, *italic*, - lists, ## headings"
+                  rows={6}
+                  className="w-full bg-transparent px-5 py-3 text-sm text-zinc-200 placeholder-zinc-600 outline-none resize-y leading-relaxed font-mono"
+                />
+                <div className="flex items-center gap-2 px-5 py-3 border-t border-zinc-800 bg-zinc-900/30">
                   <button
-                    key={ei.id}
-                    onClick={() => setLightboxIdx(i)}
-                    className="relative overflow-hidden rounded-xl bg-zinc-800 hover:ring-2 hover:ring-brand-400 transition-all group"
-                    style={{ aspectRatio: ev.images.length === 1 ? '16/9' : '4/3' }}>
-                    <img
-                      src={api.imageViewUrl(ei.image_id, 600)}
-                      alt=""
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                    {/* Zoom hint */}
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                      <div className="opacity-0 group-hover:opacity-100 transition-opacity w-8 h-8 rounded-full bg-black/50 flex items-center justify-center">
-                        <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
-                        </svg>
-                      </div>
-                    </div>
+                    onClick={saveDesc}
+                    disabled={savingDesc}
+                    className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded-lg transition-colors"
+                  >
+                    {savingDesc ? 'Saving…' : 'Save'}
                   </button>
-                ))}
+                  <button
+                    onClick={() => setEditingDesc(false)}
+                    className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : ev.description ? (
+              <div
+                className="note-content px-5 py-4 text-sm text-zinc-300 leading-relaxed"
+                dangerouslySetInnerHTML={{ __html: renderMd(ev.description) }}
+              />
+            ) : (
+              <div className="px-5 py-6">
+                <p className="text-sm text-zinc-600 italic">No description yet.</p>
+              </div>
+            )}
+          </div>
+
+          {/* Full photo grid */}
+          {ev.images.length > 0 && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-zinc-800/60">
+                <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                  Photos ({ev.images.length})
+                </h2>
+              </div>
+              <div className="p-4">
+                <div className="grid grid-cols-3 gap-2">
+                  {ev.images.map((ei, i) => (
+                    <button
+                      key={ei.id}
+                      onClick={() => setPreviewIdx(i)}
+                      className="relative overflow-hidden rounded-lg bg-zinc-800 hover:ring-2 hover:ring-brand-400 transition-all group"
+                      style={{ aspectRatio: '4/3' }}
+                    >
+                      <img
+                        src={api.imageViewUrl(ei.image_id, 400)}
+                        alt=""
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
+        </div>
 
-          {ev.images.length === 0 && (
-            <div className="px-5 py-6 border-b border-zinc-800/60">
-              <p className="text-sm text-zinc-600 italic">No photos attached to this event.</p>
-              <button onClick={onEdit}
-                className="mt-2 text-xs text-brand-500 hover:text-brand-400 transition-colors">
-                + Attach photos
-              </button>
-            </div>
-          )}
-
-          {/* Participants */}
+        {/* Right — people + no-photo note */}
+        <div className="space-y-4">
           {ev.persons.length > 0 && (
-            <div className="px-5 py-4">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3">People</h3>
-              <div className="space-y-2.5">
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-zinc-800/60">
+                <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">People</h2>
+              </div>
+              <div className="p-4 space-y-3">
                 {ev.persons.map(ep => (
                   <div key={ep.id} className="flex items-center gap-3">
                     <div className="relative shrink-0">
                       {ep.thumbnail_face_id ? (
                         <img src={api.faceThumbnailUrl(ep.thumbnail_face_id, 64)} alt=""
-                          className={`w-9 h-9 rounded-full object-cover border ${ep.featured ? 'border-amber-500/70' : 'border-zinc-700'}`} />
+                          className={`w-10 h-10 rounded-full object-cover border ${ep.featured ? 'border-amber-500/70' : 'border-zinc-700'}`} />
                       ) : (
-                        <div className={`w-9 h-9 rounded-full bg-zinc-700 flex items-center justify-center text-sm text-zinc-400 font-medium border ${ep.featured ? 'border-amber-500/70' : 'border-transparent'}`}>
+                        <div className={`w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center text-sm text-zinc-400 font-medium border ${ep.featured ? 'border-amber-500/70' : 'border-transparent'}`}>
                           {(ep.person_name ?? '?')[0]}
                         </div>
                       )}
                       {ep.featured && (
-                        <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-zinc-900 flex items-center justify-center">
+                        <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-zinc-900 flex items-center justify-center">
                           <span className="text-[9px] text-amber-400">★</span>
                         </span>
                       )}
@@ -258,20 +479,29 @@ function EventDetailPanel({ ev, persons, onEdit, onClose }: {
               </div>
             </div>
           )}
+
+          {ev.images.length === 0 && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-center">
+              <p className="text-sm text-zinc-600 italic">No photos attached.</p>
+              <button onClick={onEdit}
+                className="mt-2 text-xs text-brand-500 hover:text-brand-400 transition-colors">
+                + Attach photos
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Lightbox (z-index above panel) */}
-      {lightboxIdx !== null && (
-        <EventLightbox
+      {/* Image preview modal */}
+      {previewIdx !== null && (
+        <EventImagePreviewModal
           images={ev.images}
-          idx={lightboxIdx}
-          onChange={setLightboxIdx}
-          onClose={() => setLightboxIdx(null)}
+          currentIdx={previewIdx}
+          onNavigate={setPreviewIdx}
+          onClose={() => setPreviewIdx(null)}
         />
       )}
-    </>,
-    document.body,
+    </div>
   )
 }
 
@@ -285,7 +515,6 @@ function EventCard({ ev, onClick, onEdit }: {
   const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
   const dateStr = formatEventDate(ev.date, ev.year)
 
-  // Build photo strip layout
   const imgs = ev.images.slice(0, 4)
   const extra = ev.images.length - 4
 
@@ -294,7 +523,6 @@ function EventCard({ ev, onClick, onEdit }: {
       onClick={onClick}
       className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden hover:border-zinc-600 transition-all cursor-pointer group"
     >
-      {/* Photo area */}
       {ev.images.length > 0 ? (
         <div className="relative overflow-hidden" style={{ height: ev.images.length === 1 ? 160 : 120 }}>
           {imgs.length === 1 ? (
@@ -304,8 +532,7 @@ function EventCard({ ev, onClick, onEdit }: {
             <div className={`grid h-full gap-px ${imgs.length === 2 ? 'grid-cols-2' : imgs.length === 3 ? 'grid-cols-3' : 'grid-cols-2 grid-rows-2'}`}>
               {imgs.map((ei, i) => (
                 <div key={ei.id} className="relative overflow-hidden bg-zinc-800">
-                  <img src={api.imageViewUrl(ei.image_id, 280)} alt=""
-                    className="w-full h-full object-cover" />
+                  <img src={api.imageViewUrl(ei.image_id, 280)} alt="" className="w-full h-full object-cover" />
                   {i === 3 && extra > 0 && (
                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                       <span className="text-white font-semibold text-sm">+{extra}</span>
@@ -322,21 +549,17 @@ function EventCard({ ev, onClick, onEdit }: {
         </div>
       )}
 
-      {/* Card body */}
       <div className="px-3 py-2.5">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <EventIcon type={ev.event_type} />
-              <p className="text-xs font-semibold text-zinc-100 truncate">
-                {ev.title || typeLabel}
-              </p>
+              <p className="text-xs font-semibold text-zinc-100 truncate">{ev.title || typeLabel}</p>
             </div>
             {ev.title && <p className="text-[10px] text-zinc-500 mt-0.5 ml-5">{typeLabel}</p>}
             {dateStr && <p className="text-[10px] text-zinc-500 mt-0.5 ml-5">{dateStr}</p>}
             {ev.place && <p className="text-[10px] text-zinc-500 truncate mt-0.5 ml-5">{ev.place}</p>}
           </div>
-          {/* Edit button — separate from card click */}
           <button
             onClick={e => { e.stopPropagation(); onEdit() }}
             className="shrink-0 p-1 rounded text-zinc-700 hover:text-zinc-200 hover:bg-zinc-700 opacity-0 group-hover:opacity-100 transition-all">
@@ -346,7 +569,6 @@ function EventCard({ ev, onClick, onEdit }: {
           </button>
         </div>
 
-        {/* Person avatars */}
         {ev.persons.length > 0 && (
           <div className="flex items-center gap-1 mt-2">
             <div className="flex -space-x-1.5">
@@ -392,11 +614,10 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
     staleTime: 15_000,
   })
 
-  // Consume external nav target (e.g. from Genealogy page event click)
   useEffect(() => {
     if (!navTarget || navTarget.key === prevNavKey.current) return
     prevNavKey.current = navTarget.key
-    setFilter('all')  // ensure the target event is included in the list
+    setFilter('all')
     setPendingNavEventId(navTarget.eventId)
     onNavConsumed?.()
   }, [navTarget]) // eslint-disable-line
@@ -421,6 +642,10 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
   const editorIsNew = isCreating && editingEvent === null
 
   function closeEditor() {
+    // If we navigated to editor from a detail view, restore it with latest saved data
+    if (!isCreating && viewingEvent !== null && editingEvent !== null) {
+      setViewingEvent(editingEvent)
+    }
     setEditingEvent(null)
     setIsCreating(false)
   }
@@ -428,9 +653,9 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
   function handleSaved(saved: PersonEvent) {
     if (editorIsNew) {
       setIsCreating(false)
-      setEditingEvent(saved)  // keep editor open so photos can be attached
+      setEditingEvent(saved)
     } else {
-      setEditingEvent(saved)  // update with fresh data (e.g., added images)
+      setEditingEvent(saved)
     }
     refetch()
     qc.invalidateQueries({ queryKey: ['images-with-events'] })
@@ -444,12 +669,12 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
   }
 
   function openEdit(ev: PersonEvent) {
-    setViewingEvent(null)
+    // Don't clear viewingEvent — closeEditor will restore it on back
     setIsCreating(false)
     setEditingEvent(ev)
   }
 
-  // ── Full-page editor view ────────────────────────────────────────────────────
+  // ── Mode A: full-page editor ─────────────────────────────────────────────────
   if (showEditor) {
     const editorTitle = editorIsNew
       ? 'New event'
@@ -457,7 +682,6 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
 
     return (
       <div className="max-w-2xl mx-auto px-6 py-8">
-        {/* Breadcrumb */}
         <div className="flex items-center gap-2 mb-6">
           <button
             onClick={closeEditor}
@@ -466,7 +690,7 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-            Events
+            {viewingEvent !== null && !isCreating ? (editingEvent?.title || EVENT_TYPE_OPTIONS.find(o => o.value === editingEvent?.event_type)?.label || 'Event') : 'Events'}
           </button>
           <svg className="w-3.5 h-3.5 text-zinc-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -485,11 +709,23 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
     )
   }
 
-  // ── Events grid view ──────────────────────────────────────────────────────────
+  // ── Mode B: full-page event detail ───────────────────────────────────────────
+  if (viewingEvent) {
+    return (
+      <EventDetailView
+        ev={viewingEvent}
+        persons={persons}
+        onBack={() => setViewingEvent(null)}
+        onEdit={() => openEdit(viewingEvent)}
+        onEventUpdated={updated => setViewingEvent(updated)}
+      />
+    )
+  }
+
+  // ── Mode C: events grid ──────────────────────────────────────────────────────
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
 
-      {/* Page header */}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-bold text-zinc-100">Events</h1>
@@ -521,7 +757,6 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
         </div>
       </div>
 
-      {/* Loading skeletons */}
       {isLoading && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {Array.from({ length: 8 }).map((_, i) => (
@@ -536,7 +771,6 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
         </div>
       )}
 
-      {/* Empty state */}
       {!isLoading && events.length === 0 && (
         <div className="text-center py-20">
           <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mx-auto mb-4">
@@ -556,7 +790,6 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
         </div>
       )}
 
-      {/* Events grid */}
       {!isLoading && events.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {events.map(ev => (
@@ -568,16 +801,6 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
             />
           ))}
         </div>
-      )}
-
-      {/* Detail panel */}
-      {viewingEvent && (
-        <EventDetailPanel
-          ev={viewingEvent}
-          persons={persons}
-          onEdit={() => openEdit(viewingEvent)}
-          onClose={() => setViewingEvent(null)}
-        />
       )}
     </div>
   )

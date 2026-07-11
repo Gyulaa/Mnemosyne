@@ -38,7 +38,7 @@ export default function ImagesTab({
   openImageTarget?: { imageId: number; personIds: number[]; key: number } | null
   onImageTargetConsumed?: () => void
   onNavToCluster?: (clusterId: number) => void
-  onExportStart?: () => void
+  onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
   const qc = useQueryClient()
@@ -187,16 +187,18 @@ export default function ImagesTab({
   async function exportZip() {
     if (exportingZip || total === 0) return
     setExportingZip(true)
-    onExportStart?.()
+    const controller = new AbortController()
+    onExportStart?.(() => controller.abort())
     try {
-      const blob = await api.images.exportZip(filter, search, sort, incArr, excArr, includeMode)
+      const blob = await api.images.exportZip(filter, search, sort, incArr, excArr, includeMode, controller.signal)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url; a.download = 'images_export.zip'; a.click()
       URL.revokeObjectURL(url)
       onExportEnd?.()
     } catch (e) {
-      onExportEnd?.(String(e))
+      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
+      else onExportEnd?.(String(e))
     } finally {
       setExportingZip(false)
     }
@@ -205,16 +207,18 @@ export default function ImagesTab({
   async function exportSelected() {
     if (exportingSelected || selected.size === 0) return
     setExportingSelected(true)
-    onExportStart?.()
+    const controller = new AbortController()
+    onExportStart?.(() => controller.abort())
     try {
-      const blob = await api.images.exportSelectedZip([...selected])
+      const blob = await api.images.exportSelectedZip([...selected], controller.signal)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url; a.download = `images_selected_${selected.size}.zip`; a.click()
       URL.revokeObjectURL(url)
       onExportEnd?.()
     } catch (e) {
-      onExportEnd?.(String(e))
+      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
+      else onExportEnd?.(String(e))
     } finally {
       setExportingSelected(false)
     }

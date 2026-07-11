@@ -24,7 +24,7 @@ export default function ClustersTab({
   onNavToImage?: (imageId: number, personIds: number[]) => void
   onNavConsumed?: () => void
   onNavToGenealogy?: (personId: number) => void
-  onExportStart?: () => void
+  onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
   const qc = useQueryClient()
@@ -92,16 +92,18 @@ export default function ClustersTab({
     if (exportingClusters) return
     setShowExportModal(false)
     setExportingClusters(true)
-    onExportStart?.()
+    const controller = new AbortController()
+    onExportStart?.(() => controller.abort())
     try {
-      const blob = await api.project.exportZip([...checkedClusters], name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages)
+      const blob = await api.project.exportZip([...checkedClusters], name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, controller.signal)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url; a.download = `${name.replace(/\s+/g, '_') || 'clusters'}_export.zip`; a.click()
       URL.revokeObjectURL(url)
       onExportEnd?.()
     } catch (e) {
-      onExportEnd?.(String(e))
+      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
+      else onExportEnd?.(String(e))
     } finally {
       setExportingClusters(false)
     }
