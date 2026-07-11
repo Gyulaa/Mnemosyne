@@ -400,7 +400,6 @@ function ClusterModal({
       setPersonName(person.name ?? '')
       setSavedName(person.name ?? '')
       setShowPersonPicker(false)
-      setPersonSearch('')
       queryClient.invalidateQueries({ queryKey: ['clusters'] })
       queryClient.invalidateQueries({ queryKey: ['persons'] })
     } finally {
