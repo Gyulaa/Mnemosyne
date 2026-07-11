@@ -47,6 +47,7 @@ export default function ImagesTab({
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkPrivacying, setBulkPrivacying] = useState(false)
   const [previewIdx, setPreviewIdx] = useState<number | null>(null)
   const [includePersonIds, setIncludePersonIds] = useState<Set<number>>(new Set())
   const [excludePersonIds, setExcludePersonIds] = useState<Set<number>>(new Set())
@@ -162,6 +163,17 @@ export default function ImagesTab({
       invalidate()
     } finally {
       setBulkDeleting(false)
+    }
+  }
+
+  async function markSelectedPrivate(isPrivate: boolean) {
+    if (!selected.size || bulkPrivacying) return
+    setBulkPrivacying(true)
+    try {
+      await Promise.all([...selected].map(id => api.images.togglePrivacy(id, isPrivate)))
+      invalidate()
+    } finally {
+      setBulkPrivacying(false)
     }
   }
 
@@ -655,8 +667,18 @@ export default function ImagesTab({
             {exportingSelected ? 'Building ZIP…' : `Export ${selected.size}`}
           </button>
           <button
+            onClick={() => markSelectedPrivate(true)}
+            disabled={bulkPrivacying || bulkDeleting || exportingSelected}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-800/70 hover:bg-amber-700/80 disabled:opacity-50 text-amber-200 text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+            </svg>
+            {bulkPrivacying ? 'Saving…' : 'Make private'}
+          </button>
+          <button
             onClick={deleteSelected}
-            disabled={bulkDeleting || exportingSelected}
+            disabled={bulkDeleting || exportingSelected || bulkPrivacying}
             className="px-4 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
           >
             {bulkDeleting ? 'Deleting…' : `Delete ${selected.size}`}

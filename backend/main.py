@@ -8,7 +8,7 @@ import unicodedata
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import quote
 
 import cv2
@@ -36,7 +36,7 @@ from .schemas import (
     EventCreate, EventUpdate, EventImageAdd, EventPersonAdd,
     BulkDownloadRequest,
 )
-from .image_utils import load_image_bgr, crop_thumbnail
+from .image_utils import load_image_bgr, crop_thumbnail, IMAGE_EXTENSIONS
 
 app = FastAPI(title="Photo Organizer API", version="0.1.0")
 
@@ -508,6 +508,41 @@ def scan_pending(db: Session = Depends(get_db)):
     return {"pending": count}
 
 
+@app.post("/api/scan/import-files")
+async def import_and_scan_files(files: List[UploadFile] = File(...)):
+    active_id = project_manager.active_id
+    if not active_id:
+        raise HTTPException(400, "No active project")
+    import_dir = PROJECTS_DIR / active_id / "imported"
+    import_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = 0
+    for f in files:
+        if not f.filename:
+            continue
+        p = Path(f.filename)
+        if p.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        stem = p.stem[:100]
+        suffix = p.suffix.lower()
+        dest = import_dir / f"{stem}{suffix}"
+        counter = 1
+        while dest.exists():
+            dest = import_dir / f"{stem}_{counter}{suffix}"
+            counter += 1
+        content = await f.read()
+        dest.write_bytes(content)
+        saved += 1
+
+    if saved == 0:
+        raise HTTPException(400, "No valid image files received")
+
+    ok, msg = scanner_mod.start_scan(str(import_dir), project_manager.session_factory)
+    if not ok:
+        raise HTTPException(409, msg)
+    return {"ok": True, "count": saved, "path": str(import_dir)}
+
+
 # ── Cluster ───────────────────────────────────────────────────────────────────
 
 @app.post("/api/cluster/run", response_model=ClusterResult)
@@ -785,6 +820,16 @@ def delete_image(image_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+@app.patch("/api/images/{image_id}/privacy")
+def toggle_image_privacy(image_id: int, body: dict, db: Session = Depends(get_db)):
+    img = db.get(DBImage, image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+    img.is_private = bool(body.get("is_private", False))
+    db.commit()
+    return {"ok": True, "is_private": img.is_private}
+
+
 @app.get("/api/images/{image_id}/persons")
 def image_persons(image_id: int, db: Session = Depends(get_db)):
     """Return the named persons (via faces → clusters) that appear in a given image."""
@@ -859,6 +904,7 @@ def list_clusters(db: Session = Depends(get_db)):
             "person_id": c.person_id,
             "person_name": c.person.name if c.person else None,
             "preview_face_ids": _preview_face_ids(c.id, db),
+            "is_private": bool(c.is_private),
         }
         for c in clusters
     ]
@@ -961,6 +1007,16 @@ def merge_clusters(source_id: int, target_id: int, db: Session = Depends(get_db)
     if target.person_id:
         recompute_person_subclusters(target.person_id, db)
     return {"ok": True, "target_cluster_id": target_id}
+
+
+@app.patch("/api/clusters/{cluster_id}/privacy")
+def toggle_cluster_privacy(cluster_id: int, body: dict, db: Session = Depends(get_db)):
+    cluster = db.get(DBCluster, cluster_id)
+    if not cluster:
+        raise HTTPException(404, "Cluster not found")
+    cluster.is_private = bool(body.get("is_private", False))
+    db.commit()
+    return {"ok": True, "is_private": cluster.is_private}
 
 
 @app.delete("/api/clusters/{cluster_id}")
@@ -1212,7 +1268,7 @@ def batch_delete_faces(body: dict, db: Session = Depends(get_db)):
 def split_cluster(
     cluster_id: int,
     eps: float = Query(default=0.35, ge=0.1, le=0.9),
-    min_samples: int = Query(default=2, ge=1),
+    min_samples: int = Query(default=3, ge=1),
     db: Session = Depends(get_db),
 ):
     """Re-cluster just the faces in this cluster with a tighter eps to find sub-groups."""
@@ -1560,6 +1616,7 @@ def _rel_dict(r: "DBRelation") -> dict:
         "marriage_place": r.marriage_place,
         "divorce_year": r.divorce_year,
         "divorce_place": r.divorce_place,
+        "is_private": bool(r.is_private),
     }
 
 
@@ -1575,6 +1632,7 @@ def _doc_dict(d: "DBDocument") -> dict:
         "year": d.year,
         "description": d.description,
         "created_at": d.created_at,
+        "is_private": bool(d.is_private),
         "source_id": d.source.id if d.source else None,
         "persons": [
             {"id": dp.person_id, "name": dp.person.name if dp.person else None}
@@ -1904,7 +1962,7 @@ def update_relation(relation_id: int, body: dict, db: Session = Depends(get_db))
     r = db.get(DBRelation, relation_id)
     if not r:
         raise HTTPException(404, "Relation not found")
-    for f in ("marriage_year", "marriage_place", "divorce_year", "divorce_place"):
+    for f in ("marriage_year", "marriage_place", "divorce_year", "divorce_place", "is_private"):
         if f in body:
             setattr(r, f, body[f])
     db.commit()
@@ -2066,7 +2124,7 @@ def update_document(doc_id: int, body: dict, db: Session = Depends(get_db)):
     d = db.get(DBDocument, doc_id)
     if not d:
         raise HTTPException(404, "Document not found")
-    for f in ("title", "doc_type", "year", "description"):
+    for f in ("title", "doc_type", "year", "description", "is_private"):
         if f in body:
             setattr(d, f, body[f])
     db.commit()
@@ -2398,6 +2456,7 @@ def _note_dict(n: "DBPersonNote") -> dict:
         "sort_order": n.sort_order,
         "created_at": n.created_at,
         "updated_at": n.updated_at,
+        "is_private": bool(n.is_private),
         "citations": sorted([_note_citation_dict(nc) for nc in n.note_citations], key=lambda x: x["marker"]),
     }
 
@@ -2452,6 +2511,8 @@ def update_note(note_id: int, body: NoteUpdate, db: Session = Depends(get_db)):
         n.content = body.content
     if body.sort_order is not None:
         n.sort_order = body.sort_order
+    if body.is_private is not None:
+        n.is_private = body.is_private
     n.updated_at = datetime.now().isoformat()
     db.commit()
     return _note_dict(n)
@@ -2681,6 +2742,7 @@ def _event_dict(ev: DBEvent) -> dict:
         "description": ev.description,
         "created_at": ev.created_at,
         "updated_at": ev.updated_at,
+        "is_private": bool(ev.is_private),
         "persons": [_event_person_dict(ep) for ep in ev.event_persons],
         "images": [_event_image_dict(ei) for ei in ev.event_images],
     }

@@ -510,6 +510,7 @@ type PickerMode = 'parent' | 'spouse' | 'child' | 'sibling' | null
 
 function RelRow({
   label, persons, editing, onNavigate, onRemove, addLabel, onAdd, addDisabled,
+  relPrivacy, onTogglePrivacy,
 }: {
   label: string
   persons: PersonFull[]
@@ -519,30 +520,61 @@ function RelRow({
   addLabel: string
   onAdd: () => void
   addDisabled?: boolean
+  relPrivacy?: Map<number, { relId: number; isPrivate: boolean }>
+  onTogglePrivacy?: (relId: number, isPrivate: boolean) => Promise<void>
 }) {
   const { nameOrder } = useSettings()
+  const [privacyBusy, setPrivacyBusy] = useState<Set<number>>(new Set())
   if (!editing && persons.length === 0) return null
+
+  async function toggleRelPrivacy(relId: number, isPrivate: boolean) {
+    if (!onTogglePrivacy) return
+    setPrivacyBusy(s => new Set([...s, relId]))
+    try { await onTogglePrivacy(relId, isPrivate) }
+    finally { setPrivacyBusy(s => { const n = new Set(s); n.delete(relId); return n }) }
+  }
 
   return (
     <div>
       <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1.5">{label}</p>
       <div className="flex flex-wrap gap-1.5 items-center">
-        {persons.map(p => (
-          <div key={p.id} className="inline-flex items-center group">
-            <button
-              onClick={() => onNavigate(p.id)}
-              className="inline-flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 hover:border-zinc-500 rounded-full transition-colors max-w-[160px]"
-            >
-              <Avatar person={p} size={20} />
-              <span className="text-xs text-zinc-200 truncate leading-none">{displayPersonName(p, nameOrder)}</span>
-            </button>
-            {editing && onRemove && (
-              <button onClick={() => onRemove(p)}
-                className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0"
-                title="Remove relation">✕</button>
-            )}
-          </div>
-        ))}
+        {persons.map(p => {
+          const priv = relPrivacy?.get(p.id)
+          const isPrivate = priv?.isPrivate ?? false
+          return (
+            <div key={p.id} className="inline-flex items-center group">
+              <button
+                onClick={() => onNavigate(p.id)}
+                className="inline-flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 hover:border-zinc-500 rounded-full transition-colors max-w-[160px]"
+              >
+                <Avatar person={p} size={20} />
+                <span className="text-xs text-zinc-200 truncate leading-none">{displayPersonName(p, nameOrder)}</span>
+              </button>
+              {priv && onTogglePrivacy && (
+                <button
+                  onClick={() => !privacyBusy.has(priv.relId) && toggleRelPrivacy(priv.relId, !isPrivate)}
+                  title={isPrivate ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+                  className={`ml-0.5 w-4 h-4 flex items-center justify-center transition-colors shrink-0 ${isPrivate ? 'text-amber-400' : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-zinc-300'}`}
+                >
+                  {isPrivate ? (
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+                    </svg>
+                  )}
+                </button>
+              )}
+              {editing && onRemove && (
+                <button onClick={() => onRemove(p)}
+                  className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0"
+                  title="Remove relation">✕</button>
+              )}
+            </div>
+          )
+        })}
         {editing && !addDisabled && (
           <button onClick={onAdd}
             className="inline-flex items-center gap-1 h-7 px-2.5 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-dashed border-zinc-700 hover:border-zinc-500 rounded-full transition-colors shrink-0">
@@ -793,7 +825,18 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
   const [year, setYear] = useState(doc.year ? String(doc.year) : '')
   const [saving, setSaving] = useState(false)
   const [promoting, setPromoting] = useState(false)
+  const [privacyBusy, setPrivacyBusy] = useState(false)
   const canPreview = isImage(doc.mime_type) || isPdf(doc.mime_type) || isAudio(doc.mime_type)
+
+  async function togglePrivacy() {
+    setPrivacyBusy(true)
+    try {
+      await api.documents.togglePrivacy(doc.id, !doc.is_private)
+      qc.invalidateQueries({ queryKey: ['person-docs', doc.person_id] })
+    } finally {
+      setPrivacyBusy(false)
+    }
+  }
 
   async function promote() {
     setPromoting(true)
@@ -910,6 +953,22 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
             )}
           </div>
         </div>
+        <button
+          onClick={togglePrivacy}
+          disabled={privacyBusy}
+          title={doc.is_private ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+          className={`w-6 h-6 rounded flex items-center justify-center transition-colors disabled:opacity-50 shrink-0 ${doc.is_private ? 'text-amber-400 hover:bg-zinc-700' : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-zinc-300 hover:bg-zinc-700'}`}
+        >
+          {doc.is_private ? (
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+            </svg>
+          ) : (
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+            </svg>
+          )}
+        </button>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
           {canPreview && (
             <button onClick={() => setPreviewing(true)} title="Preview"
@@ -1428,6 +1487,25 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     const rid = findRelationId(type, other.id)
     if (rid != null) delRelMut.mutate(rid)
   }
+
+  async function handleToggleRelPrivacy(relId: number, isPrivate: boolean) {
+    await api.relations.togglePrivacy(relId, isPrivate)
+    qc.invalidateQueries({ queryKey: ['relations'] })
+  }
+
+  const parentRelPrivacy = new Map(
+    relations.filter(r => r.type === 'parent' && r.person_b_id === person.id)
+      .map(r => [r.person_a_id, { relId: r.id, isPrivate: r.is_private }])
+  )
+  const childRelPrivacy = new Map(
+    relations.filter(r => r.type === 'parent' && r.person_a_id === person.id)
+      .map(r => [r.person_b_id, { relId: r.id, isPrivate: r.is_private }])
+  )
+  const siblingRelPrivacy = new Map(
+    relations
+      .filter(r => r.type === 'sibling' && (r.person_a_id === person.id || r.person_b_id === person.id))
+      .map(r => [r.person_a_id === person.id ? r.person_b_id : r.person_a_id, { relId: r.id, isPrivate: r.is_private }])
+  )
 
   async function handleDeletePerson() {
     if (deleting) return
@@ -1963,7 +2041,8 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
             <div className="space-y-3.5">
               <RelRow label="Parents" persons={parents} editing={editingRelations} onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('parent', p)} addLabel="Parent" onAdd={() => setPickerMode('parent')} addDisabled={parents.length >= 2} />
+                onRemove={p => handleRemove('parent', p)} addLabel="Parent" onAdd={() => setPickerMode('parent')} addDisabled={parents.length >= 2}
+                relPrivacy={parentRelPrivacy} onTogglePrivacy={handleToggleRelPrivacy} />
 
               {/* Spouses — rendered manually for marriage details */}
               {(editingRelations || spouseRelations.length > 0) && (
@@ -1978,6 +2057,21 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                               className="inline-flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 hover:border-zinc-500 rounded-full transition-colors max-w-[160px]">
                               <Avatar person={p} size={20} />
                               <span className="text-xs text-zinc-200 truncate leading-none">{displayPersonName(p, nameOrder)}</span>
+                            </button>
+                            <button
+                              onClick={() => handleToggleRelPrivacy(rel.id, !rel.is_private)}
+                              title={rel.is_private ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+                              className={`ml-0.5 w-4 h-4 flex items-center justify-center transition-colors shrink-0 ${rel.is_private ? 'text-amber-400' : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-zinc-300'}`}
+                            >
+                              {rel.is_private ? (
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                  <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+                                </svg>
+                              ) : (
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                  <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+                                </svg>
+                              )}
                             </button>
                             {editingRelations && (
                               <button onClick={() => handleRemove('spouse', p)}
@@ -2048,9 +2142,11 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               )}
 
               <RelRow label="Children" persons={children} editing={editingRelations} onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('parent', p)} addLabel="Child" onAdd={() => setPickerMode('child')} />
+                onRemove={p => handleRemove('parent', p)} addLabel="Child" onAdd={() => setPickerMode('child')}
+                relPrivacy={childRelPrivacy} onTogglePrivacy={handleToggleRelPrivacy} />
               <RelRow label="Siblings" persons={siblings} editing={editingRelations} onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('sibling', p)} addLabel="Sibling" onAdd={() => setPickerMode('sibling')} />
+                onRemove={p => handleRemove('sibling', p)} addLabel="Sibling" onAdd={() => setPickerMode('sibling')}
+                relPrivacy={siblingRelPrivacy} onTogglePrivacy={handleToggleRelPrivacy} />
 
               {!editingRelations && parents.length === 0 && spouseRelations.length === 0 && children.length === 0 && siblings.length === 0 && (
                 <p className="text-sm text-zinc-600 italic">No relations</p>

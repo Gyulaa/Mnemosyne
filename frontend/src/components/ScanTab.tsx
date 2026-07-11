@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+﻿import { useState, useRef, useCallback, DragEvent } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import FolderPicker from './FolderPicker'
@@ -13,6 +13,11 @@ export default function ScanTab() {
   const [clusterResult, setClusterResult] = useState<{
     clusters: number; noise: number
   } | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<{ count: number } | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const qc = useQueryClient()
 
@@ -49,6 +54,33 @@ export default function ScanTab() {
       qc.invalidateQueries({ queryKey: ['stats'] })
     },
   })
+
+  const handleImport = useCallback(async (files: File[]) => {
+    const imageFiles = files.filter(f => /\.(jpe?g|png|bmp|tiff?|webp|heic|heif)$/i.test(f.name))
+    if (!imageFiles.length) {
+      setImportError('No supported image files found')
+      return
+    }
+    setImporting(true)
+    setImportResult(null)
+    setImportError(null)
+    try {
+      const result = await api.scan.importFiles(imageFiles)
+      setImportResult({ count: result.count })
+      qc.invalidateQueries({ queryKey: ['scan-status'] })
+    } catch (e) {
+      setImportError(String((e as Error).message))
+    } finally {
+      setImporting(false)
+    }
+  }, [qc])
+
+  const onDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setDragOver(false)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length) handleImport(files)
+  }, [handleImport])
 
   const isRunning = status?.running ?? false
   const progress =
@@ -89,6 +121,57 @@ export default function ScanTab() {
             </span>
           )}
         </div>
+      </section>
+
+      {/* Individual file import */}
+      <section className="space-y-2">
+        <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest">
+          Or import individual files
+        </label>
+        <div
+          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          onClick={() => fileInputRef.current?.click()}
+          className={`relative border-2 border-dashed rounded-xl px-6 py-8 text-center cursor-pointer transition-colors select-none
+            ${dragOver
+              ? 'border-brand-400 bg-brand-400/10 text-brand-300'
+              : 'border-zinc-700 hover:border-zinc-500 text-zinc-500 hover:text-zinc-400'
+            }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".jpg,.jpeg,.png,.bmp,.tiff,.tif,.webp,.heic,.heif"
+            className="sr-only"
+            onChange={e => {
+              const files = Array.from(e.target.files ?? [])
+              if (files.length) handleImport(files)
+              e.target.value = ''
+            }}
+          />
+          <svg className="w-8 h-8 mx-auto mb-2 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+          </svg>
+          {importing ? (
+            <p className="text-sm text-brand-400">Uploading & scanning…</p>
+          ) : (
+            <>
+              <p className="text-sm font-medium">Drag & drop images here</p>
+              <p className="text-xs mt-1 opacity-70">or click to browse files</p>
+              <p className="text-xs mt-1 opacity-50">JPG · PNG · WEBP · BMP · TIFF · HEIC</p>
+            </>
+          )}
+        </div>
+        {importResult && !importing && (
+          <p className="text-sm text-emerald-400">
+            ✓ {importResult.count} {importResult.count === 1 ? 'image' : 'images'} imported — scan started
+          </p>
+        )}
+        {importError && (
+          <p className="text-sm text-red-400">{importError}</p>
+        )}
       </section>
 
       {/* Progress bar */}

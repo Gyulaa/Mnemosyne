@@ -254,6 +254,10 @@ export default function ClustersTab({
                 next.has(c.id) ? next.delete(c.id) : next.add(c.id)
                 return next
               })}
+              onTogglePrivacy={async (clusterId, isPrivate) => {
+                await api.cluster.togglePrivacy(clusterId, isPrivate)
+                qc.invalidateQueries({ queryKey: ['clusters'] })
+              }}
             />
           ))}
         </div>
@@ -283,11 +287,13 @@ function ClusterCard({
   onClick,
   checked,
   onToggle,
+  onTogglePrivacy,
 }: {
   cluster: Cluster
   onClick: () => void
   checked: boolean
   onToggle: () => void
+  onTogglePrivacy: (clusterId: number, isPrivate: boolean) => void
 }) {
   const previews = cluster.preview_face_ids.slice(0, 4)
 
@@ -331,14 +337,33 @@ function ClusterCard({
         ))}
       </div>
       <div className="px-3 py-2.5">
-        {cluster.person_name ? (
-          <div className="text-sm font-semibold text-zinc-100 truncate">{cluster.person_name}</div>
-        ) : (
-          <div className="text-sm font-medium text-zinc-400 truncate">
-            Cluster {String(cluster.label).padStart(3, '0')}
+        <div className="flex items-start justify-between gap-1">
+          <div className="min-w-0 flex-1">
+            {cluster.person_name ? (
+              <div className="text-sm font-semibold text-zinc-100 truncate">{cluster.person_name}</div>
+            ) : (
+              <div className="text-sm font-medium text-zinc-400 truncate">
+                Cluster {String(cluster.label).padStart(3, '0')}
+              </div>
+            )}
+            <div className="text-xs text-zinc-500 mt-0.5 tabular-nums">{cluster.face_count} faces</div>
           </div>
-        )}
-        <div className="text-xs text-zinc-500 mt-0.5 tabular-nums">{cluster.face_count} faces</div>
+          <button
+            onClick={e => { e.stopPropagation(); onTogglePrivacy(cluster.id, !(cluster.is_private ?? false)) }}
+            title={cluster.is_private ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+            className={`shrink-0 p-1 rounded transition-all ${cluster.is_private ? 'text-amber-400 hover:bg-zinc-700' : 'text-zinc-700 hover:text-zinc-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100'}`}
+          >
+            {cluster.is_private ? (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   )

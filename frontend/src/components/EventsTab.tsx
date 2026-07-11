@@ -360,6 +360,25 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
                 {sourceCreated ? '✓ Source created' : creatingSource ? '…' : 'Use as source'}
               </button>
               <button
+                onClick={async () => {
+                  await api.events.togglePrivacy(ev.id, !ev.is_private)
+                  onEventUpdated({ ...ev, is_private: !ev.is_private })
+                }}
+                title={ev.is_private ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${ev.is_private ? 'text-amber-300 bg-amber-900/40 hover:bg-amber-900/60' : 'text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700'}`}
+              >
+                {ev.is_private ? (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+                  </svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+                  </svg>
+                )}
+                {ev.is_private ? 'Private' : 'Make private'}
+              </button>
+              <button
                 onClick={onEdit}
                 className="px-3 py-1.5 text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
               >
@@ -553,10 +572,11 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
 
 // ── EventCard ─────────────────────────────────────────────────────────────────
 
-function EventCard({ ev, onClick, onEdit }: {
+function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
   ev: PersonEvent
   onClick: () => void
   onEdit: () => void
+  onTogglePrivacy: (evId: number, isPrivate: boolean) => void
 }) {
   const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
   const dateStr = formatEventDate(ev.date, ev.year)
@@ -606,13 +626,30 @@ function EventCard({ ev, onClick, onEdit }: {
             {dateStr && <p className="text-[10px] text-zinc-500 mt-0.5 ml-5">{dateStr}</p>}
             {ev.place && <p className="text-[10px] text-zinc-500 truncate mt-0.5 ml-5">{ev.place}</p>}
           </div>
-          <button
-            onClick={e => { e.stopPropagation(); onEdit() }}
-            className="shrink-0 p-1 rounded text-zinc-700 hover:text-zinc-200 hover:bg-zinc-700 opacity-0 group-hover:opacity-100 transition-all">
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button
+              onClick={e => { e.stopPropagation(); onTogglePrivacy(ev.id, !ev.is_private) }}
+              title={ev.is_private ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+              className={`p-1 rounded transition-all ${ev.is_private ? 'text-amber-400 hover:bg-zinc-700' : 'text-zinc-700 hover:text-zinc-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100'}`}
+            >
+              {ev.is_private ? (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+                </svg>
+              )}
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); onEdit() }}
+              className="shrink-0 p-1 rounded text-zinc-700 hover:text-zinc-200 hover:bg-zinc-700 opacity-0 group-hover:opacity-100 transition-all">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {ev.persons.length > 0 && (
@@ -848,6 +885,10 @@ export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onE
               ev={ev}
               onClick={() => setViewingEvent(ev)}
               onEdit={() => openEdit(ev)}
+              onTogglePrivacy={async (evId, isPrivate) => {
+                await api.events.togglePrivacy(evId, isPrivate)
+                refetch()
+              }}
             />
           ))}
         </div>

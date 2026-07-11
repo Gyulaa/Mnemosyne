@@ -22,6 +22,7 @@ class Image(Base):
     stable_id    = Column(String, nullable=True, index=True)   # UUID, assigned once, never changes
     content_hash = Column(String, nullable=True, index=True)   # SHA-256 hex of file content
     source_path  = Column(String, nullable=True)               # original abs path when first added
+    is_private   = Column(Boolean, nullable=False, default=False, server_default="0")
     faces = relationship("Face", back_populates="image", cascade="all, delete-orphan")
 
 
@@ -44,6 +45,7 @@ class Cluster(Base):
     id = Column(Integer, primary_key=True, index=True)
     label = Column(Integer, nullable=False)
     person_id = Column(Integer, ForeignKey("persons.id"), nullable=True, index=True)
+    is_private = Column(Boolean, nullable=False, default=False, server_default="0")
     faces = relationship("Face", back_populates="cluster")
     person = relationship("Person", back_populates="clusters")
 
@@ -111,6 +113,7 @@ class Relation(Base):
     marriage_place = Column(String, nullable=True)
     divorce_year = Column(Integer, nullable=True)
     divorce_place = Column(String, nullable=True)
+    is_private = Column(Boolean, nullable=False, default=False, server_default="0")
     person_a = relationship("Person", foreign_keys=[person_a_id], back_populates="relations_as_a")
     person_b = relationship("Person", foreign_keys=[person_b_id], back_populates="relations_as_b")
 
@@ -127,6 +130,7 @@ class Document(Base):
     year = Column(Integer, nullable=True)
     description = Column(String, nullable=True)
     created_at = Column(String, nullable=True)      # ISO timestamp
+    is_private = Column(Boolean, nullable=False, default=False, server_default="0")
     person = relationship("Person", back_populates="documents")
     source = relationship("Source", back_populates="document", uselist=False)
     linked_persons = relationship("DocumentPerson", back_populates="document", cascade="all, delete-orphan")
@@ -159,6 +163,7 @@ class PersonNote(Base):
     sort_order = Column(Integer, nullable=False, default=0)
     created_at = Column(String, nullable=True)
     updated_at = Column(String, nullable=True)
+    is_private = Column(Boolean, nullable=False, default=False, server_default="0")
     person = relationship("Person", back_populates="person_notes")
     note_citations = relationship("NoteCitation", back_populates="note", cascade="all, delete-orphan")
 
@@ -241,6 +246,7 @@ class Event(Base):
     description = Column(String, nullable=True)
     created_at = Column(String, nullable=True)
     updated_at = Column(String, nullable=True)
+    is_private = Column(Boolean, nullable=False, default=False, server_default="0")
     event_persons = relationship("EventPerson", back_populates="event", cascade="all, delete-orphan")
     event_images = relationship("EventImage", back_populates="event", cascade="all, delete-orphan")
 
@@ -610,4 +616,23 @@ def init_db_schema(engine):
             """))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_person_subclusters_person_id ON person_subclusters(person_id)"))
             conn.execute(text("UPDATE schema_version SET version = 4"))
+            conn.commit()
+
+        # v4 → v5: is_private flag on 6 entity types
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 5:
+            for tbl_col in [
+                "images ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0",
+                "clusters ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0",
+                "relations ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0",
+                "documents ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0",
+                "person_notes ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0",
+                "events ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0",
+            ]:
+                try:
+                    conn.execute(text(f"ALTER TABLE {tbl_col}"))
+                    conn.commit()
+                except Exception:
+                    pass
+            conn.execute(text("UPDATE schema_version SET version = 5"))
             conn.commit()

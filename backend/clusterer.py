@@ -136,7 +136,7 @@ def _compute_matching_prototypes(
 
 # ── Main clustering entry point ───────────────────────────────────────────────
 
-def run_clustering(db: Session, eps: float = 0.4, min_samples: int = 2, min_det_score: float = 0.0) -> dict:
+def run_clustering(db: Session, eps: float = 0.4, min_samples: int = 3, min_det_score: float = 0.0) -> dict:
     # ── Phase 1: Collect faces ────────────────────────────────────────────────
     all_faces = db.query(Face).filter(Face.embedding != None).all()
     if min_det_score > 0:
