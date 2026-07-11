@@ -168,15 +168,41 @@ function EventImagePreviewModal({ images, currentIdx, onNavigate, onClose }: {
 
 // ── EventDetailView ────────────────────────────────────────────────────────────
 
-function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated }: {
+function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExportStart, onExportEnd }: {
   ev: PersonEvent
   persons: PersonFull[]
   onBack: () => void
   onEdit: () => void
   onEventUpdated: (updated: PersonEvent) => void
+  onExportStart?: (cancelFn: () => void) => void
+  onExportEnd?: (error?: string) => void
 }) {
   const qc = useQueryClient()
   const [previewIdx, setPreviewIdx] = useState<number | null>(null)
+  const [exportingZip, setExportingZip] = useState(false)
+
+  async function handleExportZip() {
+    if (exportingZip || ev.images.length === 0) return
+    setExportingZip(true)
+    const controller = new AbortController()
+    onExportStart?.(() => controller.abort())
+    try {
+      const blob = await api.events.exportImagesZip(ev.id, controller.signal)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      const safe = (ev.title ?? 'event').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'event'
+      a.href = url
+      a.download = `event_${ev.id}_${safe}.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+      onExportEnd?.()
+    } catch (e) {
+      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
+      else onExportEnd?.(String(e))
+    } finally {
+      setExportingZip(false)
+    }
+  }
   const [editingDesc, setEditingDesc] = useState(false)
   const [descDraft, setDescDraft] = useState('')
   const [savingDesc, setSavingDesc] = useState(false)
@@ -415,10 +441,30 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated }: {
           {/* Full photo grid */}
           {ev.images.length > 0 && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-zinc-800/60">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800/60">
                 <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
                   Photos ({ev.images.length})
                 </h2>
+                <button
+                  onClick={handleExportZip}
+                  disabled={exportingZip}
+                  title="Export photos as ZIP"
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-100 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+                >
+                  {exportingZip ? (
+                    <>
+                      <div className="w-3 h-3 border border-zinc-500 border-t-brand-400 rounded-full animate-spin" />
+                      Building…
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                      Export ZIP
+                    </>
+                  )}
+                </button>
               </div>
               <div className="p-4">
                 <div className="grid grid-cols-3 gap-2">
@@ -596,9 +642,11 @@ function EventCard({ ev, onClick, onEdit }: {
 
 // ── EventsTab ─────────────────────────────────────────────────────────────────
 
-export default function EventsTab({ navTarget, onNavConsumed }: {
+export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onExportEnd }: {
   navTarget?: { eventId: number; key: number } | null
   onNavConsumed?: () => void
+  onExportStart?: (cancelFn: () => void) => void
+  onExportEnd?: (error?: string) => void
 }) {
   const qc = useQueryClient()
   const [filter, setFilter] = useState<'all' | 'with_photos'>('with_photos')
@@ -718,6 +766,8 @@ export default function EventsTab({ navTarget, onNavConsumed }: {
         onBack={() => setViewingEvent(null)}
         onEdit={() => openEdit(viewingEvent)}
         onEventUpdated={updated => setViewingEvent(updated)}
+        onExportStart={onExportStart}
+        onExportEnd={onExportEnd}
       />
     )
   }

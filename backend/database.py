@@ -19,6 +19,9 @@ class Image(Base):
     error_msg = Column(String, nullable=True)
     scanned_at = Column(DateTime, nullable=True)
     meta_json = Column(String, nullable=True)   # JSON: {width, height, make, model}
+    stable_id    = Column(String, nullable=True, index=True)   # UUID, assigned once, never changes
+    content_hash = Column(String, nullable=True, index=True)   # SHA-256 hex of file content
+    source_path  = Column(String, nullable=True)               # original abs path when first added
     faces = relationship("Face", back_populates="image", cascade="all, delete-orphan")
 
 
@@ -78,6 +81,10 @@ class Person(Base):
     burial_year = Column(Integer, nullable=True)
     burial_place = Column(String, nullable=True)
     occupation = Column(String, nullable=True)
+    religion = Column(String, nullable=True)
+    nationality = Column(String, nullable=True)
+    cause_of_death = Column(String, nullable=True)
+    education = Column(String, nullable=True)
     birth_date = Column(String, nullable=True)        # "YYYY" | "YYYY-MM" | "YYYY-MM-DD"
     death_date = Column(String, nullable=True)
     christening_date = Column(String, nullable=True)
@@ -277,6 +284,9 @@ def init_db_schema(engine):
             "ALTER TABLE faces ADD COLUMN manually_assigned BOOLEAN NOT NULL DEFAULT 0",
             "ALTER TABLE faces ADD COLUMN dismissed BOOLEAN NOT NULL DEFAULT 0",
             "ALTER TABLE images ADD COLUMN meta_json TEXT",
+            "ALTER TABLE images ADD COLUMN stable_id TEXT",
+            "ALTER TABLE images ADD COLUMN content_hash TEXT",
+            "ALTER TABLE images ADD COLUMN source_path TEXT",
             "ALTER TABLE persons ADD COLUMN death_year INTEGER",
             "ALTER TABLE persons ADD COLUMN notes TEXT",
             "ALTER TABLE persons ADD COLUMN thumbnail_face_id INTEGER",
@@ -303,6 +313,11 @@ def init_db_schema(engine):
             "ALTER TABLE persons ADD COLUMN burial_date TEXT",
             # Phase 4: UI suppression of auto-generated timeline events
             "ALTER TABLE persons ADD COLUMN hidden_auto_events TEXT",
+            # Phase 6: additional biographical fields
+            "ALTER TABLE persons ADD COLUMN religion TEXT",
+            "ALTER TABLE persons ADD COLUMN nationality TEXT",
+            "ALTER TABLE persons ADD COLUMN cause_of_death TEXT",
+            "ALTER TABLE persons ADD COLUMN education TEXT",
             # Phase 5: featured participant flag on event-person rows
             "ALTER TABLE event_persons ADD COLUMN featured BOOLEAN NOT NULL DEFAULT 0",
             # Phase 2: marriage/divorce data on relations
@@ -316,6 +331,17 @@ def init_db_schema(engine):
                 conn.commit()
             except Exception:
                 pass  # column already exists
+
+        # Indexes for image identity columns (idempotent CREATE INDEX IF NOT EXISTS)
+        for idx_stmt in [
+            "CREATE INDEX IF NOT EXISTS ix_images_stable_id ON images (stable_id)",
+            "CREATE INDEX IF NOT EXISTS ix_images_content_hash ON images (content_hash)",
+        ]:
+            try:
+                conn.execute(text(idx_stmt))
+                conn.commit()
+            except Exception:
+                pass
 
         # Back-fill _date from _year for existing rows (idempotent: only sets NULL date cols)
         for col in ("birth", "death", "christening", "burial"):

@@ -1,12 +1,67 @@
 import gc
+import hashlib
 import io
 import json
 import re
 import sqlite3
 import unicodedata
+import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path
+
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+
+def _build_local_image_index(projects_dir: Path, exclude_id: str) -> dict[str, str]:
+    """Return {key → abs_path} index of all images in existing local projects.
+
+    Keys have the form ``stid:<stable_id>`` or ``hash:<content_hash>``.
+    Only files that actually exist on disk are indexed.
+    Silently skips projects whose DB doesn't have the identity columns yet.
+    """
+    index: dict[str, str] = {}
+    try:
+        dirs = list(projects_dir.iterdir())
+    except Exception:
+        return index
+    for proj_dir in dirs:
+        if not proj_dir.is_dir() or proj_dir.name == exclude_id:
+            continue
+        db_path = proj_dir / "photo_organizer.db"
+        if not db_path.exists():
+            continue
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    "SELECT path, stable_id, content_hash FROM images "
+                    "WHERE stable_id IS NOT NULL OR content_hash IS NOT NULL"
+                ).fetchall()
+            except Exception:
+                rows = []  # old schema without identity columns
+            finally:
+                conn.close()
+            for row in rows:
+                if not Path(row['path']).is_file():
+                    continue
+                if row['stable_id']:
+                    index.setdefault(f"stid:{row['stable_id']}", row['path'])
+                if row['content_hash']:
+                    index.setdefault(f"hash:{row['content_hash']}", row['path'])
+        except Exception:
+            pass
+    return index
 
 
 def _make_id(name: str) -> str:
@@ -205,13 +260,30 @@ def build_export_db(
             conn.execute("DELETE FROM documents")
             conn.commit()
 
-        rows = conn.execute("SELECT id, path FROM images").fetchall()
+        rows = conn.execute(
+            "SELECT id, path, stable_id, content_hash, source_path FROM images"
+        ).fetchall()
         path_map: dict[int, tuple[str, str]] = {}
-        for img_id, orig_path in rows:
+        for img_id, orig_path, stable_id, content_hash, src_path in rows:
             filename = Path(orig_path).name
             new_rel = f"images/{img_id}_{filename}"
             path_map[img_id] = (orig_path, new_rel)
-            conn.execute("UPDATE images SET path = ? WHERE id = ?", (new_rel, img_id))
+
+            # Ensure identity fields are set (backfill for pre-feature images)
+            new_stable = stable_id or str(uuid.uuid4())
+            new_hash = content_hash
+            if not new_hash:
+                p = Path(orig_path)
+                if p.exists():
+                    new_hash = _sha256_file(p)
+            # source_path must capture the ORIGINAL absolute path before it's
+            # changed to the relative ZIP-internal path.
+            new_src = src_path if src_path else orig_path
+
+            conn.execute(
+                "UPDATE images SET path=?, stable_id=?, content_hash=?, source_path=? WHERE id=?",
+                (new_rel, new_stable, new_hash, new_src, img_id),
+            )
 
         conn.commit()
     finally:
@@ -325,17 +397,84 @@ def import_project_zip(zip_data: bytes, projects_dir: Path) -> dict:
     if src_db.exists():
         src_db.rename(dest_db)
 
+    images_reused = 0
+    images_new = 0
+
     if dest_db.exists():
+        # Ensure identity columns exist even in legacy imported DBs
+        _ensure_identity_columns(dest_db)
+
+        # Build index of every image already on this machine (excluding the new project)
+        local_index = _build_local_image_index(projects_dir, exclude_id=new_id)
+
         conn = sqlite3.connect(str(dest_db))
+        conn.row_factory = sqlite3.Row
         try:
-            rows = conn.execute("SELECT id, path FROM images").fetchall()
-            for img_id, rel_path in rows:
-                abs_path = str(project_dir / rel_path)
-                conn.execute("UPDATE images SET path = ? WHERE id = ?", (abs_path, img_id))
+            rows = conn.execute(
+                "SELECT id, path, stable_id, content_hash, source_path FROM images"
+            ).fetchall()
+            for row in rows:
+                img_id   = row['id']
+                rel_path = row['path']
+                stable_id    = row['stable_id']
+                content_hash = row['content_hash']
+                source_path  = row['source_path']
+
+                local_path: str | None = None
+
+                # Step 1 — stable_id match (same logical image)
+                if stable_id:
+                    local_path = local_index.get(f"stid:{stable_id}")
+
+                # Step 2 — content_hash match (identical content, possibly different origin)
+                if not local_path and content_hash:
+                    local_path = local_index.get(f"hash:{content_hash}")
+
+                # Step 3 — source_path hint: file still lives at original path AND hash matches
+                if not local_path and source_path and content_hash:
+                    sp = Path(source_path)
+                    if sp.is_file() and _sha256_file(sp) == content_hash:
+                        local_path = source_path
+
+                if local_path:
+                    conn.execute(
+                        "UPDATE images SET path=? WHERE id=?", (local_path, img_id)
+                    )
+                    # Delete the redundant extracted copy to free disk space immediately
+                    extracted = project_dir / rel_path
+                    if extracted.is_file():
+                        try:
+                            extracted.unlink()
+                        except Exception:
+                            pass
+                    images_reused += 1
+                else:
+                    abs_path = str(project_dir / rel_path)
+                    conn.execute(
+                        "UPDATE images SET path=? WHERE id=?", (abs_path, img_id)
+                    )
+                    images_new += 1
+
             conn.commit()
         finally:
             conn.close()
             gc.collect()
 
     project_info["is_active"] = False
+    project_info["images_reused"] = images_reused
+    project_info["images_new"] = images_new
     return project_info
+
+
+def _ensure_identity_columns(db_path: Path) -> None:
+    """Add stable_id/content_hash/source_path to images if missing (legacy DBs)."""
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for col in ("stable_id TEXT", "content_hash TEXT", "source_path TEXT"):
+            try:
+                conn.execute(f"ALTER TABLE images ADD COLUMN {col}")
+                conn.commit()
+            except Exception:
+                pass
+    finally:
+        conn.close()

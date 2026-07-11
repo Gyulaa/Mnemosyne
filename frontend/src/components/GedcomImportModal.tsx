@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { api } from '../api'
+import { useSettings, displayPersonName } from '../SettingsContext'
 import type {
   GedcomPreview, GedcomImportPerson, GedcomImportAction,
   GedcomImportDecision, GedcomImportStats, PersonFull, Relation,
@@ -14,9 +15,9 @@ function formatLifespan(birth_year: number | null, death_year: number | null, bi
 }
 
 function confBadge(conf: 'exact' | 'high' | 'low') {
-  if (conf === 'exact') return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-900/60 text-emerald-300">Egyezés</span>
-  if (conf === 'high')  return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-900/60  text-amber-300" >Lehetséges</span>
-  return                       <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800       text-zinc-400" >Gyenge</span>
+  if (conf === 'exact') return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-900/60 text-emerald-300">Exact match</span>
+  if (conf === 'high')  return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-900/60  text-amber-300" >Likely</span>
+  return                       <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800       text-zinc-400" >Weak</span>
 }
 
 // ── RelativeChips: compact inline relatives for the GEDCOM person ─────────────
@@ -30,17 +31,17 @@ function RelativeChips({ relatives }: { relatives: GedcomImportPerson['relatives
     <div className="mt-1 space-y-0.5">
       {parents.length > 0 && (
         <p className="text-[10px] text-zinc-500 leading-snug">
-          <span className="text-zinc-600">Szülők: </span>{parents.map(r => r.name).join(', ')}
+          <span className="text-zinc-600">Parents: </span>{parents.map(r => r.name).join(', ')}
         </p>
       )}
       {spouses.length > 0 && (
         <p className="text-[10px] text-zinc-500 leading-snug">
-          <span className="text-zinc-600">Házastárs: </span>{spouses.map(r => r.name).join(', ')}
+          <span className="text-zinc-600">Spouse: </span>{spouses.map(r => r.name).join(', ')}
         </p>
       )}
       {children.length > 0 && (
         <p className="text-[10px] text-zinc-500 leading-snug">
-          <span className="text-zinc-600">Gyermek: </span>
+          <span className="text-zinc-600">Children: </span>
           {children.length <= 3
             ? children.map(r => r.name).join(', ')
             : `${children.slice(0, 2).map(r => r.name).join(', ')} +${children.length - 2}`}
@@ -62,6 +63,7 @@ interface ComboboxProps {
 }
 
 function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spousesOf, onChange }: ComboboxProps) {
+  const { nameOrder } = useSettings()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
@@ -81,9 +83,9 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
   const filtered = useMemo(() => {
     const q = query.toLowerCase()
     return existingPersons
-      .filter(p => !q || (p.name ?? '').toLowerCase().includes(q))
+      .filter(p => !q || displayPersonName(p, nameOrder).toLowerCase().includes(q) || (p.name ?? '').toLowerCase().includes(q))
       .slice(0, 30)
-  }, [existingPersons, query])
+  }, [existingPersons, query, nameOrder])
 
   function handleOpen() {
     setOpen(true)
@@ -103,12 +105,12 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
     : null
 
   const triggerLabel = action === 'skip'
-    ? <span className="text-zinc-500">⊘ Kihagyás</span>
+    ? <span className="text-zinc-500">⊘ Skip</span>
     : action === 'create'
-    ? <span className="text-brand-300">+ Új személy</span>
+    ? <span className="text-brand-300">+ New person</span>
     : selectedPerson
-    ? <span className="text-zinc-100">{selectedPerson.name ?? '—'}{selectedPerson.birth_year ? <span className="text-zinc-500 font-normal ml-1">({selectedPerson.birth_year})</span> : ''}</span>
-    : <span className="text-zinc-500">Válassz…</span>
+    ? <span className="text-zinc-100">{displayPersonName(selectedPerson, nameOrder)}{selectedPerson.birth_year ? <span className="text-zinc-500 font-normal ml-1">({selectedPerson.birth_year})</span> : ''}</span>
+    : <span className="text-zinc-500">Select…</span>
 
   return (
     <div ref={containerRef} className="relative">
@@ -132,12 +134,12 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
             {lifespan && <p className="text-[10px] text-zinc-500">{lifespan}</p>}
             {parents.length > 0 && (
               <p className="text-[10px] text-zinc-500 leading-snug">
-                <span className="text-zinc-600">Szülők: </span>{parents.join(', ')}
+                <span className="text-zinc-600">Parents: </span>{parents.join(', ')}
               </p>
             )}
             {spouses.length > 0 && (
               <p className="text-[10px] text-zinc-500 leading-snug">
-                <span className="text-zinc-600">Házastárs: </span>{spouses.join(', ')}
+                <span className="text-zinc-600">Spouse: </span>{spouses.join(', ')}
               </p>
             )}
           </div>
@@ -153,7 +155,7 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
               ref={inputRef}
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Keresés neve alapján…"
+              placeholder="Search by name…"
               className="w-full bg-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none border border-zinc-700 focus:border-brand-400"
             />
           </div>
@@ -162,16 +164,16 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
             {/* Fixed options */}
             <button onClick={() => select('create', null)}
               className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-zinc-800 ${action === 'create' ? 'text-brand-300' : 'text-zinc-400'}`}>
-              + Új személy létrehozása
+              + Create new person
             </button>
             <button onClick={() => select('skip', null)}
               className={`w-full text-left px-3 py-2 text-xs border-b border-zinc-800 transition-colors hover:bg-zinc-800 ${action === 'skip' ? 'text-zinc-300' : 'text-zinc-600'}`}>
-              ⊘ Kihagyás
+              ⊘ Skip
             </button>
 
             {/* Existing persons */}
             {filtered.length === 0 && (
-              <p className="px-3 py-3 text-xs text-zinc-600 italic">Nincs találat</p>
+              <p className="px-3 py-3 text-xs text-zinc-600 italic">No results</p>
             )}
             {filtered.map(ep => {
               const lifespan = formatLifespan(ep.birth_year, ep.death_year, ep.birth_place)
@@ -187,19 +189,19 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
                 >
                   <div className="flex items-center gap-1.5">
                     <span className={`text-xs font-medium ${isSelected ? 'text-emerald-300' : 'text-zinc-100'}`}>
-                      {ep.name ?? '—'}
+                      {displayPersonName(ep, nameOrder)}
                     </span>
                     {ep.sex && <span className="text-[10px] text-zinc-600">{ep.sex === 'M' ? '♂' : '♀'}</span>}
                   </div>
                   {lifespan && <p className="text-[10px] text-zinc-500 mt-0.5">{lifespan}</p>}
                   {parents.length > 0 && (
                     <p className="text-[10px] text-zinc-600 mt-0.5">
-                      <span className="text-zinc-700">Szülők: </span>{parents.join(', ')}
+                      <span className="text-zinc-700">Parents: </span>{parents.join(', ')}
                     </p>
                   )}
                   {spouses.length > 0 && (
                     <p className="text-[10px] text-zinc-600 mt-0.5">
-                      <span className="text-zinc-700">Házastárs: </span>{spouses.join(', ')}
+                      <span className="text-zinc-700">Spouse: </span>{spouses.join(', ')}
                     </p>
                   )}
                 </button>
@@ -225,15 +227,17 @@ interface RowProps {
 }
 
 function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, spousesOf, onChange }: RowProps) {
+  const { nameOrder } = useSettings()
   const lifespan = formatLifespan(person.birth_year, person.death_year, person.birth_place)
   const sexIcon = person.sex === 'M' ? '♂' : person.sex === 'F' ? '♀' : ''
+  const displayName = displayPersonName(person, nameOrder)
 
   return (
     <tr className="border-b border-zinc-800 hover:bg-zinc-900/40 align-top">
       {/* Import person info */}
       <td className="py-3 px-3">
         <div className="flex items-center gap-1.5">
-          <span className="text-sm text-zinc-100 font-medium">{person.name ?? '—'}</span>
+          <span className="text-sm text-zinc-100 font-medium">{displayName}</span>
           {sexIcon && <span className="text-xs text-zinc-500">{sexIcon}</span>}
         </div>
         {lifespan && <div className="text-xs text-zinc-500 mt-0.5">{lifespan}</div>}
@@ -241,9 +245,9 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
         {(person.events_count > 0 || person.notes_count > 0 || person.docs_count > 0) && (
           <div className="text-[10px] text-zinc-700 mt-1">
             {[
-              person.events_count > 0 && `${person.events_count} esemény`,
-              person.notes_count  > 0 && `${person.notes_count} megjegyzés`,
-              person.docs_count   > 0 && `${person.docs_count} dok.`,
+              person.events_count > 0 && `${person.events_count} event${person.events_count !== 1 ? 's' : ''}`,
+              person.notes_count  > 0 && `${person.notes_count} note${person.notes_count !== 1 ? 's' : ''}`,
+              person.docs_count   > 0 && `${person.docs_count} doc${person.docs_count !== 1 ? 's' : ''}`,
             ].filter(Boolean).join(' · ')}
           </div>
         )}
@@ -252,7 +256,7 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
       {/* Confidence badge */}
       <td className="py-3 px-2 text-center">
         {person.suggested_match ? confBadge(person.suggested_match.confidence) : (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-brand-900/40 text-brand-300">Új</span>
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-brand-900/40 text-brand-300">New</span>
         )}
       </td>
 
@@ -267,7 +271,7 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
           onChange={onChange}
         />
         {action === 'merge' && mergeWithId != null && (
-          <div className="text-[10px] text-zinc-600 mt-1 px-0.5">Hiányzó mezők lesznek kiegészítve</div>
+          <div className="text-[10px] text-zinc-600 mt-1 px-0.5">Missing fields will be filled in</div>
         )}
       </td>
     </tr>
@@ -303,6 +307,22 @@ function StatsSummary({ stats }: { stats: GedcomImportStats }) {
 
 type Phase = 'upload' | 'preview' | 'importing' | 'done' | 'error'
 
+interface ImportOptions {
+  relations: boolean
+  events:    boolean
+  sources:   boolean
+  notes:     boolean
+  documents: boolean
+}
+
+const DEFAULT_OPTIONS: ImportOptions = {
+  relations: true,
+  events:    true,
+  sources:   true,
+  notes:     true,
+  documents: true,
+}
+
 interface Props {
   existingPersons: PersonFull[]
   relations: Relation[]
@@ -317,12 +337,17 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
   const [decisions, setDecisions] = useState<Map<string, { action: GedcomImportAction; mergeWithId: number | null }>>(new Map())
   const [stats, setStats]       = useState<GedcomImportStats | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
+  const [opts, setOpts]         = useState<ImportOptions>(DEFAULT_OPTIONS)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Sorted existing persons for the combobox
+  const { nameOrder } = useSettings()
+
   const sortedPersons = useMemo(() =>
-    [...existingPersons].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', 'hu')),
-    [existingPersons]
+    [...existingPersons].sort((a, b) =>
+      displayPersonName(a, nameOrder).localeCompare(displayPersonName(b, nameOrder), 'en')
+    ),
+    [existingPersons, nameOrder]
   )
 
   // Precompute parent/spouse maps for the picker
@@ -422,7 +447,13 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
       return { xref: p.xref, action: d.action, merge_with_id: d.mergeWithId }
     })
     try {
-      const result = await api.project.confirmGedcomImport(preview.token, decisionList)
+      const result = await api.project.confirmGedcomImport(preview.token, decisionList, {
+        import_relations: opts.relations,
+        import_events:    opts.events,
+        import_sources:   opts.sources,
+        import_notes:     opts.notes,
+        import_documents: opts.documents,
+      })
       setStats(result)
       setPhase('done')
       onDone()
@@ -457,8 +488,8 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
         {/* ── Upload phase ─────────────────────────────────────────────── */}
         {phase === 'upload' && (
           <div className="p-6">
-            <h2 className="text-sm font-semibold text-zinc-100 mb-1">GEDCOM importálás</h2>
-            <p className="text-xs text-zinc-500 mb-5">Tölts fel egy <code>.ged</code> vagy <code>.zip</code> fájlt (pl. Mnemosyne GEDCOM export vagy más genealógia szoftver exportja).</p>
+            <h2 className="text-sm font-semibold text-zinc-100 mb-1">GEDCOM import</h2>
+            <p className="text-xs text-zinc-500 mb-5">Upload a <code>.ged</code> or <code>.zip</code> file exported from Mnemosyne or any other genealogy application.</p>
 
             <div
               onDragOver={e => { e.preventDefault(); setDragging(true) }}
@@ -469,14 +500,14 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
                 ${dragging ? 'border-brand-400 bg-brand-400/5' : 'border-zinc-700 hover:border-zinc-500'}`}
             >
               <div className="text-3xl mb-3">📂</div>
-              <p className="text-sm text-zinc-300">Húzd ide a fájlt, vagy kattints a böngészéshez</p>
+              <p className="text-sm text-zinc-300">Drag a file here, or click to browse</p>
               <p className="text-xs text-zinc-600 mt-1">.ged · .zip</p>
               <input ref={inputRef} type="file" accept=".ged,.zip" className="hidden" onChange={onInputChange} />
             </div>
 
             <div className="flex justify-end mt-4">
               <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors">
-                Mégse
+                Cancel
               </button>
             </div>
           </div>
@@ -486,7 +517,7 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
         {phase === 'importing' && (
           <div className="p-10 flex flex-col items-center gap-4">
             <div className="w-8 h-8 border-2 border-brand-400 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-zinc-400">Feldolgozás…</p>
+            <p className="text-sm text-zinc-400">Processing…</p>
           </div>
         )}
 
@@ -529,18 +560,59 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
                 <h2 className="text-sm font-semibold text-zinc-100">Import preview</h2>
                 <button onClick={onClose} className="text-zinc-600 hover:text-zinc-300 text-lg leading-none">×</button>
               </div>
-              {/* Stats chips */}
-              <div className="flex flex-wrap gap-2 mt-2">
-                {([
-                  `${preview.persons.length} persons`,
-                  `${preview.relations_count} relations`,
-                  preview.events_count    > 0 ? `${preview.events_count} events`     : null,
-                  preview.sources_count   > 0 ? `${preview.sources_count} sources`   : null,
-                  preview.documents_count > 0 ? `${preview.documents_count} documents` : null,
-                ] as (string | null)[]).filter((x): x is string => x !== null).map(label => (
-                  <span key={label} className="text-[11px] px-2 py-0.5 bg-zinc-800 text-zinc-400 rounded-full">{label}</span>
-                ))}
+
+              {/* Info chips (persons + non-toggleable counts) */}
+              <div className="flex flex-wrap gap-1.5 mt-2 mb-3">
+                <span className="text-[11px] px-2 py-0.5 bg-zinc-800 text-zinc-400 rounded-full">
+                  {preview.persons.length} person{preview.persons.length !== 1 ? 's' : ''}
+                </span>
               </div>
+
+              {/* Toggleable import options */}
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-medium uppercase tracking-widest text-zinc-600">What to import</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {([
+                    { key: 'relations' as const, label: 'Relations',  count: preview.relations_count },
+                    { key: 'events'    as const, label: 'Events',     count: preview.events_count },
+                    { key: 'sources'   as const, label: 'Sources',    count: preview.sources_count },
+                    { key: 'notes'     as const, label: 'Notes',      count: preview.notes_count },
+                    { key: 'documents' as const, label: 'Documents',  count: preview.documents_count },
+                  ] as { key: keyof ImportOptions; label: string; count: number }[])
+                    .filter(item => item.count > 0)
+                    .map(({ key, label, count }) => {
+                      const on = opts[key]
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setOpts(prev => ({ ...prev, [key]: !prev[key] }))}
+                          className={[
+                            'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all border',
+                            on
+                              ? 'bg-zinc-700/60 border-zinc-600 text-zinc-200 hover:bg-zinc-700'
+                              : 'bg-transparent border-zinc-800 text-zinc-600 hover:border-zinc-700 hover:text-zinc-500',
+                          ].join(' ')}
+                          title={on ? `Exclude ${label.toLowerCase()} from import` : `Include ${label.toLowerCase()} in import`}
+                        >
+                          {on ? (
+                            <svg className="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                            </svg>
+                          ) : (
+                            <svg className="w-3 h-3 text-zinc-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          )}
+                          <span className={on ? '' : 'line-through'}>{label}</span>
+                          <span className={on ? 'text-zinc-500' : 'text-zinc-700'}>{count}</span>
+                        </button>
+                      )
+                    })
+                  }
+                </div>
+              </div>
+
               {/* Quick-apply buttons */}
               <div className="flex gap-2 mt-3">
                 <button

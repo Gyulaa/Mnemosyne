@@ -9,13 +9,26 @@ Produces a ZIP containing:
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import re
 import sqlite3
 import zipfile
 from datetime import date
 from pathlib import Path
 from typing import Optional
+
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -196,18 +209,20 @@ def build_gedcom_zip(
 
         if photo_mode == 'primary':
             rows = conn.execute("""
-                SELECT p.id AS pid, i.id AS img_id, i.path AS img_path
+                SELECT p.id AS pid, i.id AS img_id, i.path AS img_path,
+                       i.stable_id, i.content_hash, i.source_path
                 FROM persons p
                 JOIN faces f ON f.id = p.thumbnail_face_id
                 JOIN images i ON i.id = f.image_id
                 WHERE p.thumbnail_face_id IS NOT NULL
             """).fetchall()
             for row in rows:
-                photos_by_person[row['pid']] = [(row['img_id'], row['img_path'])]
+                photos_by_person[row['pid']] = [dict(row)]
 
         elif photo_mode == 'all':
             rows = conn.execute("""
-                SELECT DISTINCT p.id AS pid, i.id AS img_id, i.path AS img_path
+                SELECT DISTINCT p.id AS pid, i.id AS img_id, i.path AS img_path,
+                       i.stable_id, i.content_hash, i.source_path
                 FROM persons p
                 JOIN clusters c ON c.person_id = p.id AND c.label != -1
                 JOIN faces f ON f.cluster_id = c.id
@@ -215,9 +230,7 @@ def build_gedcom_zip(
                 ORDER BY p.id, i.id
             """).fetchall()
             for row in rows:
-                photos_by_person.setdefault(row['pid'], []).append(
-                    (row['img_id'], row['img_path'])
-                )
+                photos_by_person.setdefault(row['pid'], []).append(dict(row))
     finally:
         conn.close()
 
@@ -318,11 +331,24 @@ def build_gedcom_zip(
 
         vital("BIRT", p['birth_date'],       p['birth_year'],       p['birth_place'])
         vital("CHR",  p['christening_date'], p['christening_year'], p['christening_place'])
-        vital("DEAT", p['death_date'],       p['death_year'],       p['death_place'])
+        # DEAT with optional CAUS sub-tag
+        deat_d, deat_y, deat_pl, caus = p['death_date'], p['death_year'], p['death_place'], p['cause_of_death']
+        if deat_d or deat_y or deat_pl or caus:
+            d = _gedcom_date(deat_d, deat_y)
+            lines.append("1 DEAT")
+            if d:       lines.append(f"2 DATE {d}")
+            if deat_pl: lines.append(f"2 PLAC {_safe(deat_pl)}")
+            if caus:    lines.append(f"2 CAUS {_safe(caus)}")
         vital("BURI", p['burial_date'],      p['burial_year'],      p['burial_place'])
 
         if p['occupation']:
             lines.append(f"1 OCCU {_safe(p['occupation'])}")
+        if p['education']:
+            lines.append(f"1 EDUC {_safe(p['education'])}")
+        if p['religion']:
+            lines.append(f"1 RELI {_safe(p['religion'])}")
+        if p['nationality']:
+            lines.append(f"1 NATI {_safe(p['nationality'])}")
 
         # Legacy notes field
         if p['notes'] and include_notes:
@@ -393,7 +419,9 @@ def build_gedcom_zip(
                     lines.append(f"2 TITL {_safe(doc['title'])}")
 
         # Photos
-        for idx, (img_id, img_path) in enumerate(photos_by_person.get(pid, [])):
+        for idx, photo in enumerate(photos_by_person.get(pid, [])):
+            img_id   = photo['img_id']
+            img_path = photo['img_path']
             ext = Path(img_path).suffix.lower() or '.jpg'
             form = {'jpg': 'JPEG', 'jpeg': 'JPEG', 'png': 'PNG',
                     'gif': 'GIF', 'webp': 'JPEG'}.get(ext.lstrip('.'), 'JPEG')
@@ -402,6 +430,10 @@ def build_gedcom_zip(
             lines.append(f"2 FILE {arc_name}")
             lines.append(f"2 FORM {form}")
             lines.append(f"2 TITL {'Primary photo' if idx == 0 else f'Photo {idx + 1}'}")
+            if photo.get('stable_id'):
+                lines.append(f"2 _STID {photo['stable_id']}")
+            if photo.get('content_hash'):
+                lines.append(f"2 _HASH sha256:{photo['content_hash']}")
 
         # FAMS / FAMC
         for fid in person_fams.get(pid, []):
@@ -457,18 +489,40 @@ def build_gedcom_zip(
                     safe_orig = re.sub(r'[^\w.\-]', '_', orig)
                     zf.write(str(doc_file), f"media/doc_{doc['id']}_{safe_orig}")
 
-        # Photos
+        # Photos + manifest
+        manifest_images: list[dict] = []
         if photo_mode != 'none':
             seen_img_ids: set[int] = set()
             for photo_list in photos_by_person.values():
-                for img_id, img_path in photo_list:
+                for photo in photo_list:
+                    img_id   = photo['img_id']
+                    img_path = photo['img_path']
                     if img_id in seen_img_ids:
                         continue
                     seen_img_ids.add(img_id)
                     img_file = Path(img_path)
                     if img_file.exists():
                         ext = img_file.suffix.lower() or '.jpg'
-                        zf.write(str(img_file), f"media/photo_{img_id}{ext}")
+                        arc_name = f"media/photo_{img_id}{ext}"
+                        zf.write(str(img_file), arc_name)
+
+                        # Compute hash now if missing (legacy image without hash)
+                        chash = photo.get('content_hash') or _sha256_file(img_file)
+
+                        manifest_images.append({
+                            "stable_id":   photo.get('stable_id'),
+                            "content_hash": f"sha256:{chash}" if chash else None,
+                            "source_path":  photo.get('source_path') or img_path,
+                            "zip_path":     arc_name,
+                        })
+
+        if manifest_images:
+            manifest = {
+                "format_version": 1,
+                "exported_by": "mnemosyne",
+                "images": manifest_images,
+            }
+            zf.writestr("_manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
 
     buf.seek(0)
     return buf

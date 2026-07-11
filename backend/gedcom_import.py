@@ -91,6 +91,7 @@ def _parse_indi(xref: str, block: list[tuple[int, str, str]]) -> dict:
         'xref': xref,
         'name': None, 'first_name': None, 'last_name': None,
         'nickname': None, 'title': None, 'sex': None, 'occupation': None,
+        'religion': None, 'nationality': None, 'cause_of_death': None, 'education': None,
         'birth_date': None, 'birth_year': None, 'birth_place': None,
         'christening_date': None, 'christening_year': None, 'christening_place': None,
         'death_date': None, 'death_year': None, 'death_place': None,
@@ -116,7 +117,14 @@ def _parse_indi(xref: str, block: list[tuple[int, str, str]]) -> dict:
         if tag == 'NAME':
             m = re.search(r'/([^/]*)/', val)
             surn = m.group(1).strip() if m else None
-            given = val.split('/')[0].strip() if '/' in val else val.strip()
+            if '/' in val:
+                before = val.split('/')[0].strip()
+                # Handle "/Surname/ Firstname" style (Hungarian / Mnemosyne GEDCOMs put
+                # the surname first in the NAME value, with given name after the closing slash)
+                after = val.rsplit('/', 1)[-1].strip()
+                given = before or after
+            else:
+                given = val.strip()
             p['last_name']  = surn or None
             p['first_name'] = given or None
             for _, st, sv in sub:
@@ -125,7 +133,7 @@ def _parse_indi(xref: str, block: list[tuple[int, str, str]]) -> dict:
                 elif st == 'NICK': p['nickname']   = sv.strip() or None
                 elif st == 'NPFX': p['title']      = sv.strip() or None
             parts = [x for x in [p['first_name'], p['last_name']] if x]
-            p['name'] = ' '.join(parts) or val.replace('/', '').strip() or None
+            p['name'] = ' '.join(parts) or None
 
         elif tag == 'SEX':
             v = val.strip().upper()
@@ -140,9 +148,14 @@ def _parse_indi(xref: str, block: list[tuple[int, str, str]]) -> dict:
                     p[f'{pfx}_year'] = yr
                 elif st == 'PLAC':
                     p[f'{pfx}_place'] = sv.strip() or None
+                elif st == 'CAUS' and tag == 'DEAT':
+                    p['cause_of_death'] = sv.strip() or None
 
         elif tag == 'OCCU':
             p['occupation'] = val.strip() or None
+
+        elif tag == 'EDUC':
+            p['education'] = val.strip() or None
 
         elif tag == 'NOTE':
             text = _collect_text(val, sub, 2)
@@ -191,18 +204,23 @@ def _parse_indi(xref: str, block: list[tuple[int, str, str]]) -> dict:
         elif tag == 'RELI':
             text = _collect_text(val, sub, 2).strip()
             if text:
-                p['notes'].append(f'Religion: {text}')
+                p['religion'] = text
 
         elif tag == 'NATI':
             text = _collect_text(val, sub, 2).strip()
             if text:
-                p['notes'].append(f'Nationality: {text}')
+                p['nationality'] = text
 
         elif tag == 'OBJE':
-            doc: dict = {'file': None, 'title': None}
+            doc: dict = {'file': None, 'title': None, 'stable_id': None, 'content_hash': None}
             for _, st, sv in sub:
-                if st == 'FILE':  doc['file']  = sv.strip()
+                if st == 'FILE':   doc['file']  = sv.strip()
                 elif st == 'TITL': doc['title'] = sv.strip()
+                elif st == '_STID': doc['stable_id'] = sv.strip()
+                elif st == '_HASH':
+                    # stored as "sha256:<hex>" — strip the prefix
+                    raw = sv.strip()
+                    doc['content_hash'] = raw[7:] if raw.startswith('sha256:') else raw
             if doc['file'] and 'doc_' in doc['file']:
                 p['docs'].append(doc)
 
@@ -308,8 +326,10 @@ def load_gedcom(file_data: bytes, filename: str) -> tuple[dict, Optional[bytes]]
     """
     Parse GEDCOM from raw bytes.  Accepts .ged or .zip files.
     Returns (parsed, zip_bytes_or_None).
+    parsed['_manifest'] contains the _manifest.json dict if present in a ZIP.
     """
     zip_bytes: Optional[bytes] = None
+    manifest: Optional[dict] = None
 
     is_zip = filename.lower().endswith('.zip') or file_data[:2] == b'PK'
     if is_zip:
@@ -319,11 +339,18 @@ def load_gedcom(file_data: bytes, filename: str) -> tuple[dict, Optional[bytes]]
             if not ged_names:
                 raise ValueError("A ZIP-ben nem található .ged fájl")
             ged_text = zf.read(ged_names[0]).decode('utf-8-sig', errors='replace')
+            if '_manifest.json' in zf.namelist():
+                try:
+                    import json as _json
+                    manifest = _json.loads(zf.read('_manifest.json'))
+                except Exception:
+                    manifest = None
     else:
         ged_text = file_data.decode('utf-8-sig', errors='replace')
 
     lines  = _parse_lines(ged_text)
     parsed = _parse_gedcom(lines)
+    parsed['_manifest'] = manifest
     return parsed, zip_bytes
 
 
@@ -916,11 +943,23 @@ def execute_import(
     db_path:   Path,
     docs_dir:  Path,
     zip_bytes: Optional[bytes],
+    options:   Optional[dict] = None,
 ) -> tuple[dict, dict]:
     """
     Apply user decisions and import data into the project database.
     Returns (import_stats, rollback_data).
+
+    options keys (all default True):
+      import_relations, import_events, import_sources, import_notes, import_documents
     """
+    if options is None:
+        options = {}
+    do_relations = options.get('import_relations', True)
+    do_events    = options.get('import_events',    True)
+    do_sources   = options.get('import_sources',   True)
+    do_notes     = options.get('import_notes',     True)
+    do_documents = options.get('import_documents', True)
+
     dec_map: dict[str, dict] = {d['xref']: d for d in decisions}
 
     conn = sqlite3.connect(str(db_path))
@@ -936,6 +975,8 @@ def execute_import(
         'sources_added':   0,
         'notes_added':     0,
         'documents_added': 0,
+        'images_reused':   0,  # photos matched in local DB (not re-imported)
+        'images_new':      0,  # new photos extracted from ZIP
     }
 
     rollback: dict = {
@@ -960,27 +1001,29 @@ def execute_import(
     }
     sour_xref_to_id: dict[str, int] = {}
 
-    for sxref, src in parsed['sources'].items():
-        title = (src['title'] or '').strip() or 'Untitled source'
-        if title in existing_src_titles:
-            sour_xref_to_id[sxref] = existing_src_titles[title]
-        else:
-            cur = conn.execute(
-                "INSERT INTO sources "
-                "(title, author, publisher, year, url, description, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
-                (title, src['author'], src['publisher'], src['year'],
-                 src['url'], src['description']),
-            )
-            conn.commit()
-            sour_xref_to_id[sxref] = cur.lastrowid
-            existing_src_titles[title] = cur.lastrowid
-            rollback['added_source_ids'].append(cur.lastrowid)
-            stats['sources_added'] += 1
+    if do_sources:
+        for sxref, src in parsed['sources'].items():
+            title = (src['title'] or '').strip() or 'Untitled source'
+            if title in existing_src_titles:
+                sour_xref_to_id[sxref] = existing_src_titles[title]
+            else:
+                cur = conn.execute(
+                    "INSERT INTO sources "
+                    "(title, author, publisher, year, url, description, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+                    (title, src['author'], src['publisher'], src['year'],
+                     src['url'], src['description']),
+                )
+                conn.commit()
+                sour_xref_to_id[sxref] = cur.lastrowid
+                existing_src_titles[title] = cur.lastrowid
+                rollback['added_source_ids'].append(cur.lastrowid)
+                stats['sources_added'] += 1
 
     # ── 2. Persons ────────────────────────────────────────────────────────────
     _INDI_FIELDS = (
         'first_name', 'last_name', 'nickname', 'title', 'sex', 'occupation',
+        'religion', 'nationality', 'cause_of_death', 'education',
         'birth_date', 'birth_year', 'birth_place',
         'christening_date', 'christening_year', 'christening_place',
         'death_date', 'death_year', 'death_place',
@@ -1028,14 +1071,16 @@ def execute_import(
             cur = conn.execute(
                 """INSERT INTO persons (
                     name, first_name, last_name, nickname, title, sex, occupation,
+                    religion, nationality, cause_of_death, education,
                     birth_date, birth_year, birth_place,
                     christening_date, christening_year, christening_place,
                     death_date, death_year, death_place,
                     burial_date, burial_year, burial_place
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     name, indi['first_name'], indi['last_name'],
                     indi['nickname'], indi['title'], indi['sex'], indi['occupation'],
+                    indi['religion'], indi['nationality'], indi['cause_of_death'], indi['education'],
                     indi['birth_date'], indi['birth_year'], indi['birth_place'],
                     indi['christening_date'], indi['christening_year'], indi['christening_place'],
                     indi['death_date'], indi['death_year'], indi['death_place'],
@@ -1050,54 +1095,56 @@ def execute_import(
 
         # ── Notes ─────────────────────────────────────────────────────────────
         is_merged = xref in merged_xrefs
-        for note_text in indi['notes']:
-            cur2 = conn.execute(
-                "INSERT INTO person_notes "
-                "(person_id, content, sort_order, created_at, updated_at) "
-                "VALUES (?, ?, 0, datetime('now'), datetime('now'))",
-                (db_id, note_text),
-            )
-            if is_merged:
-                rollback['added_note_ids'].append(cur2.lastrowid)
-            stats['notes_added'] += 1
-        conn.commit()
+        if do_notes:
+            for note_text in indi['notes']:
+                cur2 = conn.execute(
+                    "INSERT INTO person_notes "
+                    "(person_id, content, sort_order, created_at, updated_at) "
+                    "VALUES (?, ?, 0, datetime('now'), datetime('now'))",
+                    (db_id, note_text),
+                )
+                if is_merged:
+                    rollback['added_note_ids'].append(cur2.lastrowid)
+                stats['notes_added'] += 1
+            conn.commit()
 
         # ── Events ────────────────────────────────────────────────────────────
-        for ev in indi['events']:
-            ev_title = (ev.get('title') or '').strip() or None
-            ev_date  = ev.get('date')
+        if do_events:
+            for ev in indi['events']:
+                ev_title = (ev.get('title') or '').strip() or None
+                ev_date  = ev.get('date')
 
-            # Skip if exact duplicate already linked to this person
-            dup = conn.execute(
-                """SELECT ep.id FROM event_persons ep
-                   JOIN events e ON e.id = ep.event_id
-                   WHERE ep.person_id = ?
-                     AND (e.title = ? OR (e.title IS NULL AND ? IS NULL))
-                     AND (e.date  = ? OR (e.date  IS NULL AND ? IS NULL))""",
-                (db_id, ev_title, ev_title, ev_date, ev_date),
-            ).fetchone()
-            if dup:
-                continue
+                # Skip if exact duplicate already linked to this person
+                dup = conn.execute(
+                    """SELECT ep.id FROM event_persons ep
+                       JOIN events e ON e.id = ep.event_id
+                       WHERE ep.person_id = ?
+                         AND (e.title = ? OR (e.title IS NULL AND ? IS NULL))
+                         AND (e.date  = ? OR (e.date  IS NULL AND ? IS NULL))""",
+                    (db_id, ev_title, ev_title, ev_date, ev_date),
+                ).fetchone()
+                if dup:
+                    continue
 
-            cur2 = conn.execute(
-                "INSERT INTO events "
-                "(event_type, title, date, year, place, description, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
-                (ev.get('event_type', 'custom'), ev_title, ev_date,
-                 ev.get('year'), ev.get('place'), ev.get('description')),
-            )
-            ev_id = cur2.lastrowid
-            conn.execute(
-                "INSERT INTO event_persons (event_id, person_id, role) VALUES (?, ?, 'primary')",
-                (ev_id, db_id),
-            )
-            conn.commit()
-            if is_merged:
-                rollback['added_event_ids'].append(ev_id)
-            stats['events_added'] += 1
+                cur2 = conn.execute(
+                    "INSERT INTO events "
+                    "(event_type, title, date, year, place, description, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+                    (ev.get('event_type', 'custom'), ev_title, ev_date,
+                     ev.get('year'), ev.get('place'), ev.get('description')),
+                )
+                ev_id = cur2.lastrowid
+                conn.execute(
+                    "INSERT INTO event_persons (event_id, person_id, role) VALUES (?, ?, 'primary')",
+                    (ev_id, db_id),
+                )
+                conn.commit()
+                if is_merged:
+                    rollback['added_event_ids'].append(ev_id)
+                stats['events_added'] += 1
 
         # ── Documents from ZIP ────────────────────────────────────────────────
-        if zip_bytes and indi['docs']:
+        if do_documents and zip_bytes and indi['docs']:
             docs_dir.mkdir(parents=True, exist_ok=True)
             try:
                 with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
@@ -1133,6 +1180,10 @@ def execute_import(
                 pass
 
     # ── 3. Relations from FAM records ─────────────────────────────────────────
+    if not do_relations:
+        conn.close()
+        return stats, rollback
+
     for _fxref, fam in parsed['families'].items():
         husb_id = xref_to_id.get(fam['husb']) if fam['husb'] else None
         wife_id = xref_to_id.get(fam['wife']) if fam['wife'] else None

@@ -10,7 +10,7 @@ No account, no cloud, no subscription. Everything stays on your machine.
 
 ## What is Mnemosyne?
 
-Mnemosyne (pronounced *"neh-MO-zih-nee"*) is a desktop application for families who want to keep their photos and genealogy in one place — privately, on their own computer.
+Mnemosyne (pronounced *"m·neh-MO-zin"* — the *m* is lightly voiced, the stress falls on the second syllable) is a desktop application for families who want to keep their photos and genealogy in one place — privately, on their own computer.
 
 You point it at a folder of photos, and it automatically finds and groups faces. You then name the people it found, connect them to your family tree, attach documents (birth certificates, letters, old photos), write notes, and build a complete family history.
 
@@ -192,6 +192,7 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 - Full name: title, given, middle, surname, nickname
 - Birth/death/christening/burial: date and place (partial ISO dates supported)
 - Age calculation: "Lived N years" or "N years old today"
+- Additional biographical fields: occupation, education, religion, nationality, cause of death
 - Relations section: parents, children, siblings, spouses — sorted chronologically
 - Duplicate relationship detection
 
@@ -208,7 +209,7 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 - Only sources with at least one citation (or linked to a document/event) appear in the citation picker
 
 **GEDCOM interoperability**
-- **Import**: `.ged` file → persons, relations, events, notes, sources, documents; preview wizard for merge/create/skip decisions per person
+- **Import**: `.ged` file → persons (including occupation, education, religion, nationality, cause of death), relations, events, notes, sources, documents; preview wizard for merge/create/skip decisions per person
 - **Export**: standards-compliant GEDCOM 5.5.1 with UTF-8 encoding; see [GEDCOM export](#gedcom-export) below
 
 ### Events
@@ -449,7 +450,7 @@ A ZIP archive packages the database and all referenced media into a portable, se
 
 Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` folder.
 
-**INDI records** — `NAME` with `/surname/`; `GIVN`, `SURN`, `NICK`, `NPFX`; vital events (`BIRT`, `CHR`, `DEAT`, `BURI`) with `DATE` and `PLAC`; `OCCU`; `NOTE`; `EVEN` (one per event); `OBJE` (documents + photos); `FAMS`/`FAMC`
+**INDI records** — `NAME` with `/surname/`; `GIVN`, `SURN`, `NICK`, `NPFX`; vital events (`BIRT`, `CHR`, `DEAT`, `BURI`) with `DATE` and `PLAC`; `DEAT > CAUS` (cause of death); `OCCU`; `EDUC`; `RELI`; `NATI`; `NOTE`; `EVEN` (one per event); `OBJE` (documents + photos); `FAMS`/`FAMC`
 
 **FAM records** — `HUSB`/`WIFE` (sex-aware); `CHIL`; `MARR` and `DIV` with date and place
 

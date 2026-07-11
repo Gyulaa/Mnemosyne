@@ -260,7 +260,7 @@ function AppInner() {
           {tab === 'genealogy' ? (
             <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} onNavToEvent={navToEvent} onNavToDocument={navToDocument} />
           ) : tab === 'events' ? (
-            <EventsTab navTarget={eventNavTarget} onNavConsumed={() => setEventNavTarget(null)} />
+            <EventsTab navTarget={eventNavTarget} onNavConsumed={() => setEventNavTarget(null)} onExportStart={onExportStart} onExportEnd={onExportEnd} />
           ) : tab === 'documents' ? (
             <DocumentsTab onNavToGenealogy={navToGenealogy} navTarget={documentsNavTarget} onNavConsumed={() => setDocumentsNavTarget(null)} />
           ) : (

@@ -1,11 +1,24 @@
+import hashlib
 import json
 import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
 from .image_utils import load_image_bgr, IMAGE_EXTENSIONS
+
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
 
 _face_app = None
 _face_app_lock = threading.Lock()
@@ -89,13 +102,24 @@ def _run(root_path: str, session_factory, det_size: int):
             mtime = p.stat().st_mtime
             existing = db.query(DBImage).filter(DBImage.path == str(p)).first()
             if existing is None:
-                db.add(DBImage(path=str(p), mtime=mtime, scan_status="pending"))
+                db.add(DBImage(
+                    path=str(p), mtime=mtime, scan_status="pending",
+                    stable_id=str(uuid.uuid4()),
+                    content_hash=_sha256_file(p),
+                    source_path=str(p),
+                ))
             elif existing.mtime != mtime:
                 db.query(DBFace).filter(DBFace.image_id == existing.id).delete()
                 existing.mtime = mtime
                 existing.scan_status = "pending"
                 existing.scanned_at = None
                 existing.error_msg = None
+                existing.content_hash = _sha256_file(p)  # file changed, recompute
+            elif existing.stable_id is None:
+                # Backfill identity for images added before this feature
+                existing.stable_id = str(uuid.uuid4())
+                existing.content_hash = _sha256_file(p)
+                existing.source_path = existing.source_path or str(p)
 
         # Remove DB records for images under this root that no longer exist on disk
         root_prefix = str(root)
