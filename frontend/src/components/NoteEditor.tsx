@@ -600,8 +600,179 @@ interface CardProps {
   personId?: number
 }
 
+// ── NoteViewModal — read-only overlay for a note ─────────────────────────────
+
+function CitationRow({ c, onNavigate }: {
+  c: NoteCitation
+  onNavigate: (c: NoteCitation) => void
+}) {
+  const isEvent  = c.source_event_id != null || c.source_type === 'event'
+  const isDoc    = c.source_document_id != null
+  const isCustom = c.source_id === null
+  const canNav   = (isEvent || isDoc) && !isCustom
+  const label    = c.custom_label ?? c.source_title ?? '—'
+
+  return (
+    <button
+      type="button"
+      onClick={() => canNav && onNavigate(c)}
+      disabled={!canNav}
+      className={[
+        'flex items-center gap-2.5 w-full text-left rounded-lg px-3 py-2 transition-colors text-xs',
+        canNav
+          ? 'text-amber-400 hover:text-amber-200 hover:bg-zinc-800/80 cursor-pointer'
+          : 'text-amber-900 cursor-default',
+      ].join(' ')}
+    >
+      <span className="font-mono shrink-0 w-5 text-right text-zinc-600">[{c.marker}]</span>
+      {isEvent && !isDoc ? (
+        <svg className="w-3.5 h-3.5 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+      ) : isDoc ? (
+        <svg className="w-3.5 h-3.5 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+      ) : (
+        <svg className="w-3.5 h-3.5 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+        </svg>
+      )}
+      <span className="flex-1 min-w-0 truncate">{label}</span>
+      {c.detail && <span className="shrink-0 text-zinc-600 truncate max-w-[120px]">{c.detail}</span>}
+      {canNav && (
+        <svg className="w-3 h-3 shrink-0 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
+function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, onClose, onEdit }: {
+  note: PersonNote | DocumentNote
+  html: string
+  editedAt: string | null
+  navigateCitation: (c: NoteCitation) => void
+  onNavToPerson?: (id: number) => void
+  onClose: () => void
+  onEdit: () => void
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  function handleContentClick(e: React.MouseEvent<HTMLDivElement>) {
+    const anchor = (e.target as Element).closest('a.note-ref, a.note-person-ref')
+    if (!anchor) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (anchor.classList.contains('note-person-ref')) {
+      const match = (anchor as HTMLAnchorElement).getAttribute('href')?.match(/person-ref-(\d+)$/)
+      if (match && onNavToPerson) { onClose(); onNavToPerson(parseInt(match[1])) }
+      return
+    }
+    const match = (anchor as HTMLAnchorElement).getAttribute('href')?.match(/note-ref-(\d+)$/)
+    if (!match) return
+    const c = note.citations.find(c => c.id === parseInt(match[1]))
+    if (c) navigateCitation(c)
+  }
+
+  const sortedCitations = [...note.citations].sort((a, b) => a.marker - b.marker)
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[300] flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.72)' }}
+      onClick={onClose}
+    >
+      <div
+        className="relative bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl w-full flex flex-col"
+        style={{ maxWidth: 620, maxHeight: '82vh' }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4 shrink-0">
+          <div className="flex-1 min-w-0">
+            {note.title ? (
+              <h2 className="text-base font-semibold text-zinc-100 leading-snug">{note.title}</h2>
+            ) : (
+              <h2 className="text-sm text-zinc-500 italic">Untitled note</h2>
+            )}
+            {editedAt && (
+              <p className="text-[11px] text-zinc-600 mt-0.5">{editedAt}</p>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={onEdit}
+              title="Edit note"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
+              </svg>
+              Edit
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="overflow-y-auto flex-1 min-h-0">
+          {/* Note content */}
+          <div className="px-6 pb-5">
+            {note.content ? (
+              <div
+                className="note-content text-sm text-zinc-300 leading-relaxed"
+                dangerouslySetInnerHTML={{ __html: html }}
+                onClick={handleContentClick}
+              />
+            ) : (
+              <p className="text-sm text-zinc-600 italic">Empty note.</p>
+            )}
+          </div>
+
+          {/* Citations / references */}
+          {sortedCitations.length > 0 && (
+            <div className="border-t border-zinc-800 bg-zinc-950/40 px-3 py-3">
+              <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-zinc-600">
+                References
+              </p>
+              <div className="space-y-0.5">
+                {sortedCitations.map(c => (
+                  <CitationRow
+                    key={c.id}
+                    c={c}
+                    onNavigate={cit => { navigateCitation(cit) }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+// ── NoteCard ──────────────────────────────────────────────────────────────────
+
 export function NoteCard({ note, sources, persons, relations, ops, onUpdated, onDeleted, onNavToEvent, onNavToPerson, personId }: CardProps) {
   const [editing, setEditing] = useState(false)
+  const [viewing, setViewing] = useState(false)
   const qc = useQueryClient()
 
   const html = renderMarkdown(note.content, note.citations)
@@ -629,25 +800,20 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
     }
   }
 
-  function handleContentClick(e: React.MouseEvent<HTMLDivElement>) {
+  function handleCardContentClick(e: React.MouseEvent<HTMLDivElement>) {
     const anchor = (e.target as Element).closest('a.note-ref, a.note-person-ref')
     if (!anchor) return
     e.preventDefault()
     e.stopPropagation()
-
     if (anchor.classList.contains('note-person-ref')) {
-      const href = (anchor as HTMLAnchorElement).getAttribute('href') ?? ''
-      const match = href.match(/person-ref-(\d+)$/)
+      const match = (anchor as HTMLAnchorElement).getAttribute('href')?.match(/person-ref-(\d+)$/)
       if (match && onNavToPerson) onNavToPerson(parseInt(match[1]))
       return
     }
-
-    const href = (anchor as HTMLAnchorElement).getAttribute('href') ?? ''
-    const match = href.match(/note-ref-(\d+)$/)
+    const match = (anchor as HTMLAnchorElement).getAttribute('href')?.match(/note-ref-(\d+)$/)
     if (!match) return
-    const citationId = parseInt(match[1])
-    const citation = note.citations.find(c => c.id === citationId)
-    if (citation) navigateCitation(citation)
+    const c = note.citations.find(c => c.id === parseInt(match[1]))
+    if (c) navigateCitation(c)
   }
 
   if (editing) {
@@ -672,91 +838,69 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
     : null
 
   return (
-    <div
-      className="group bg-zinc-800/30 border border-zinc-700/40 hover:border-zinc-600/60 rounded-xl overflow-hidden cursor-pointer transition-colors"
-      onClick={() => setEditing(true)}
-    >
-      <div className="flex items-start justify-between gap-2 px-5 pt-4 pb-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-baseline gap-2 mb-2">
-            {note.title && (
-              <p className="text-sm font-semibold text-zinc-200 truncate">{note.title}</p>
-            )}
-            {editedAt && (
-              <span className="text-xs text-zinc-600 shrink-0 ml-auto">{editedAt}</span>
+    <>
+      {/* Card (click → view modal) */}
+      <div
+        className="group bg-zinc-800/30 border border-zinc-700/40 hover:border-zinc-600/60 rounded-xl overflow-hidden cursor-pointer transition-colors"
+        onClick={() => setViewing(true)}
+      >
+        <div className="flex items-start justify-between gap-2 px-5 pt-4 pb-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline gap-2 mb-2">
+              {note.title && (
+                <p className="text-sm font-semibold text-zinc-200 truncate">{note.title}</p>
+              )}
+              {editedAt && (
+                <span className="text-xs text-zinc-600 shrink-0 ml-auto">{editedAt}</span>
+              )}
+            </div>
+            {note.content ? (
+              <div
+                className="note-preview text-sm text-zinc-400 leading-relaxed line-clamp-4"
+                dangerouslySetInnerHTML={{ __html: html }}
+                onClick={handleCardContentClick}
+              />
+            ) : (
+              <p className="text-sm text-zinc-600 italic">Empty note</p>
             )}
           </div>
-          {note.content ? (
-            <div
-              className="note-preview text-sm text-zinc-400 leading-relaxed line-clamp-4"
-              dangerouslySetInnerHTML={{ __html: html }}
-              onClick={handleContentClick}
-            />
-          ) : (
-            <p className="text-sm text-zinc-600 italic">Empty note</p>
-          )}
+          {/* Edit shortcut — goes directly to editor without opening the view modal */}
+          <button
+            onClick={e => { e.stopPropagation(); setEditing(true) }}
+            className="shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-all"
+            title="Edit"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
+            </svg>
+          </button>
         </div>
-        <button
-          onClick={e => { e.stopPropagation(); setEditing(true) }}
-          className="shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-all"
-          title="Edit"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
-          </svg>
-        </button>
+
+        {/* Citations hint strip */}
+        {note.citations.length > 0 && (
+          <div className="border-t border-zinc-800/60 px-5 py-2 flex items-center gap-1.5">
+            <svg className="w-3 h-3 text-amber-700 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+            </svg>
+            <span className="text-[10px] text-zinc-600">
+              {note.citations.length} reference{note.citations.length !== 1 ? 's' : ''} — click to view
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* Citations panel */}
-      {note.citations.length > 0 && (
-        <div
-          className="border-t border-zinc-800 bg-zinc-900/40 px-4 py-2 space-y-0.5"
-          onClick={e => e.stopPropagation()}
-        >
-          {[...note.citations].sort((a, b) => a.marker - b.marker).map(c => {
-            const isEvent = (c.source_event_id != null || c.source_type === 'event') && !!onNavToEvent
-            const isDoc = c.source_document_id != null
-            const isCustom = c.source_id === null
-            const canNav = isEvent || isDoc
-            const label = c.custom_label ?? c.source_title ?? '—'
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => !isCustom && canNav && navigateCitation(c)}
-                disabled={isCustom || !canNav}
-                className={[
-                  'flex items-center gap-2 w-full text-left rounded-lg px-2 py-2 transition-colors text-xs',
-                  canNav && !isCustom
-                    ? 'text-amber-500 hover:text-amber-300 hover:bg-zinc-800/70 cursor-pointer'
-                    : 'text-amber-900 cursor-default',
-                ].join(' ')}
-              >
-                <span className="font-mono shrink-0 w-6 text-right text-zinc-600">[{c.marker}]</span>
-                {isEvent ? (
-                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                ) : isDoc ? (
-                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-                  </svg>
-                )}
-                <span className="truncate">{label}</span>
-                {canNav && !isCustom && (
-                  <svg className="w-3 h-3 shrink-0 ml-auto opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                  </svg>
-                )}
-              </button>
-            )
-          })}
-        </div>
+      {/* Read-only view modal */}
+      {viewing && (
+        <NoteViewModal
+          note={note}
+          html={html}
+          editedAt={editedAt}
+          navigateCitation={navigateCitation}
+          onNavToPerson={onNavToPerson}
+          onClose={() => setViewing(false)}
+          onEdit={() => { setViewing(false); setEditing(true) }}
+        />
       )}
-    </div>
+    </>
   )
 }

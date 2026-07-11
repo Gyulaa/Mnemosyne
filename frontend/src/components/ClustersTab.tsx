@@ -1969,11 +1969,71 @@ function AssignFacesOverlay({
   onClose: () => void
   onAssigned: () => void
 }) {
+  const { nameOrder } = useSettings()
+  const [tab, setTab] = useState<'cluster' | 'person'>('cluster')
   const [nameParts, setNameParts] = useState<NameParts>({ title: '', last_name: '', first_name: '', middle_name: '', nickname: '' })
   const [busy, setBusy] = useState(false)
   const [showNewCluster, setShowNewCluster] = useState(false)
   const [clusterSearch, setClusterSearch] = useState('')
+  const [personSearch, setPersonSearch] = useState('')
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null)
+
+  const { data: persons = [] } = useQuery<PersonFull[]>({
+    queryKey: ['persons'],
+    queryFn: api.persons.list,
+    staleTime: 60_000,
+  })
+  const { data: relations = [] } = useQuery<Relation[]>({
+    queryKey: ['relations'],
+    queryFn: api.relations.list,
+    staleTime: 60_000,
+  })
+
+  const personById = useMemo(() => new Map(persons.map(p => [p.id, p])), [persons])
+
+  const parentsOf = useMemo(() => {
+    const map = new Map<number, string[]>()
+    for (const rel of relations) {
+      if (rel.type !== 'parent') continue
+      const name = personById.get(rel.person_a_id)?.name
+      if (!name) continue
+      const list = map.get(rel.person_b_id) ?? []; list.push(name); map.set(rel.person_b_id, list)
+    }
+    return map
+  }, [relations, personById])
+
+  const spousesOf = useMemo(() => {
+    const map = new Map<number, string[]>()
+    for (const rel of relations) {
+      if (rel.type !== 'spouse') continue
+      const nA = personById.get(rel.person_a_id)?.name
+      const nB = personById.get(rel.person_b_id)?.name
+      if (nA) { const l = map.get(rel.person_b_id) ?? []; l.push(nA); map.set(rel.person_b_id, l) }
+      if (nB) { const l = map.get(rel.person_a_id) ?? []; l.push(nB); map.set(rel.person_a_id, l) }
+    }
+    return map
+  }, [relations, personById])
+
+  const childrenOf = useMemo(() => {
+    const map = new Map<number, string[]>()
+    for (const rel of relations) {
+      if (rel.type !== 'parent') continue
+      const name = personById.get(rel.person_b_id)?.name
+      if (!name) continue
+      const list = map.get(rel.person_a_id) ?? []; list.push(name); map.set(rel.person_a_id, list)
+    }
+    return map
+  }, [relations, personById])
+
+  const filteredPersons = useMemo(() => {
+    const q = personSearch.trim().toLowerCase()
+    if (!q) return persons
+    return persons.filter(p =>
+      p.name?.toLowerCase().includes(q) ||
+      p.first_name?.toLowerCase().includes(q) ||
+      p.last_name?.toLowerCase().includes(q)
+    )
+  }, [persons, personSearch])
 
   const faceIds = faces.map(f => f.id)
 
@@ -2020,6 +2080,26 @@ function AssignFacesOverlay({
     }
   }
 
+  async function assignToPerson(person: PersonFull) {
+    if (busy) return
+    setBusy(true)
+    try {
+      if (person.clusters.length > 0) {
+        // Add to the person's existing cluster
+        const clusterId = person.clusters[0].id
+        await api.face.batchAssign(faceIds, clusterId)
+        await finishWithSuggestions(clusterId, person.name)
+      } else {
+        // Create a new unnamed cluster with these faces, then link it to the person
+        const result = await api.cluster.create(faceIds)
+        await api.cluster.linkPerson(result.cluster_id, person.id)
+        await finishWithSuggestions(result.cluster_id, person.name)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (suggestions) {
     return (
       <SuggestionsPanel
@@ -2040,12 +2120,13 @@ function AssignFacesOverlay({
     >
       <div
         className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col"
-        style={{ maxHeight: '80vh' }}
+        style={{ maxHeight: '85vh' }}
         onClick={e => e.stopPropagation()}
       >
-        <div className="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between">
+        {/* Header */}
+        <div className="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between shrink-0">
           <h3 className="text-sm font-semibold text-zinc-200">
-            Assign {faces.length} face{faces.length !== 1 ? 's' : ''} to cluster
+            Assign {faces.length} face{faces.length !== 1 ? 's' : ''}
           </h3>
           <button
             onClick={onClose}
@@ -2055,108 +2136,214 @@ function AssignFacesOverlay({
           </button>
         </div>
 
-        <div className="overflow-y-auto flex-1 p-5 space-y-5">
-          {/* Selected face thumbnails */}
+        {/* Face thumbnails + tab toggle */}
+        <div className="px-5 pt-4 pb-3 border-b border-zinc-800/60 shrink-0 space-y-3">
           <div className="flex flex-wrap gap-1.5">
-            {faces.slice(0, 20).map(f => (
-              <img
-                key={f.id}
-                src={api.faceThumbnailUrl(f.id, 56)}
-                alt=""
-                className="w-10 h-10 rounded-md object-cover"
-              />
+            {faces.slice(0, 24).map(f => (
+              <img key={f.id} src={api.faceThumbnailUrl(f.id, 56)} alt=""
+                className="w-10 h-10 rounded-lg object-cover ring-1 ring-zinc-700" />
             ))}
-            {faces.length > 20 && (
-              <div className="w-10 h-10 rounded-md bg-zinc-800 flex items-center justify-center text-xs text-zinc-500">
-                +{faces.length - 20}
+            {faces.length > 24 && (
+              <div className="w-10 h-10 rounded-lg bg-zinc-800 flex items-center justify-center text-xs text-zinc-500">
+                +{faces.length - 24}
               </div>
             )}
           </div>
 
-          {/* Create new cluster */}
-          {!showNewCluster ? (
+          {/* Toggle */}
+          <div className="flex gap-0.5 bg-zinc-800 rounded-lg p-0.5 w-fit">
             <button
-              onClick={() => setShowNewCluster(true)}
-              className="w-full flex items-center justify-center gap-2 border border-dashed border-zinc-600 hover:border-brand-400 hover:text-brand-400 rounded-xl py-3 text-sm text-zinc-400 transition-colors"
+              onClick={() => setTab('cluster')}
+              className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${tab === 'cluster' ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
             >
-              <span className="text-lg leading-none">+</span> New cluster
+              Cluster
             </button>
-          ) : (
-            <div className="bg-zinc-800/60 border border-zinc-700 rounded-xl p-4 space-y-3">
-              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                New cluster
-              </p>
-              <NameEditor value={nameParts} onChange={setNameParts} autoFocus size="md" />
-              <div className="flex justify-end gap-2">
+            <button
+              onClick={() => { setTab('person'); setShowNewCluster(false) }}
+              className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${tab === 'person' ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              Genealogy person
+            </button>
+          </div>
+        </div>
+
+        {/* Scrollable content */}
+        <div className="overflow-y-auto flex-1">
+
+          {/* ── Cluster tab ── */}
+          {tab === 'cluster' && (
+            <div className="p-5 space-y-5">
+              {/* Create new cluster */}
+              {!showNewCluster ? (
                 <button
-                  onClick={() => { setShowNewCluster(false); setNameParts({ title: '', last_name: '', first_name: '', middle_name: '', nickname: '' }) }}
-                  className="px-4 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-sm font-medium rounded-lg transition-colors"
+                  onClick={() => setShowNewCluster(true)}
+                  className="w-full flex items-center justify-center gap-2 border border-dashed border-zinc-600 hover:border-brand-400 hover:text-brand-400 rounded-xl py-3 text-sm text-zinc-400 transition-colors"
                 >
-                  Cancel
+                  <span className="text-lg leading-none">+</span> New cluster
                 </button>
-                <button
-                  onClick={createAndAssign}
-                  disabled={busy}
-                  className="px-4 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
-                >
-                  {busy ? '…' : 'Create'}
-                </button>
-              </div>
+              ) : (
+                <div className="bg-zinc-800/60 border border-zinc-700 rounded-xl p-4 space-y-3">
+                  <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">New cluster</p>
+                  <NameEditor value={nameParts} onChange={setNameParts} autoFocus size="md" />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => { setShowNewCluster(false); setNameParts({ title: '', last_name: '', first_name: '', middle_name: '', nickname: '' }) }}
+                      className="px-4 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-sm font-medium rounded-lg transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={createAndAssign}
+                      disabled={busy}
+                      className="px-4 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+                    >
+                      {busy ? '…' : 'Create'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Existing clusters */}
+              {allClusters.length > 0 && (
+                <div className="space-y-2.5">
+                  <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                    Or assign to existing cluster
+                  </p>
+                  <input
+                    type="search"
+                    value={clusterSearch}
+                    onChange={e => setClusterSearch(e.target.value)}
+                    placeholder="Search by name…"
+                    className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400"
+                  />
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                    {visibleClusters.map(c => (
+                      <button
+                        key={c.id}
+                        onClick={() => assignToCluster(c.id, c.person_name)}
+                        disabled={busy}
+                        className="bg-zinc-800 border border-zinc-700 rounded-xl overflow-hidden hover:border-brand-400 transition-all text-left disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-400"
+                      >
+                        <div className="grid grid-cols-2 gap-px bg-zinc-700">
+                          {Array.from({ length: 4 }).map((_, i) => {
+                            const faceId = c.preview_face_ids[i]
+                            return (
+                              <div key={i} className="aspect-square bg-zinc-800 overflow-hidden">
+                                {faceId != null && (
+                                  <img src={api.faceThumbnailUrl(faceId)} alt="" loading="lazy" className="w-full h-full object-cover" />
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                        <div className="px-2 py-1.5">
+                          {c.person_name ? (
+                            <div className="text-xs font-semibold text-zinc-100 truncate">{c.person_name}</div>
+                          ) : (
+                            <div className="text-xs text-zinc-400 truncate">Cluster {String(c.label).padStart(3, '0')}</div>
+                          )}
+                          <div className="text-xs text-zinc-600 tabular-nums">{c.face_count} faces</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* Assign to existing cluster */}
-          {allClusters.length > 0 && (
-            <div className="space-y-2.5">
-              <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                Or assign to existing cluster
-              </p>
-              <input
-                type="search"
-                value={clusterSearch}
-                onChange={e => setClusterSearch(e.target.value)}
-                placeholder="Search by name…"
-                className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400"
-              />
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-                {visibleClusters.map(c => (
-                  <button
-                    key={c.id}
-                    onClick={() => assignToCluster(c.id, c.person_name)}
-                    disabled={busy}
-                    className="bg-zinc-800 border border-zinc-700 rounded-xl overflow-hidden hover:border-brand-400 transition-all text-left disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-brand-400"
-                  >
-                    <div className="grid grid-cols-2 gap-px bg-zinc-700">
-                      {Array.from({ length: 4 }).map((_, i) => {
-                        const faceId = c.preview_face_ids[i]
-                        return (
-                          <div key={i} className="aspect-square bg-zinc-800 overflow-hidden">
-                            {faceId != null && (
-                              <img
-                                src={api.faceThumbnailUrl(faceId)}
-                                alt=""
-                                loading="lazy"
-                                className="w-full h-full object-cover"
-                              />
-                            )}
+          {/* ── Person tab ── */}
+          {tab === 'person' && (
+            <div className="flex flex-col h-full">
+              <div className="px-5 pt-4 pb-2 shrink-0">
+                <input
+                  type="search"
+                  value={personSearch}
+                  onChange={e => setPersonSearch(e.target.value)}
+                  autoFocus
+                  placeholder="Search by name…"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3.5 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400"
+                />
+                {filteredPersons.length === 0 && (
+                  <p className="text-sm text-zinc-600 italic text-center py-6">No persons found.</p>
+                )}
+              </div>
+              <div className="overflow-y-auto flex-1 px-3 pb-4">
+                {filteredPersons.map(p => {
+                  const hasClusters = p.clusters.length > 0
+                  const lifespan = _lifespan(p)
+                  const parents  = parentsOf.get(p.id)  ?? []
+                  const spouses  = spousesOf.get(p.id)  ?? []
+                  const children = childrenOf.get(p.id) ?? []
+                  const init = displayInitials(p)
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => assignToPerson(p)}
+                      disabled={busy}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:bg-zinc-800/70 transition-colors border border-transparent hover:border-zinc-700/60 disabled:opacity-50 group"
+                    >
+                      {/* Avatar */}
+                      <div className="shrink-0">
+                        {p.thumbnail_face_id ? (
+                          <img src={api.faceThumbnailUrl(p.thumbnail_face_id, 64)} alt=""
+                            className="w-10 h-10 rounded-full object-cover" />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center text-sm font-bold text-zinc-300">
+                            {init}
                           </div>
-                        )
-                      })}
-                    </div>
-                    <div className="px-2 py-1.5">
-                      {c.person_name ? (
-                        <div className="text-xs font-semibold text-zinc-100 truncate">
-                          {c.person_name}
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-sm font-medium text-zinc-200 truncate">{displayPersonName(p, nameOrder)}</span>
+                          {p.sex && <span className="text-[10px] text-zinc-600 shrink-0">{p.sex === 'M' ? '♂' : '♀'}</span>}
                         </div>
-                      ) : (
-                        <div className="text-xs text-zinc-400 truncate">
-                          Cluster {String(c.label).padStart(3, '0')}
-                        </div>
-                      )}
-                      <div className="text-xs text-zinc-600 tabular-nums">{c.face_count} faces</div>
-                    </div>
-                  </button>
-                ))}
+                        {lifespan && (
+                          <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{lifespan}</p>
+                        )}
+                        {parents.length > 0 && (
+                          <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                            <span className="text-zinc-700">↑ </span>{parents.join(', ')}
+                          </p>
+                        )}
+                        {spouses.length > 0 && (
+                          <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                            <span className="text-zinc-700">♥ </span>{spouses.join(', ')}
+                          </p>
+                        )}
+                        {children.length > 0 && (
+                          <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                            <span className="text-zinc-700">↓ </span>
+                            {children.slice(0, 3).join(', ')}{children.length > 3 ? ` +${children.length - 3}` : ''}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Cluster status badge */}
+                      <div className="shrink-0 ml-1">
+                        {hasClusters ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-brand-950/60 text-brand-400 border border-brand-800/50 rounded-full px-2 py-0.5">
+                            <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20">
+                              <circle cx="10" cy="10" r="4" />
+                            </svg>
+                            Has cluster
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-zinc-800 text-zinc-500 border border-zinc-700/50 rounded-full px-2 py-0.5">
+                            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 20 20" stroke="currentColor" strokeWidth={2}>
+                              <circle cx="10" cy="10" r="4" />
+                              <path strokeLinecap="round" d="M10 6v8M6 10h8" />
+                            </svg>
+                            New cluster
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
             </div>
           )}

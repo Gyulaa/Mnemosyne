@@ -164,11 +164,11 @@ export const api = {
       if (!res.ok) throw new Error(await res.text())
       return res.json()
     },
-    confirmGedcomImport: async (token: string, decisions: GedcomImportDecision[]): Promise<GedcomImportStats> => {
+    confirmGedcomImport: async (token: string, decisions: GedcomImportDecision[], options?: Record<string, boolean>): Promise<GedcomImportStats> => {
       const res = await fetch(`${BASE}/import/gedcom/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, decisions }),
+        body: JSON.stringify({ token, decisions, options: options ?? {} }),
       })
       if (!res.ok) throw new Error(await res.text())
       return res.json()
@@ -180,7 +180,7 @@ export const api = {
     },
     gedcomRollbackStatus: (): Promise<GedcomRollbackStatus> =>
       fetchJson<GedcomRollbackStatus>(`${BASE}/import/gedcom/rollback-status`),
-    importZip: async (file: File): Promise<Project> => {
+    importZip: async (file: File): Promise<Project & { images_reused: number; images_new: number }> => {
       const fd = new FormData()
       fd.append('file', file)
       const res = await fetch(`${BASE}/projects/import`, { method: 'POST', body: fd })
@@ -400,6 +400,11 @@ export const api = {
       fetchJson<PersonEvent[]>(`${BASE}/images/${imageId}/events`),
     patchEventPerson: (epId: number, fields: { featured?: boolean }) =>
       patch<PersonEvent>(`${BASE}/event-persons/${epId}`, fields),
+    exportImagesZip: async (eventId: number, signal?: AbortSignal): Promise<Blob> => {
+      const res = await fetch(`${BASE}/events/${eventId}/images/zip`, { signal })
+      if (!res.ok) throw new Error(await res.text())
+      return res.blob()
+    },
   },
   faceThumbnailUrl: (id: number, size = 160) =>
     `${BASE}/faces/${id}/thumbnail?size=${size}`,

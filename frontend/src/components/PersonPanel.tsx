@@ -1174,6 +1174,10 @@ function detailsFromPerson(p: PersonFull) {
     death_place: p.death_place ?? '',
     sex: (p.sex ?? '') as '' | 'M' | 'F',
     occupation: p.occupation ?? '',
+    religion: p.religion ?? '',
+    nationality: p.nationality ?? '',
+    cause_of_death: p.cause_of_death ?? '',
+    education: p.education ?? '',
     christening_date: p.christening_date ?? (p.christening_year ? String(p.christening_year) : ''),
     christening_place: p.christening_place ?? '',
     burial_date: p.burial_date ?? (p.burial_year ? String(p.burial_year) : ''),
@@ -1445,7 +1449,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     if (!mergePending || merging) return
     setMerging(true)
     try {
-      const surviving = await api.persons.mergeInto(person.id, mergePending.id)
+      const surviving = await api.persons.mergeInto(mergePending.id, person.id)
       qc.invalidateQueries({ queryKey: ['persons'] })
       qc.invalidateQueries({ queryKey: ['relations'] })
       qc.invalidateQueries({ queryKey: ['events'] })
@@ -1482,6 +1486,10 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
       death_place: detailsData.death_place.trim() || null,
       sex: (detailsData.sex || null) as 'M' | 'F' | null,
       occupation: detailsData.occupation.trim() || null,
+      religion: detailsData.religion.trim() || null,
+      nationality: detailsData.nationality.trim() || null,
+      cause_of_death: detailsData.cause_of_death.trim() || null,
+      education: detailsData.education.trim() || null,
       christening_date: detailsData.christening_date || null,
       christening_place: detailsData.christening_place.trim() || null,
       burial_date: detailsData.burial_date || null,
@@ -1526,7 +1534,8 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   const hasDetails = !!(
     person.birth_date || person.birth_year || person.birth_place ||
     person.death_date || person.death_year || person.death_place ||
-    person.sex || person.occupation ||
+    person.sex || person.occupation || person.religion || person.nationality ||
+    person.cause_of_death || person.education ||
     person.christening_date || person.christening_place ||
     person.burial_date || person.burial_place
   )
@@ -1603,12 +1612,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 shadow-2xl w-72 text-center">
               <p className="text-zinc-100 font-medium mb-1 text-sm">Confirm merge</p>
               <p className="text-zinc-400 text-xs mb-1 leading-relaxed">
-                <span className="text-zinc-200">{displayPersonName(person, nameOrder)}</span>
-                {' '}will be merged into:
+                <span className="text-zinc-200">{displayPersonName(mergePending, nameOrder)}</span>
+                {' '}will be merged into{' '}
+                <span className="text-zinc-200">{displayPersonName(person, nameOrder)}</span>.
               </p>
-              <p className="text-zinc-200 text-sm font-medium mb-1">{displayPersonName(mergePending, nameOrder)}</p>
               <p className="text-zinc-600 text-[10px] mb-4 leading-relaxed">
-                Existing fields on the target are kept. Relationships, events, and documents are transferred. The source person is deleted.
+                <span className="text-zinc-400">{displayPersonName(person, nameOrder)}</span> survives.
+                {' '}Relationships, clusters, events and documents are transferred from the other person, which is then deleted.
               </p>
               <div className="flex gap-2 justify-center">
                 <button onClick={() => setMergePending(null)}
@@ -1764,6 +1774,34 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   </div>
                   <CitationsInline personId={person.id} fact="occupation" citations={citationsFor('occupation')} sources={sources} onMutated={invalidateCitations} />
                 </div>
+                {/* Education */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">Education</span>
+                  <input value={detailsData.education} onChange={e => setDetailsData(d => ({ ...d, education: e.target.value }))}
+                    placeholder="e.g. university, degree…"
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                </div>
+                {/* Religion */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">Religion</span>
+                  <input value={detailsData.religion} onChange={e => setDetailsData(d => ({ ...d, religion: e.target.value }))}
+                    placeholder="e.g. Catholic, Protestant…"
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                </div>
+                {/* Nationality */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">Nationality</span>
+                  <input value={detailsData.nationality} onChange={e => setDetailsData(d => ({ ...d, nationality: e.target.value }))}
+                    placeholder="e.g. Hungarian, German…"
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                </div>
+                {/* Cause of death */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">Cause of death</span>
+                  <input value={detailsData.cause_of_death} onChange={e => setDetailsData(d => ({ ...d, cause_of_death: e.target.value }))}
+                    placeholder="e.g. heart attack…"
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                </div>
                 {/* Christening */}
                 <div>
                   <span className="text-xs text-zinc-500 block mb-1">Christening</span>
@@ -1846,6 +1884,30 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                     <div className="ml-0">
                       <CitationsInline personId={person.id} fact="occupation" citations={citationsFor('occupation')} sources={sources} onMutated={invalidateCitations} />
                     </div>
+                  </div>
+                )}
+                {person.education && (
+                  <div className="flex gap-2 text-xs">
+                    <span className="text-zinc-500 w-20 shrink-0">Education</span>
+                    <span className="text-zinc-300">{person.education}</span>
+                  </div>
+                )}
+                {person.religion && (
+                  <div className="flex gap-2 text-xs">
+                    <span className="text-zinc-500 w-20 shrink-0">Religion</span>
+                    <span className="text-zinc-300">{person.religion}</span>
+                  </div>
+                )}
+                {person.nationality && (
+                  <div className="flex gap-2 text-xs">
+                    <span className="text-zinc-500 w-20 shrink-0">Nationality</span>
+                    <span className="text-zinc-300">{person.nationality}</span>
+                  </div>
+                )}
+                {person.cause_of_death && (
+                  <div className="flex gap-2 text-xs">
+                    <span className="text-zinc-500 w-20 shrink-0">Cause of death</span>
+                    <span className="text-zinc-300">{person.cause_of_death}</span>
                   </div>
                 )}
                 {(person.christening_date || person.christening_place) && (

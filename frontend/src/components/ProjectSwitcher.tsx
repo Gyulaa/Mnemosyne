@@ -26,6 +26,7 @@ export default function ProjectSwitcher({
   const [renameVal, setRenameVal] = useState('')
   const [exporting, setExporting] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [importDedup, setImportDedup] = useState<{ reused: number; added: number } | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
   const [showMergeModal, setShowMergeModal] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -115,10 +116,14 @@ export default function ProjectSwitcher({
     const file = e.target.files?.[0]
     if (!file) return
     setImporting(true)
+    setImportDedup(null)
     try {
-      await api.project.importZip(file)
+      const result = await api.project.importZip(file)
       setOpen(false)
       qc.invalidateQueries()
+      if (result.images_reused > 0 || result.images_new > 0) {
+        setImportDedup({ reused: result.images_reused, added: result.images_new })
+      }
     } catch (e) {
       alert(`Import failed: ${e}`)
     } finally {
@@ -159,6 +164,28 @@ export default function ProjectSwitcher({
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
+
+      {/* Image dedup toast — shown after successful project import */}
+      {importDedup && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[500] flex items-center gap-3 px-4 py-3 rounded-xl bg-zinc-800 border border-zinc-700 shadow-2xl text-sm text-zinc-200 animate-fade-in">
+          <svg className="w-4 h-4 text-brand-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span>
+            {importDedup.reused > 0 && (
+              <><span className="text-brand-300 font-medium">{importDedup.reused}</span> {importDedup.reused === 1 ? 'photo' : 'photos'} already on your machine — no duplicate saved.{' '}</>
+            )}
+            {importDedup.added > 0 && (
+              <><span className="text-zinc-100 font-medium">{importDedup.added}</span> new {importDedup.added === 1 ? 'photo' : 'photos'} imported.</>
+            )}
+          </span>
+          <button onClick={() => setImportDedup(null)} className="ml-1 text-zinc-500 hover:text-zinc-300 transition-colors">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       {showMergeModal && (
         <MergeModal

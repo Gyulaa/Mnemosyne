@@ -2,6 +2,7 @@ import io
 import json
 import mimetypes
 import os
+import re
 import string
 import unicodedata
 import uuid
@@ -227,9 +228,15 @@ async def import_project(file: UploadFile = File(...)):
         raise HTTPException(400, f"Import failed: {e}")
 
     try:
-        return project_manager.switch_project(info["id"])
+        project = project_manager.switch_project(info["id"])
     except FileNotFoundError:
         raise HTTPException(500, "Import succeeded but could not activate project")
+
+    return {
+        **project,
+        "images_reused": info.get("images_reused", 0),
+        "images_new":    info.get("images_new",    0),
+    }
 
 
 # ── GEDCOM import ─────────────────────────────────────────────────────────────
@@ -304,6 +311,7 @@ def gedcom_import_confirm(body: dict):
 
     token     = body.get('token', '')
     decisions = body.get('decisions', [])
+    options   = body.get('options', {})
 
     session = gi.get_session(token)
     if not session:
@@ -324,6 +332,7 @@ def gedcom_import_confirm(body: dict):
             db_path   = db_path,
             docs_dir  = docs_dir,
             zip_bytes = session['zip_bytes'],
+            options   = options,
         )
         gi.store_rollback(db_path, rollback)
     except Exception as e:
@@ -1529,6 +1538,10 @@ def _person_dict(p: "DBPerson", db: Session) -> dict:
         "burial_place": p.burial_place,
         "burial_date": p.burial_date,
         "occupation": p.occupation,
+        "religion": p.religion,
+        "nationality": p.nationality,
+        "cause_of_death": p.cause_of_death,
+        "education": p.education,
         "notes": p.notes,
         "hidden_auto_events": json.loads(p.hidden_auto_events) if p.hidden_auto_events else [],
         "thumbnail_face_id": thumb_id,
@@ -1625,7 +1638,8 @@ _PERSON_FIELDS = [
     "christening_year", "christening_place", "christening_date",
     "death_year", "death_place", "death_date",
     "burial_year", "burial_place", "burial_date",
-    "occupation", "notes", "hidden_auto_events",
+    "occupation", "religion", "nationality", "cause_of_death", "education",
+    "notes", "hidden_auto_events",
 ]
 
 
@@ -1701,7 +1715,8 @@ def merge_persons(source_id: int, target_id: int, db: Session = Depends(get_db))
         "christening_year", "christening_place", "christening_date",
         "death_year", "death_place", "death_date",
         "burial_year", "burial_place", "burial_date",
-        "occupation", "thumbnail_face_id",
+        "occupation", "religion", "nationality", "cause_of_death", "education",
+        "thumbnail_face_id",
     ]
     for f in bio_fields:
         if getattr(tgt, f) is None and getattr(src, f) is not None:
@@ -1724,32 +1739,42 @@ def merge_persons(source_id: int, target_id: int, db: Session = Depends(get_db))
     )
     db.expire(src)  # force reload of src.clusters from DB (now empty) before delete
 
-    # 3. Transfer relations (avoid self-loops and duplicates)
-    def _rel_key(rel):
-        return (rel.type, min(rel.person_a_id, rel.person_b_id), max(rel.person_a_id, rel.person_b_id))
+    # 3. Transfer relations using raw SQL to avoid ORM cascade-delete on db.delete(src).
+    # The Person model has cascade="all, delete-orphan" on relations_as_a/b, so when
+    # db.delete(src) is called, SQLAlchemy lazy-loads src's relations from the DB and
+    # cascade-deletes them — even if we already updated the FK columns via ORM objects.
+    # Using raw SQL + db.expire(src) ensures the ORM sees an empty collection at delete time.
+    def _rkey(type_, a, b):
+        return (type_, min(a, b), max(a, b))
 
-    existing_rel_keys = set()
-    for rel in db.query(DBRelation).filter(
-        (DBRelation.person_a_id == target_id) | (DBRelation.person_b_id == target_id)
-    ).all():
-        existing_rel_keys.add(_rel_key(rel))
+    existing_rel_keys: set = set()
+    for row in db.execute(
+        text("SELECT type, person_a_id, person_b_id FROM relations WHERE person_a_id=:tid OR person_b_id=:tid"),
+        {"tid": target_id}
+    ).fetchall():
+        existing_rel_keys.add(_rkey(row[0], row[1], row[2]))
 
-    src_relations = db.query(DBRelation).filter(
-        (DBRelation.person_a_id == source_id) | (DBRelation.person_b_id == source_id)
-    ).all()
-    for rel in src_relations:
-        new_a = target_id if rel.person_a_id == source_id else rel.person_a_id
-        new_b = target_id if rel.person_b_id == source_id else rel.person_b_id
-        if new_a == new_b:  # self-loop
-            db.delete(rel)
+    for row in db.execute(
+        text("SELECT id, type, person_a_id, person_b_id FROM relations WHERE person_a_id=:sid OR person_b_id=:sid"),
+        {"sid": source_id}
+    ).fetchall():
+        rid, rtype, ra, rb = row[0], row[1], row[2], row[3]
+        new_a = target_id if ra == source_id else ra
+        new_b = target_id if rb == source_id else rb
+        if new_a == new_b:
+            db.execute(text("DELETE FROM relations WHERE id=:id"), {"id": rid})
             continue
-        key = (rel.type, min(new_a, new_b), max(new_a, new_b))
+        key = _rkey(rtype, new_a, new_b)
         if key in existing_rel_keys:
-            db.delete(rel)
+            db.execute(text("DELETE FROM relations WHERE id=:id"), {"id": rid})
         else:
-            rel.person_a_id = new_a
-            rel.person_b_id = new_b
+            db.execute(
+                text("UPDATE relations SET person_a_id=:a, person_b_id=:b WHERE id=:id"),
+                {"a": new_a, "b": new_b, "id": rid}
+            )
             existing_rel_keys.add(key)
+
+    db.expire(src)  # clear ORM's in-memory relation collections so cascade sees nothing to delete
 
     # 4. Transfer event_persons (avoid duplicate person in same event)
     tgt_event_ids = {
@@ -2732,6 +2757,36 @@ def delete_event(event_id: int, db: Session = Depends(get_db)):
     db.delete(ev)
     db.commit()
     return {"ok": True}
+
+
+@app.get("/api/events/{event_id}/images/zip")
+def export_event_images_zip(event_id: int, db: Session = Depends(get_db)):
+    """Download all images attached to an event as a ZIP archive."""
+    ev = db.get(DBEvent, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    if not ev.event_images:
+        raise HTTPException(404, "Event has no images")
+
+    buf = io.BytesIO()
+    with __import__("zipfile").ZipFile(buf, "w", __import__("zipfile").ZIP_DEFLATED, allowZip64=True) as zf:
+        for ei in ev.event_images:
+            img = ei.image
+            if not img:
+                continue
+            p = Path(img.path)
+            if p.exists():
+                zf.write(str(p), f"{img.id}_{p.name}")
+    buf.seek(0)
+
+    safe_title = re.sub(r'[^\w\s-]', '', ev.title or 'event').strip().replace(' ', '_') or 'event'
+    filename = f"event_{event_id}_{safe_title}.zip"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
+    )
 
 
 @app.post("/api/events/{event_id}/images")

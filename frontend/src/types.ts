@@ -149,6 +149,10 @@ export interface PersonFull {
   burial_place: string | null
   burial_date: string | null
   occupation: string | null
+  religion: string | null
+  nationality: string | null
+  cause_of_death: string | null
+  education: string | null
   notes: string | null
   hidden_auto_events: string[]
   thumbnail_face_id: number | null
