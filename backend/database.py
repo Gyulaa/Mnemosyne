@@ -45,6 +45,20 @@ class Cluster(Base):
     person = relationship("Person", back_populates="clusters")
 
 
+class PersonSubcluster(Base):
+    """Internal sub-cluster centroid for a named person.
+    Computed automatically after clustering/linking; used to improve
+    future centroid-matching across age-spanning face sets."""
+    __tablename__ = "person_subclusters"
+    id         = Column(Integer, primary_key=True, index=True)
+    person_id  = Column(Integer, ForeignKey("persons.id", ondelete="CASCADE"), nullable=False, index=True)
+    centroid   = Column(LargeBinary, nullable=False)   # float32 normalized embedding
+    face_count = Column(Integer, nullable=False)
+    year_min   = Column(Integer, nullable=True)
+    year_max   = Column(Integer, nullable=True)
+    person     = relationship("Person", back_populates="subclusters")
+
+
 class Person(Base):
     __tablename__ = "persons"
     id = Column(Integer, primary_key=True, index=True)
@@ -72,6 +86,7 @@ class Person(Base):
     hidden_auto_events = Column(String, nullable=True)  # JSON list of suppressed auto-event types
     thumbnail_face_id = Column(Integer, nullable=True)
     clusters = relationship("Cluster", back_populates="person")
+    subclusters = relationship("PersonSubcluster", back_populates="person", cascade="all, delete-orphan")
     relations_as_a = relationship("Relation", foreign_keys="Relation.person_a_id", back_populates="person_a", cascade="all, delete-orphan")
     relations_as_b = relationship("Relation", foreign_keys="Relation.person_b_id", back_populates="person_b", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="person", cascade="all, delete-orphan")
@@ -552,4 +567,21 @@ def init_db_schema(engine):
                 pass
             conn.commit()
             conn.execute(text("UPDATE schema_version SET version = 3"))
+            conn.commit()
+
+        # v3 → v4: person_subclusters for temporal-drift-aware centroid matching
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 4:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS person_subclusters (
+                    id         INTEGER PRIMARY KEY,
+                    person_id  INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+                    centroid   BLOB NOT NULL,
+                    face_count INTEGER NOT NULL,
+                    year_min   INTEGER,
+                    year_max   INTEGER
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_person_subclusters_person_id ON person_subclusters(person_id)"))
+            conn.execute(text("UPDATE schema_version SET version = 4"))
             conn.commit()

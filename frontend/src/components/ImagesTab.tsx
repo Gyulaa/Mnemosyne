@@ -71,7 +71,11 @@ export default function ImagesTab({
 
   // Direct image open from external navigation (e.g. "Open in Images" from Clusters)
   const [pendingOpenImageId, setPendingOpenImageId] = useState<number | null>(null)
-  const prevOpenKey = useRef<number | null>(null)
+  const prevOpenKey  = useRef<number | null>(null)
+  const isDragging   = useRef(false)
+  const dragAction   = useRef<'add' | 'remove'>('add')
+  const pressTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const wasLongPress = useRef(false)
   useEffect(() => {
     if (!openImageTarget || openImageTarget.key === prevOpenKey.current) return
     prevOpenKey.current = openImageTarget.key
@@ -88,6 +92,15 @@ export default function ImagesTab({
     setPendingOpenImageId(openImageTarget.imageId)
     onImageTargetConsumed?.()
   }, [openImageTarget?.key]) // eslint-disable-line
+
+  useEffect(() => {
+    const stop = () => {
+      isDragging.current = false
+      if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null }
+    }
+    window.addEventListener('mouseup', stop)
+    return () => window.removeEventListener('mouseup', stop)
+  }, [])
 
   const [exportingZip, setExportingZip] = useState(false)
   const [exportingSelected, setExportingSelected] = useState(false)
@@ -261,6 +274,42 @@ export default function ImagesTab({
       setPendingOpenImageId(null)
     }
   }, [pageItems, pendingOpenImageId, isFetching])
+
+  function handleDragMouseDown(id: number) {
+    return (e: React.MouseEvent) => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      wasLongPress.current = false
+      pressTimer.current = setTimeout(() => {
+        pressTimer.current = null
+        wasLongPress.current = true
+        isDragging.current = true
+        const adding = !selected.has(id)
+        dragAction.current = adding ? 'add' : 'remove'
+        setSelected(prev => {
+          const next = new Set(prev)
+          if (adding) next.add(id); else next.delete(id)
+          return next
+        })
+      }, 280)
+    }
+  }
+
+  function handleDragMouseEnter(id: number) {
+    if (!isDragging.current) return
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (dragAction.current === 'add') next.add(id); else next.delete(id)
+      return next
+    })
+  }
+
+  function dragPreview(fn: () => void): () => void {
+    return () => {
+      if (wasLongPress.current) { wasLongPress.current = false; return }
+      fn()
+    }
+  }
 
   const filterTabs: { key: FilterType; label: string; count: number | undefined }[] = [
     { key: 'all',     label: 'All',       count: counts ? counts.done + counts.no_face + counts.error + counts.pending : undefined },
@@ -521,7 +570,9 @@ export default function ImagesTab({
                   hasEvent={imagesWithEvents.has(img.id)}
                   onToggle={() => toggleItem(img.id)}
                   onDelete={() => deleteSingle(img.id)}
-                  onPreview={() => setPreviewIdx(i)}
+                  onPreview={dragPreview(() => setPreviewIdx(i))}
+                  onDragMouseDown={handleDragMouseDown(img.id)}
+                  onDragMouseEnter={() => handleDragMouseEnter(img.id)}
                 />
               ))}
             </div>
@@ -545,7 +596,9 @@ export default function ImagesTab({
                 hasEvent={imagesWithEvents.has(img.id)}
                 onToggle={() => toggleItem(img.id)}
                 onDelete={() => deleteSingle(img.id)}
-                onPreview={() => setPreviewIdx(i)}
+                onPreview={dragPreview(() => setPreviewIdx(i))}
+                onDragMouseDown={handleDragMouseDown(img.id)}
+                onDragMouseEnter={() => handleDragMouseEnter(img.id)}
               />
             ))}
           </div>
@@ -644,6 +697,8 @@ function ImageCard({
   onToggle,
   onDelete,
   onPreview,
+  onDragMouseDown,
+  onDragMouseEnter,
 }: {
   img: ImageItem
   selected: boolean
@@ -651,13 +706,19 @@ function ImageCard({
   onToggle: () => void
   onDelete: () => void
   onPreview: () => void
+  onDragMouseDown: (e: React.MouseEvent) => void
+  onDragMouseEnter: () => void
 }) {
   const meta = STATUS_META[img.scan_status]
 
   return (
-    <div className={`relative rounded-xl overflow-hidden group bg-zinc-900 border transition-all ${
-      selected ? 'border-brand-400 ring-1 ring-brand-400/50' : 'border-zinc-800 hover:border-zinc-600'
-    }`}>
+    <div
+      className={`relative rounded-xl overflow-hidden group bg-zinc-900 border transition-all ${
+        selected ? 'border-brand-400 ring-1 ring-brand-400/50' : 'border-zinc-800 hover:border-zinc-600'
+      }`}
+      onMouseDown={onDragMouseDown}
+      onMouseEnter={onDragMouseEnter}
+    >
       {/* Image */}
       <button
         onClick={onPreview}
@@ -675,7 +736,7 @@ function ImageCard({
       <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all pointer-events-none" />
 
       {/* Checkbox */}
-      <div className="absolute top-2 left-2">
+      <div className="absolute top-2 left-2" onMouseDown={e => e.stopPropagation()}>
         <input
           type="checkbox"
           checked={selected}
@@ -704,6 +765,7 @@ function ImageCard({
       {/* Delete button */}
       <button
         onClick={e => { e.stopPropagation(); onDelete() }}
+        onMouseDown={e => e.stopPropagation()}
         className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-black/60 hover:bg-red-900/80 text-zinc-400 hover:text-red-300 rounded-lg transition-all"
         title="Remove from database"
       >
@@ -896,6 +958,8 @@ function ImageRow({
   onToggle,
   onDelete,
   onPreview,
+  onDragMouseDown,
+  onDragMouseEnter,
 }: {
   img: ImageItem
   selected: boolean
@@ -903,6 +967,8 @@ function ImageRow({
   onToggle: () => void
   onDelete: () => void
   onPreview: () => void
+  onDragMouseDown: (e: React.MouseEvent) => void
+  onDragMouseEnter: () => void
 }) {
   const meta = STATUS_META[img.scan_status] ?? { label: img.scan_status, cls: 'bg-zinc-800 text-zinc-400 border-zinc-700' }
 
@@ -911,12 +977,15 @@ function ImageRow({
       className={`flex items-center gap-3 px-4 py-2 group transition-colors ${
         selected ? 'bg-brand-900/30' : 'hover:bg-zinc-800/40'
       }`}
+      onMouseDown={onDragMouseDown}
+      onMouseEnter={onDragMouseEnter}
     >
       <input
         type="checkbox"
         checked={selected}
         onChange={onToggle}
         onClick={e => e.stopPropagation()}
+        onMouseDown={e => e.stopPropagation()}
         className="w-4 h-4 rounded accent-brand-400 shrink-0"
       />
 
@@ -982,6 +1051,7 @@ function ImageRow({
       <div className="w-8 flex justify-center shrink-0">
         <button
           onClick={onDelete}
+          onMouseDown={e => e.stopPropagation()}
           className="opacity-0 group-hover:opacity-100 p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-900/30 rounded-lg transition-all"
           title="Remove from database (source file untouched)"
         >

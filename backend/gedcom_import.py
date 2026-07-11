@@ -358,7 +358,7 @@ def _name_norms(first: Optional[str], last: Optional[str], raw: Optional[str]) -
 def _suggest_match(indi: dict, existing: list[dict]) -> Optional[dict]:
     """Return the best-scoring existing person for this imported individual, or None."""
     indi_norms = _name_norms(indi.get('first_name'), indi.get('last_name'), indi.get('name'))
-    indi_year = indi['birth_year']
+    indi_year  = indi.get('birth_year')
     if not indi_norms:
         return None
 
@@ -367,7 +367,7 @@ def _suggest_match(indi: dict, existing: list[dict]) -> Optional[dict]:
 
     for person in existing:
         ex_norms = _name_norms(person.get('first_name'), person.get('last_name'), person.get('name'))
-        ex_year = person.get('birth_year')
+        ex_year  = person.get('birth_year')
 
         if not ex_norms or not indi_norms.intersection(ex_norms):
             continue
@@ -384,6 +384,25 @@ def _suggest_match(indi: dict, existing: list[dict]) -> Optional[dict]:
             score = 70
         else:
             score = 55   # one has year, the other doesn't
+
+        # Biographical bonuses (only activate when extra fields are available)
+        indi_bp = (indi.get('birth_place') or '').strip().lower()
+        ex_bp   = (person.get('birth_place') or '').strip().lower()
+        if indi_bp and ex_bp and indi_bp == ex_bp:
+            score += 15
+
+        indi_dy = indi.get('death_year')
+        ex_dy   = person.get('death_year')
+        if indi_dy and ex_dy:
+            if indi_dy == ex_dy:
+                score += 10
+            elif abs(indi_dy - ex_dy) <= 2:
+                score += 5
+
+        indi_dp = (indi.get('death_place') or '').strip().lower()
+        ex_dp   = (person.get('death_place') or '').strip().lower()
+        if indi_dp and ex_dp and indi_dp == ex_dp:
+            score += 5
 
         if score > best_score:
             best_score = score
@@ -436,12 +455,242 @@ def _build_relatives_map(parsed: dict) -> dict[str, list[dict]]:
     return rel_map
 
 
-def build_preview(parsed: dict, existing_persons: list[dict]) -> list[dict]:
-    """Return a per-person preview list with suggested merge decisions."""
-    rel_map = _build_relatives_map(parsed)
+def _build_gedcom_rel_maps(
+    parsed: dict,
+) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, list[str]]]:
+    """Build inc_par/inc_chi/inc_spo keyed by GEDCOM xref strings."""
+    individuals = parsed['individuals']
+    inc_par: dict[str, list[str]] = {x: [] for x in individuals}
+    inc_chi: dict[str, list[str]] = {x: [] for x in individuals}
+    inc_spo: dict[str, list[str]] = {x: [] for x in individuals}
+    for fam in parsed['families'].values():
+        husb     = fam.get('husb')
+        wife     = fam.get('wife')
+        children = [c for c in fam.get('children', []) if c in individuals]
+        if husb and wife and husb in individuals and wife in individuals:
+            inc_spo[husb].append(wife)
+            inc_spo[wife].append(husb)
+        for child in children:
+            for parent in (x for x in [husb, wife] if x and x in individuals):
+                inc_par[child].append(parent)
+                inc_chi[parent].append(child)
+    return inc_par, inc_chi, inc_spo
+
+
+def _build_existing_rel_maps(
+    relations: list[dict],
+) -> tuple[dict[int, list[int]], dict[int, list[int]], dict[int, list[int]]]:
+    """Build ex_par/ex_chi/ex_spo keyed by DB person IDs."""
+    ex_par: dict[int, list[int]] = {}
+    ex_chi: dict[int, list[int]] = {}
+    ex_spo: dict[int, list[int]] = {}
+    for rel in relations:
+        a     = rel['person_a_id']
+        b     = rel['person_b_id']
+        rtype = rel.get('type')
+        if rtype == 'parent':
+            ex_par.setdefault(b, []).append(a)
+            ex_chi.setdefault(a, []).append(b)
+        elif rtype == 'spouse':
+            ex_spo.setdefault(a, []).append(b)
+            ex_spo.setdefault(b, []).append(a)
+    return ex_par, ex_chi, ex_spo
+
+
+def _gedcom_context_score(
+    xref:       str,
+    ex_id:      int,
+    xref_remap: dict[str, int],
+    inc_par:    dict[str, list[str]],
+    inc_chi:    dict[str, list[str]],
+    inc_spo:    dict[str, list[str]],
+    ex_par:     dict[int, list[int]],
+    ex_chi:     dict[int, list[int]],
+    ex_spo:     dict[int, list[int]],
+) -> int:
+    score = 0
+    for px in inc_par.get(xref, []):
+        pex = xref_remap.get(px)
+        if pex is not None:
+            score += 2 if pex in ex_par.get(ex_id, []) else -2
+    for sx in inc_spo.get(xref, []):
+        sex = xref_remap.get(sx)
+        if sex is not None:
+            score += 3 if sex in ex_spo.get(ex_id, []) else -3
+    for cx in inc_chi.get(xref, []):
+        cex = xref_remap.get(cx)
+        if cex is not None:
+            score += 1 if cex in ex_chi.get(ex_id, []) else -1
+    return score
+
+
+def _gedcom_name_year_ok(inc_norms: set, inc_year: Optional[int], candidate: dict) -> bool:
+    ex_norms = _name_norms(
+        candidate.get('first_name'), candidate.get('last_name'), candidate.get('name')
+    )
+    if not ex_norms or not inc_norms.intersection(ex_norms):
+        return False
+    ex_year = candidate.get('birth_year')
+    if inc_year and ex_year and abs(inc_year - ex_year) > 5:
+        return False
+    return True
+
+
+def _would_create_cycle(parent_id: int, child_id: int, conn: sqlite3.Connection) -> bool:
+    """
+    Return True if making parent_id a parent of child_id would create a cycle,
+    or if parent_id was born after child_id (chronologically impossible).
+    No upper age gap limit — 100+-year-old parents are allowed.
+    """
+    rows = conn.execute(
+        "SELECT id, birth_year FROM persons WHERE id IN (?,?)", (parent_id, child_id)
+    ).fetchall()
+    years = {r[0]: r[1] for r in rows}
+    parent_year = years.get(parent_id)
+    child_year  = years.get(child_id)
+    if parent_year and child_year and parent_year > child_year:
+        return True
+
+    # Walk ancestors of parent_id upward; cycle if we reach child_id.
+    visited: set[int] = set()
+    queue:   list[int] = [parent_id]
+    while queue:
+        pid = queue.pop()
+        if pid in visited:
+            continue
+        visited.add(pid)
+        if pid == child_id:
+            return True
+        for (anc_id,) in conn.execute(
+            "SELECT person_a_id FROM relations WHERE type='parent' AND person_b_id=?", (pid,)
+        ).fetchall():
+            if anc_id not in visited:
+                queue.append(anc_id)
+    return False
+
+
+def build_preview(
+    parsed:             dict,
+    existing_persons:   list[dict],
+    existing_relations: list[dict] | None = None,
+) -> list[dict]:
+    """Return a per-person preview list with three-pass context-aware matching."""
+    if existing_relations is None:
+        existing_relations = []
+
+    existing_by_id = {p['id']: p for p in existing_persons}
+    rel_map        = _build_relatives_map(parsed)
+
+    # ── Pass 1: Name + birth_year + biographical scoring ─────────────────────
+    initial_matches: dict[str, Optional[dict]] = {
+        xref: _suggest_match(indi, existing_persons)
+        for xref, indi in parsed['individuals'].items()
+    }
+
+    tentative_remap: dict[str, int] = {}
+    claimed_ex_ids:  set[int]       = set()
+
+    for target_conf in ('exact', 'high'):
+        for xref in parsed['individuals']:
+            m = initial_matches[xref]
+            if m and m['confidence'] == target_conf and m['id'] not in claimed_ex_ids:
+                tentative_remap[xref] = m['id']
+                claimed_ex_ids.add(m['id'])
+
+    # ── Pass 2: Family-context validation ────────────────────────────────────
+    inc_par, inc_chi, inc_spo = _build_gedcom_rel_maps(parsed)
+    ex_par,  ex_chi,  ex_spo  = _build_existing_rel_maps(existing_relations)
+    context_notes: dict[str, str] = {}
+
+    for xref, ex_id in list(tentative_remap.items()):
+        cs = _gedcom_context_score(
+            xref, ex_id, tentative_remap,
+            inc_par, inc_chi, inc_spo,
+            ex_par,  ex_chi,  ex_spo,
+        )
+        if cs > 0:
+            context_notes[xref] = 'confirmed'
+        elif cs < 0:
+            context_notes[xref] = 'conflict'
+            del tentative_remap[xref]
+            claimed_ex_ids.discard(ex_id)
+            m = initial_matches[xref]
+            if m:
+                initial_matches[xref] = {**m, 'confidence': 'low', 'context_conflict': True}
+
+    # ── Pass 3: Relationship-guided discovery for still-unmatched ────────────
+    for xref, indi in parsed['individuals'].items():
+        if xref in tentative_remap:
+            continue
+
+        inc_norms = _name_norms(indi.get('first_name'), indi.get('last_name'), indi.get('name'))
+        if not inc_norms:
+            continue
+
+        inc_year     = indi.get('birth_year')
+        found_ex_id: Optional[int] = None
+
+        for parent_xref in inc_par.get(xref, []):
+            parent_ex = tentative_remap.get(parent_xref)
+            if parent_ex is None:
+                continue
+            for child_ex_id in ex_chi.get(parent_ex, []):
+                if child_ex_id in claimed_ex_ids:
+                    continue
+                child_ex = existing_by_id.get(child_ex_id)
+                if child_ex and _gedcom_name_year_ok(inc_norms, inc_year, child_ex):
+                    found_ex_id = child_ex_id
+                    break
+            if found_ex_id:
+                break
+
+        if found_ex_id is None:
+            for spouse_xref in inc_spo.get(xref, []):
+                spouse_ex = tentative_remap.get(spouse_xref)
+                if spouse_ex is None:
+                    continue
+                for s2_ex_id in ex_spo.get(spouse_ex, []):
+                    if s2_ex_id in claimed_ex_ids:
+                        continue
+                    s2_ex = existing_by_id.get(s2_ex_id)
+                    if s2_ex and _gedcom_name_year_ok(inc_norms, inc_year, s2_ex):
+                        found_ex_id = s2_ex_id
+                        break
+                if found_ex_id:
+                    break
+
+        if found_ex_id is None:
+            for child_xref in inc_chi.get(xref, []):
+                child_ex = tentative_remap.get(child_xref)
+                if child_ex is None:
+                    continue
+                for parent_ex_id in ex_par.get(child_ex, []):
+                    if parent_ex_id in claimed_ex_ids:
+                        continue
+                    parent_ex = existing_by_id.get(parent_ex_id)
+                    if parent_ex and _gedcom_name_year_ok(inc_norms, inc_year, parent_ex):
+                        found_ex_id = parent_ex_id
+                        break
+                if found_ex_id:
+                    break
+
+        if found_ex_id is not None:
+            found_ex = existing_by_id[found_ex_id]
+            tentative_remap[xref] = found_ex_id
+            claimed_ex_ids.add(found_ex_id)
+            initial_matches[xref] = {
+                'id':           found_ex_id,
+                'name':         found_ex.get('name') or '',
+                'birth_year':   found_ex.get('birth_year'),
+                'confidence':   'high',
+                'match_source': 'family',
+            }
+            context_notes[xref] = 'confirmed'
+
+    # ── Build rows ────────────────────────────────────────────────────────────
     rows = []
     for xref, indi in parsed['individuals'].items():
-        match = _suggest_match(indi, existing_persons)
+        match = initial_matches.get(xref)
 
         if match and match['confidence'] in ('exact', 'high'):
             default_action   = 'merge'
@@ -451,30 +700,30 @@ def build_preview(parsed: dict, existing_persons: list[dict]) -> list[dict]:
             default_merge_id = None
 
         rows.append({
-            'xref':          xref,
-            'name':          indi['name'],
-            'first_name':    indi['first_name'],
-            'last_name':     indi['last_name'],
-            'birth_year':    indi['birth_year'],
-            'birth_place':   indi['birth_place'],
-            'death_year':    indi['death_year'],
-            'sex':           indi['sex'],
-            'events_count':  len(indi['events']),
-            'notes_count':   len(indi['notes']),
-            'docs_count':    len(indi['docs']),
-            'relatives':     rel_map.get(xref, []),
+            'xref':            xref,
+            'name':            indi['name'],
+            'first_name':      indi['first_name'],
+            'last_name':       indi['last_name'],
+            'birth_year':      indi['birth_year'],
+            'birth_place':     indi['birth_place'],
+            'death_year':      indi['death_year'],
+            'sex':             indi['sex'],
+            'events_count':    len(indi['events']),
+            'notes_count':     len(indi['notes']),
+            'docs_count':      len(indi['docs']),
+            'relatives':       rel_map.get(xref, []),
             'suggested_match': match,
-            'action':        default_action,
-            'merge_with_id': default_merge_id,
+            'action':          default_action,
+            'merge_with_id':   default_merge_id,
+            'context_status':  context_notes.get(xref, 'none'),
         })
 
-    # Sort: exact matches first, then high, then new, then low-confidence
     _order = {'exact': 0, 'high': 1, 'low': 3}
 
     def _sort_key(r: dict) -> int:
         m = r['suggested_match']
         if not m:
-            return 2   # new person
+            return 2
         return _order.get(m['confidence'], 3)
 
     rows.sort(key=_sort_key)
@@ -926,6 +1175,8 @@ def execute_import(
                     (child_id,),
                 ).fetchone()[0]
                 if count >= 2:
+                    continue
+                if _would_create_cycle(parent_id, child_id, conn):
                     continue
                 cur = conn.execute(
                     "INSERT INTO relations (type, person_a_id, person_b_id) VALUES ('parent',?,?)",

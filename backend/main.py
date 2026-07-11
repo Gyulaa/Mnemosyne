@@ -23,6 +23,7 @@ from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
 from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage
 from . import scanner as scanner_mod
 from . import clusterer
+from .clusterer import recompute_person_subclusters
 from . import export_utils
 from .schemas import (
     ScanStartRequest, ScanStatusResponse,
@@ -253,19 +254,23 @@ async def gedcom_import_preview(file: UploadFile = File(...)):
     except (ValueError, Exception) as e:
         raise HTTPException(400, f"Parsing failed: {e}")
 
-    # Load existing persons for matching
+    # Load existing persons and relations for context-aware matching
     db_path = PROJECTS_DIR / project_id / "photo_organizer.db"
     import sqlite3 as _sqlite3
     conn = _sqlite3.connect(str(db_path))
     conn.row_factory = _sqlite3.Row
     try:
         existing = [dict(r) for r in conn.execute(
-            "SELECT id, name, first_name, last_name, birth_year FROM persons"
+            "SELECT id, name, first_name, last_name, birth_year, "
+            "birth_place, death_year, death_place FROM persons"
+        ).fetchall()]
+        existing_rels = [dict(r) for r in conn.execute(
+            "SELECT type, person_a_id, person_b_id FROM relations"
         ).fetchall()]
     finally:
         conn.close()
 
-    preview_persons = gi.build_preview(parsed, existing)
+    preview_persons = gi.build_preview(parsed, existing, existing_rels)
 
     # Count relations / events / sources
     total_events  = sum(len(v['events']) for v in parsed['individuals'].values())
@@ -898,6 +903,7 @@ def rename_cluster(cluster_id: int, req: ClusterNameRequest, db: Session = Depen
         person_id = person.id
 
     db.commit()
+    recompute_person_subclusters(person_id, db)
     return {"ok": True, "person_id": person_id, "person_name": name}
 
 
@@ -919,6 +925,7 @@ def link_cluster_person(cluster_id: int, body: dict, db: Session = Depends(get_d
         raise HTTPException(400, "Ennek a személynek már van klasztere. Először merge-eld a Clusters tabon.")
     cluster.person_id = person.id
     db.commit()
+    recompute_person_subclusters(person.id, db)
     return {"ok": True, "person_id": person.id, "person_name": person.name}
 
 
@@ -942,6 +949,8 @@ def merge_clusters(source_id: int, target_id: int, db: Session = Depends(get_db)
     db.flush()
     db.delete(source)
     db.commit()
+    if target.person_id:
+        recompute_person_subclusters(target.person_id, db)
     return {"ok": True, "target_cluster_id": target_id}
 
 
@@ -1778,6 +1787,9 @@ def merge_persons(source_id: int, target_id: int, db: Session = Depends(get_db))
         if date_val:
             setattr(tgt, f"{prefix}_year", _year_from_date(date_val))
     db.commit()
+
+    # Recompute sub-clusters for target: it now has all of source's faces too
+    recompute_person_subclusters(target_id, db)
 
     return _person_dict(tgt, db)
 
