@@ -79,6 +79,7 @@ export interface ImageItem {
   meta_json: string | null
   face_count: number
   first_face_id: number | null
+  is_private: boolean
 }
 
 export interface ImagesPage {
@@ -86,6 +87,7 @@ export interface ImagesPage {
   page: number
   page_size: number
   status_counts: { done: number; no_face: number; error: number; pending: number }
+  private_count: number
   items: ImageItem[]
 }
 
