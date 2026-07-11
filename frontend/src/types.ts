@@ -26,6 +26,7 @@ export interface Cluster {
   person_id: number | null
   person_name: string | null
   preview_face_ids: number[]
+  is_private?: boolean
 }
 
 export interface FaceInfo {
@@ -169,6 +170,7 @@ export interface Relation {
   marriage_place: string | null
   divorce_year: number | null
   divorce_place: string | null
+  is_private: boolean
 }
 
 export interface PersonDocument {
@@ -182,6 +184,7 @@ export interface PersonDocument {
   year: number | null
   description: string | null
   created_at: string | null
+  is_private: boolean
   source_id: number | null
   persons: { id: number; name: string | null }[]
 }
@@ -232,6 +235,7 @@ export interface PersonNote {
   sort_order: number
   created_at: string | null
   updated_at: string | null
+  is_private: boolean
   citations: NoteCitation[]
 }
 
@@ -425,6 +429,7 @@ export interface PersonEvent {
   description: string | null
   created_at: string | null
   updated_at: string | null
+  is_private: boolean
   persons: EventPerson[]
   images: EventImage[]
 }

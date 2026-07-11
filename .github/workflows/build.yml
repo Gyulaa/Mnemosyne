@@ -48,7 +48,7 @@ jobs:
 
       - name: Write version (macOS)
         if: runner.os == 'macOS'
-        run: printf "build-$(date +%%Y%%m%%d)-${{ github.run_number }}" > version.txt
+        run: printf "build-$(date +%Y%m%d)-${{ github.run_number }}" > version.txt
 
       - name: Build with PyInstaller
         run: pyinstaller mnemosyne.spec --clean --noconfirm

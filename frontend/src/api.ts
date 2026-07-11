@@ -30,6 +30,13 @@ export const api = {
     start: (path: string) => post(`${BASE}/scan/start`, { path }),
     stop:  () => post(`${BASE}/scan/stop`),
     status: () => fetchJson<ScanStatus>(`${BASE}/scan/status`),
+    importFiles: async (files: File[]): Promise<{ ok: boolean; count: number; path: string }> => {
+      const fd = new FormData()
+      for (const f of files) fd.append('files', f)
+      const res = await fetch(`${BASE}/scan/import-files`, { method: 'POST', body: fd })
+      if (!res.ok) throw new Error(await res.text())
+      return res.json()
+    },
   },
   cluster: {
     run: (eps: number, minSamples: number, minDetScore = 0) =>
@@ -73,6 +80,8 @@ export const api = {
       ),
     connections: (id: number) =>
       fetchJson<ClusterConnection[]>(`${BASE}/clusters/${id}/connections`),
+    togglePrivacy: (id: number, isPrivate: boolean) =>
+      patch<{ ok: boolean; is_private: boolean }>(`${BASE}/clusters/${id}/privacy`, { is_private: isPrivate }),
   },
   face: {
     assign: (faceId: number, clusterId: number) =>
@@ -246,6 +255,8 @@ export const api = {
       fetchJson<ImagePerson[]>(`${BASE}/images/${id}/persons`),
     withEvents: () =>
       fetchJson<number[]>(`${BASE}/images/with-events`),
+    togglePrivacy: (id: number, isPrivate: boolean) =>
+      patch<{ ok: boolean; is_private: boolean }>(`${BASE}/images/${id}/privacy`, { is_private: isPrivate }),
   },
   stats: () => fetchJson<Stats>(`${BASE}/stats`),
   fs: {
@@ -273,6 +284,8 @@ export const api = {
       post<Relation>(`${BASE}/relations`, { type, person_a_id, person_b_id }),
     update: (id: number, fields: Partial<Pick<Relation, 'marriage_year' | 'marriage_place' | 'divorce_year' | 'divorce_place'>>) =>
       patch<Relation>(`${BASE}/relations/${id}`, fields),
+    togglePrivacy: (id: number, isPrivate: boolean) =>
+      patch<Relation>(`${BASE}/relations/${id}`, { is_private: isPrivate }),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/relations/${id}`, { method: 'DELETE' }),
   },
@@ -292,6 +305,8 @@ export const api = {
     },
     update: (id: number, fields: Partial<Pick<PersonDocument, 'title' | 'doc_type' | 'year' | 'description'>>) =>
       patch<PersonDocument>(`${BASE}/documents/${id}`, fields),
+    togglePrivacy: (id: number, isPrivate: boolean) =>
+      patch<PersonDocument>(`${BASE}/documents/${id}`, { is_private: isPrivate }),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/documents/${id}`, { method: 'DELETE' }),
     fileUrl: (id: number, download = false) =>
@@ -364,8 +379,10 @@ export const api = {
     listAll: () => fetchJson<{ id: number; person_id: number; title: string | null; content: string }[]>(`${BASE}/notes`),
     create: (personId: number, fields: { title?: string; content?: string; sort_order?: number }) =>
       post<PersonNote>(`${BASE}/persons/${personId}/notes`, fields),
-    update: (id: number, fields: { title?: string | null; content?: string; sort_order?: number }) =>
+    update: (id: number, fields: { title?: string | null; content?: string; sort_order?: number; is_private?: boolean }) =>
       patch<PersonNote>(`${BASE}/notes/${id}`, fields),
+    togglePrivacy: (id: number, isPrivate: boolean) =>
+      patch<PersonNote>(`${BASE}/notes/${id}`, { is_private: isPrivate }),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/notes/${id}`, { method: 'DELETE' }),
     addCitation: (noteId: number, fields: { source_id?: number; marker: number; detail?: string; custom_label?: string }) =>
@@ -384,8 +401,10 @@ export const api = {
       event_type?: string; title?: string; date?: string; year?: number
       place?: string; description?: string; person_id?: number; extra_person_ids?: number[]
     }) => post<PersonEvent>(`${BASE}/events`, fields),
-    update: (id: number, fields: Partial<Pick<PersonEvent, 'event_type' | 'title' | 'date' | 'year' | 'place' | 'description'>>) =>
+    update: (id: number, fields: Partial<Pick<PersonEvent, 'event_type' | 'title' | 'date' | 'year' | 'place' | 'description' | 'is_private'>>) =>
       patch<PersonEvent>(`${BASE}/events/${id}`, fields),
+    togglePrivacy: (id: number, isPrivate: boolean) =>
+      patch<PersonEvent>(`${BASE}/events/${id}`, { is_private: isPrivate }),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/events/${id}`, { method: 'DELETE' }),
     addImage: (eventId: number, imageId: number) =>

@@ -115,6 +115,22 @@ From here you can also attach documents, write notes with citations, and find th
 - See who appears in photos together most often
 - Interactive force-directed graph showing social connections within your family
 
+### Privacy
+Any item can be marked **private**. Private items are **never exported** — not in ZIP archives, not in GEDCOM files — regardless of all other export settings.
+
+| What | How to mark |
+|---|---|
+| Photos | Select one or more photos → **Make private** in the selection toolbar |
+| Face clusters | Padlock icon on the cluster card |
+| Relations (parent/child/sibling/spouse) | Padlock icon next to the person chip |
+| Documents | Padlock icon in the document row (hover to reveal) |
+| Notes | Padlock icon in the note card header |
+| Events | Padlock icon on the event card or in the event detail view |
+
+Private items show an **amber padlock** so they are always visible. Public items show a gray padlock on hover. Click either to toggle.
+
+Only you can restore a private item to public — there is no "auto-export private" setting.
+
 ### Search
 - Press **Ctrl+K** (Windows) or **Cmd+K** (Mac) to search everything at once — names, documents, notes — from anywhere in the app
 
@@ -211,6 +227,29 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 **GEDCOM interoperability**
 - **Import**: `.ged` file → persons (including occupation, education, religion, nationality, cause of death), relations, events, notes, sources, documents; preview wizard for merge/create/skip decisions per person
 - **Export**: standards-compliant GEDCOM 5.5.1 with UTF-8 encoding; see [GEDCOM export](#gedcom-export) below
+
+### Privacy
+
+`is_private BOOLEAN NOT NULL DEFAULT 0` is present on six tables: `images`, `clusters`, `relations`, `documents`, `person_notes`, `events`. Added by the v4→v5 schema migration.
+
+**Toggle endpoints** — all are `PATCH` and accept `{ is_private: bool }`:
+
+| Resource | Endpoint |
+|---|---|
+| Image | `PATCH /api/images/{id}/privacy` |
+| Cluster | `PATCH /api/clusters/{id}/privacy` |
+| Relation | `PATCH /api/relations/{id}` (via general update, `is_private` field) |
+| Document | `PATCH /api/documents/{id}` (via general update, `is_private` field) |
+| Note | `PATCH /api/notes/{id}` (via general update, `is_private` field) |
+| Event | `PATCH /api/events/{id}` (via general update, `is_private` field) |
+
+**Export enforcement** is applied in two independent layers, so neither can be bypassed:
+
+1. **ZIP export** (`export_utils.py` → `build_export_db`): after all other filters run, a privacy filter block deletes private rows from the in-memory copy of the DB before it is packed into the ZIP. Private images and their faces are removed; private clusters have their faces moved to the noise cluster (`label=-1`) and are then deleted; private relations, notes, events, and documents are deleted with their child rows.
+
+2. **GEDCOM export** (`gedcom_export.py` → `build_gedcom_zip`): all six queries that could expose private data use `WHERE COALESCE(is_private,0)=0`. The `COALESCE` handles legacy databases that predate the v5 migration. Private event_person rows pointing to private events are silently skipped because the events are not in `events_by_id`.
+
+**Frontend**: amber padlock (always visible) when private, gray padlock (hover-only) when public. Implemented in `NoteEditor.tsx` (`NoteCard`), `PersonPanel.tsx` (`DocRow`, `RelRow`, spouse section), `EventsTab.tsx` (`EventCard`, `EventDetailView`), `ClustersTab.tsx` (`ClusterCard`), `ImagesTab.tsx` (bulk toolbar "Make private" button).
 
 ### Events
 - Types: birth, death, marriage, emigration, military, education, occupation, religious, travel, award, and custom
@@ -426,8 +465,9 @@ A ZIP archive packages the database and all referenced media into a portable, se
 1. `VACUUM INTO` creates a WAL-free copy of the source database
 2. **Person/cluster filter** (mutually exclusive): person list, cluster list, or full project
 3. **Content toggles**: notes, sources, events, documents, images, faceless images — each independently removable
-4. **Path rewrite**: image paths updated to `images/<id>_<filename>` (absolute → relative)
-5. Pack with DEFLATE compression
+4. **Privacy filter** (always applied, cannot be disabled): removes all rows where `is_private=1` across images, clusters, relations, documents, notes, and events; private cluster faces are moved to the noise cluster before the cluster is deleted
+5. **Path rewrite**: image paths updated to `images/<id>_<filename>` (absolute → relative)
+6. Pack with DEFLATE compression
 
 **Import pipeline**
 
@@ -489,3 +529,4 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 - **New note syntax** → update *Note serialisation* table; add entry to `_MD_PATTERNS` in `gedcom_export.py`
 - **New data table with `person_id` FK** → update `_delete_persons` in `export_utils.py` with an explicit `DELETE FROM <table> WHERE person_id IN (...)` line before the `DELETE FROM persons` line. If the table has `ON DELETE CASCADE` (like `person_subclusters`) the cascade would handle it automatically, but being explicit is the established pattern here
 - **Schema change to `note_citations`** → add idempotent migration in `database.py` using the `PRAGMA table_info` + table-recreate pattern
+- **New `is_private` on a table** → (1) add `ALTER TABLE … ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0` to the v4→v5 migration block in `database.py`; (2) include `is_private` in the relevant `_xxx_dict` serialiser in `main.py`; (3) add the privacy-filter DELETE block for that table inside `build_export_db` in `export_utils.py`; (4) add `WHERE COALESCE(is_private,0)=0` to the relevant query in `build_gedcom_zip` in `gedcom_export.py` if applicable; (5) add `togglePrivacy` call to `api.ts`; (6) update the TypeScript interface in `types.ts`; (7) add the padlock button to the relevant component

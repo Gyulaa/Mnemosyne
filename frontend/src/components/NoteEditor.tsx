@@ -13,6 +13,7 @@ export interface NoteOps {
   delete: (id: number) => Promise<unknown>
   addCitation: (noteId: number, fields: { source_id?: number; marker: number; detail?: string; custom_label?: string }) => Promise<NoteCitation>
   deleteCitation: (id: number) => Promise<unknown>
+  togglePrivacy?: (id: number, isPrivate: boolean) => Promise<unknown>
 }
 import { useSettings, displayPersonName } from '../SettingsContext'
 
@@ -773,7 +774,24 @@ function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, 
 export function NoteCard({ note, sources, persons, relations, ops, onUpdated, onDeleted, onNavToEvent, onNavToPerson, personId }: CardProps) {
   const [editing, setEditing] = useState(false)
   const [viewing, setViewing] = useState(false)
+  const [privacyBusy, setPrivacyBusy] = useState(false)
   const qc = useQueryClient()
+
+  const noteOpsForPrivacy: NoteOps = ops ?? api.notes
+  const hasPrivacy = 'is_private' in note
+  const isPrivate = hasPrivacy ? (note as PersonNote).is_private : false
+
+  async function handleTogglePrivacy(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!hasPrivacy || !noteOpsForPrivacy.togglePrivacy || privacyBusy) return
+    setPrivacyBusy(true)
+    try {
+      await noteOpsForPrivacy.togglePrivacy(note.id, !isPrivate)
+      onUpdated({ ...note, is_private: !isPrivate } as PersonNote | DocumentNote)
+    } finally {
+      setPrivacyBusy(false)
+    }
+  }
 
   const html = renderMarkdown(note.content, note.citations)
 
@@ -864,16 +882,42 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
               <p className="text-sm text-zinc-600 italic">Empty note</p>
             )}
           </div>
-          {/* Edit shortcut — goes directly to editor without opening the view modal */}
-          <button
-            onClick={e => { e.stopPropagation(); setEditing(true) }}
-            className="shrink-0 opacity-0 group-hover:opacity-100 p-1.5 rounded text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-all"
-            title="Edit"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-0.5 shrink-0">
+            {/* Privacy padlock — only for PersonNotes */}
+            {hasPrivacy && (
+              <button
+                onClick={handleTogglePrivacy}
+                disabled={privacyBusy}
+                title={isPrivate ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+                className={[
+                  'p-1.5 rounded transition-all',
+                  isPrivate
+                    ? 'text-amber-400 hover:text-amber-300 hover:bg-amber-900/20'
+                    : 'opacity-0 group-hover:opacity-100 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700',
+                ].join(' ')}
+              >
+                {isPrivate ? (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5V6.75a4.5 4.5 0 119 0v3.75M3.75 21.75h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H3.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                  </svg>
+                )}
+              </button>
+            )}
+            {/* Edit shortcut — goes directly to editor without opening the view modal */}
+            <button
+              onClick={e => { e.stopPropagation(); setEditing(true) }}
+              className="opacity-0 group-hover:opacity-100 p-1.5 rounded text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-all"
+              title="Edit"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Citations hint strip */}

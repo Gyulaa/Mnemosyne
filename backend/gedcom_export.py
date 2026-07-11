@@ -196,12 +196,12 @@ def build_gedcom_zip(
     conn.row_factory = sqlite3.Row
     try:
         persons       = conn.execute("SELECT * FROM persons").fetchall()
-        relations     = conn.execute("SELECT * FROM relations").fetchall()
-        documents     = conn.execute("SELECT * FROM documents").fetchall() if include_documents else []
+        relations     = conn.execute("SELECT * FROM relations WHERE COALESCE(is_private,0)=0").fetchall()
+        documents     = conn.execute("SELECT * FROM documents WHERE COALESCE(is_private,0)=0").fetchall() if include_documents else []
         sources       = conn.execute("SELECT * FROM sources").fetchall() if include_sources else []
-        notes         = conn.execute("SELECT * FROM person_notes").fetchall() if include_notes else []
+        notes         = conn.execute("SELECT * FROM person_notes WHERE COALESCE(is_private,0)=0").fetchall() if include_notes else []
         note_cites    = conn.execute("SELECT * FROM note_citations").fetchall() if include_notes else []
-        events        = conn.execute("SELECT * FROM events").fetchall() if include_events else []
+        events        = conn.execute("SELECT * FROM events WHERE COALESCE(is_private,0)=0").fetchall() if include_events else []
         event_persons = conn.execute("SELECT * FROM event_persons").fetchall() if include_events else []
 
         # person_id → list of (img_id, img_path)
@@ -215,6 +215,7 @@ def build_gedcom_zip(
                 JOIN faces f ON f.id = p.thumbnail_face_id
                 JOIN images i ON i.id = f.image_id
                 WHERE p.thumbnail_face_id IS NOT NULL
+                  AND COALESCE(i.is_private,0)=0
             """).fetchall()
             for row in rows:
                 photos_by_person[row['pid']] = [dict(row)]
@@ -227,6 +228,8 @@ def build_gedcom_zip(
                 JOIN clusters c ON c.person_id = p.id AND c.label != -1
                 JOIN faces f ON f.cluster_id = c.id
                 JOIN images i ON i.id = f.image_id
+                WHERE COALESCE(c.is_private,0)=0
+                  AND COALESCE(i.is_private,0)=0
                 ORDER BY p.id, i.id
             """).fetchall()
             for row in rows:

@@ -260,6 +260,56 @@ def build_export_db(
             conn.execute("DELETE FROM documents")
             conn.commit()
 
+        # ── Privacy filter (always applied) ───────────────────────────────────
+        # Private images
+        try:
+            conn.execute("DELETE FROM event_images WHERE image_id IN (SELECT id FROM images WHERE is_private=1)")
+            conn.execute("DELETE FROM faces WHERE image_id IN (SELECT id FROM images WHERE is_private=1)")
+            conn.execute("DELETE FROM images WHERE is_private=1")
+        except Exception:
+            pass
+        # Private clusters → move faces to noise, then delete
+        try:
+            noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
+            if not noise_row:
+                conn.execute("INSERT INTO clusters (label, person_id) VALUES (-1, NULL)")
+                noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
+            noise_id = noise_row[0]
+            conn.execute(
+                f"UPDATE faces SET cluster_id={noise_id}, manually_assigned=0 "
+                "WHERE cluster_id IN (SELECT id FROM clusters WHERE is_private=1 AND label != -1)"
+            )
+            conn.execute("DELETE FROM clusters WHERE is_private=1 AND label != -1")
+        except Exception:
+            pass
+        # Private relations
+        try:
+            conn.execute("DELETE FROM relations WHERE is_private=1")
+        except Exception:
+            pass
+        # Private documents
+        try:
+            conn.execute("DELETE FROM document_note_citations WHERE note_id IN (SELECT id FROM document_notes WHERE document_id IN (SELECT id FROM documents WHERE is_private=1))")
+            conn.execute("DELETE FROM document_notes WHERE document_id IN (SELECT id FROM documents WHERE is_private=1)")
+            conn.execute("DELETE FROM document_persons WHERE document_id IN (SELECT id FROM documents WHERE is_private=1)")
+            conn.execute("DELETE FROM documents WHERE is_private=1")
+        except Exception:
+            pass
+        # Private notes
+        try:
+            conn.execute("DELETE FROM note_citations WHERE note_id IN (SELECT id FROM person_notes WHERE is_private=1)")
+            conn.execute("DELETE FROM person_notes WHERE is_private=1")
+        except Exception:
+            pass
+        # Private events
+        try:
+            conn.execute("DELETE FROM event_images WHERE event_id IN (SELECT id FROM events WHERE is_private=1)")
+            conn.execute("DELETE FROM event_persons WHERE event_id IN (SELECT id FROM events WHERE is_private=1)")
+            conn.execute("DELETE FROM events WHERE is_private=1")
+        except Exception:
+            pass
+        conn.commit()
+
         rows = conn.execute(
             "SELECT id, path, stable_id, content_hash, source_path FROM images"
         ).fetchall()

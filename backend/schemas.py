@@ -16,7 +16,7 @@ class ScanStatusResponse(BaseModel):
 
 class ClusterRunRequest(BaseModel):
     eps: float = 0.4
-    min_samples: int = 2
+    min_samples: int = 3
     min_det_score: float = 0.0
 
 
@@ -100,6 +100,7 @@ class NoteUpdate(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     sort_order: Optional[int] = None
+    is_private: Optional[bool] = None
 
 
 class NoteCitationCreate(BaseModel):
@@ -127,6 +128,7 @@ class EventUpdate(BaseModel):
     year: Optional[int] = None
     place: Optional[str] = None
     description: Optional[str] = None
+    is_private: Optional[bool] = None
 
 
 class EventImageAdd(BaseModel):
