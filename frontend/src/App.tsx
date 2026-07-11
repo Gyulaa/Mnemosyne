@@ -40,6 +40,7 @@ function AppInner() {
   const [documentsNavTarget, setDocumentsNavTarget] = useState<{ docId: number; editMode?: boolean; key: number } | null>(null)
   const [exportBusy, setExportBusy] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  const [exportCancel, setExportCancel] = useState<(() => void) | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<PersonDocument | null>(null)
   const [aboutOpen,    setAboutOpen]    = useState(false)
@@ -107,13 +108,15 @@ function AppInner() {
     setDocumentsNavTarget({ docId, editMode, key: Date.now() })
   }
 
-  function onExportStart() {
+  function onExportStart(cancelFn: () => void) {
     setExportBusy(true)
     setExportError(null)
+    setExportCancel(() => cancelFn)
   }
 
   function onExportEnd(err?: string) {
     setExportBusy(false)
+    setExportCancel(null)
     if (err) setExportError(err)
   }
 
@@ -273,12 +276,21 @@ function AppInner() {
 
       {/* Global export progress — persists across tab switches */}
       {exportBusy && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl text-sm text-zinc-300">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 pl-4 pr-2 py-2 bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl text-sm text-zinc-300">
           <svg className="w-4 h-4 animate-spin text-brand-400 shrink-0" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
           </svg>
           Building ZIP…
+          <button
+            onClick={() => exportCancel?.()}
+            title="Cancel export"
+            className="ml-1 w-6 h-6 flex items-center justify-center rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors shrink-0"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       )}
 

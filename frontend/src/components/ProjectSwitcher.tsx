@@ -15,7 +15,7 @@ export default function ProjectSwitcher({
   onExportStart,
   onExportEnd,
 }: {
-  onExportStart?: () => void
+  onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
   const qc = useQueryClient()
@@ -96,14 +96,16 @@ export default function ProjectSwitcher({
     if (exporting) return
     setShowExportModal(false)
     setExporting(true)
-    onExportStart?.()
+    const controller = new AbortController()
+    onExportStart?.(() => controller.abort())
     try {
-      const blob = await api.project.exportZip(undefined, name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages)
+      const blob = await api.project.exportZip(undefined, name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, controller.signal)
       const safeName = name.replace(/\s+/g, '_') || 'project'
       triggerDownload(blob, `${safeName}_export.zip`)
       onExportEnd?.()
     } catch (e) {
-      onExportEnd?.(String(e))
+      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
+      else onExportEnd?.(String(e))
     } finally {
       setExporting(false)
     }

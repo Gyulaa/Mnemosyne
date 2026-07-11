@@ -122,6 +122,7 @@ export const api = {
       includeEvents = true,
       includeDocuments = true,
       includeImages = true,
+      signal?: AbortSignal,
     ): Promise<Blob> => {
       const p = new URLSearchParams()
       if (clusterIds?.length) p.set('cluster_ids', clusterIds.join(','))
@@ -134,7 +135,7 @@ export const api = {
       if (!includeEvents) p.set('include_events', 'false')
       if (!includeDocuments) p.set('include_documents', 'false')
       if (!includeImages) p.set('include_images', 'false')
-      const res = await fetch(`${BASE}/projects/export?${p}`)
+      const res = await fetch(`${BASE}/projects/export?${p}`, { signal })
       if (!res.ok) throw new Error(await res.text())
       return res.blob()
     },
@@ -144,7 +145,7 @@ export const api = {
       includeEvents?: boolean
       includeSources?: boolean
       includeNotes?: boolean
-    }): Promise<Blob> => {
+    }, signal?: AbortSignal): Promise<Blob> => {
       const p = new URLSearchParams()
       if (opts?.photoMode) p.set('photo_mode', opts.photoMode)
       if (opts?.includeDocuments === false) p.set('include_documents', 'false')
@@ -152,7 +153,7 @@ export const api = {
       if (opts?.includeSources === false) p.set('include_sources', 'false')
       if (opts?.includeNotes === false) p.set('include_notes', 'false')
       const qs = p.toString()
-      const res = await fetch(`${BASE}/export/gedcom${qs ? `?${qs}` : ''}`)
+      const res = await fetch(`${BASE}/export/gedcom${qs ? `?${qs}` : ''}`, { signal })
       if (!res.ok) throw new Error(await res.text())
       return res.blob()
     },
@@ -221,17 +222,17 @@ export const api = {
       if (excludePersonIds.length) p.set('exclude_person_ids', excludePersonIds.join(','))
       return fetchJson<ImagesPage>(`${BASE}/images?${p}`)
     },
-    exportZip: async (filter: string, search: string, sort: string, includePersonIds: number[], excludePersonIds: number[], includeMode: string): Promise<Blob> => {
+    exportZip: async (filter: string, search: string, sort: string, includePersonIds: number[], excludePersonIds: number[], includeMode: string, signal?: AbortSignal): Promise<Blob> => {
       const p = new URLSearchParams({ filter, search, sort, include_mode: includeMode })
       if (includePersonIds.length) p.set('include_person_ids', includePersonIds.join(','))
       if (excludePersonIds.length) p.set('exclude_person_ids', excludePersonIds.join(','))
-      const res = await fetch(`${BASE}/images/export-zip?${p}`)
+      const res = await fetch(`${BASE}/images/export-zip?${p}`, { signal })
       if (!res.ok) throw new Error(await res.text())
       return res.blob()
     },
-    exportSelectedZip: async (imageIds: number[]): Promise<Blob> => {
+    exportSelectedZip: async (imageIds: number[], signal?: AbortSignal): Promise<Blob> => {
       const p = new URLSearchParams({ image_ids: imageIds.join(',') })
-      const res = await fetch(`${BASE}/images/export-zip?${p}`)
+      const res = await fetch(`${BASE}/images/export-zip?${p}`, { signal })
       if (!res.ok) throw new Error(await res.text())
       return res.blob()
     },
