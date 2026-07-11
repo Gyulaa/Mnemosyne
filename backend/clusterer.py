@@ -2,17 +2,123 @@ import numpy as np
 from sklearn.preprocessing import normalize
 from sklearn.cluster import DBSCAN
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
-from .database import Face, Cluster, Person
+from .database import Face, Cluster, Person, PersonSubcluster
+
+# Minimum number of faces a sub-cluster must contain to be used as a
+# matching prototype. Below this threshold the centroid is too noisy.
+MIN_SUBCLUSTER_SUPPORT = 5
+
+# Tighter epsilon for internal per-person sub-clustering.
+# We know all faces belong to the same person, so we want finer granularity.
+SUBCLUSTER_EPS = 0.30
 
 
-def _compute_person_centroids(db, face_id_to_idx: dict, embeddings_norm: np.ndarray) -> dict:
-    """Return {person_id: normalized_centroid} for every named person who has faces
-    in the current face set."""
+# ── Sub-cluster management ────────────────────────────────────────────────────
+
+def recompute_person_subclusters(person_id: int, db: Session) -> None:
+    """Run DBSCAN on all faces of a named person and store sub-cluster centroids.
+
+    Called after any operation that changes which faces belong to a person
+    (link, rename, merge). The results are used by the next run_clustering call
+    to improve centroid-matching across age-spanning face sets.
+    """
+    db.query(PersonSubcluster).filter(PersonSubcluster.person_id == person_id).delete()
+
+    faces = (
+        db.query(Face)
+        .options(joinedload(Face.image))
+        .join(Cluster, Face.cluster_id == Cluster.id)
+        .filter(Cluster.person_id == person_id, Face.embedding != None)
+        .all()
+    )
+
+    if len(faces) < MIN_SUBCLUSTER_SUPPORT:
+        db.commit()
+        return
+
+    embs = np.array([np.frombuffer(f.embedding, dtype=np.float32) for f in faces])
+    embs_norm = normalize(embs, norm="l2")
+
+    labels = DBSCAN(
+        eps=SUBCLUSTER_EPS,
+        min_samples=MIN_SUBCLUSTER_SUPPORT,
+        metric="cosine",
+        n_jobs=-1,
+    ).fit_predict(embs_norm)
+
+    for label in set(labels):
+        if label == -1:
+            continue
+        mask = labels == label
+        count = int(mask.sum())
+        if count < MIN_SUBCLUSTER_SUPPORT:
+            continue
+
+        sub_embs = embs_norm[mask]
+        centroid = np.mean(sub_embs, axis=0)
+        norm = np.linalg.norm(centroid)
+        if norm > 0:
+            centroid /= norm
+
+        sub_faces = [faces[i] for i in range(len(faces)) if mask[i]]
+        years = [f.image.exif_date.year for f in sub_faces if f.image and f.image.exif_date]
+        year_min = min(years) if years else None
+        year_max = max(years) if years else None
+
+        db.add(PersonSubcluster(
+            person_id=person_id,
+            centroid=centroid.astype(np.float32).tobytes(),
+            face_count=count,
+            year_min=year_min,
+            year_max=year_max,
+        ))
+
+    db.commit()
+
+
+def recompute_all_person_subclusters(db: Session) -> None:
+    """Recompute sub-clusters for every named person. Called after run_clustering."""
+    person_ids = [
+        row[0] for row in
+        db.query(Person.id).filter(Person.name != None).all()
+    ]
+    for pid in person_ids:
+        recompute_person_subclusters(pid, db)
+
+
+# ── Centroid computation for matching ────────────────────────────────────────
+
+def _compute_matching_prototypes(
+    db: Session,
+    face_id_to_idx: dict,
+    embeddings_norm: np.ndarray,
+) -> list[tuple[int, np.ndarray]]:
+    """Return (person_id, centroid) pairs for every named person.
+
+    For persons that have computed sub-clusters (i.e. enough faces to form
+    reliable age-range prototypes), one entry per sub-cluster is returned —
+    giving finer-grained matching that is robust to temporal embedding drift.
+
+    For persons without sub-clusters (too few faces), a single averaged
+    centroid is returned as a fallback (same behaviour as before).
+    """
+    prototypes: list[tuple[int, np.ndarray]] = []
+    persons_with_subs: set[int] = set()
+
+    # Load all trusted sub-cluster centroids
+    subclusters = db.query(PersonSubcluster).all()
+    for sc in subclusters:
+        centroid = np.frombuffer(sc.centroid, dtype=np.float32).copy()
+        prototypes.append((sc.person_id, centroid))
+        persons_with_subs.add(sc.person_id)
+
+    # Single-centroid fallback for persons not yet covered by sub-clusters
     persons = db.query(Person).filter(Person.name != None).all()
-    centroids = {}
     for person in persons:
+        if person.id in persons_with_subs:
+            continue
         embs = []
         for cluster in person.clusters:
             for face in cluster.faces:
@@ -23,9 +129,12 @@ def _compute_person_centroids(db, face_id_to_idx: dict, embeddings_norm: np.ndar
             norm = np.linalg.norm(centroid)
             if norm > 0:
                 centroid /= norm
-            centroids[person.id] = centroid
-    return centroids
+            prototypes.append((person.id, centroid))
 
+    return prototypes
+
+
+# ── Main clustering entry point ───────────────────────────────────────────────
 
 def run_clustering(db: Session, eps: float = 0.4, min_samples: int = 2, min_det_score: float = 0.0) -> dict:
     # ── Phase 1: Collect faces ────────────────────────────────────────────────
@@ -52,10 +161,8 @@ def run_clustering(db: Session, eps: float = 0.4, min_samples: int = 2, min_det_
     for f in all_faces:
         in_noise = f.cluster_id is None or f.cluster_id == noise_cid
         if not in_noise:
-            # Already in a real cluster — leave completely alone.
             pinned[f.id] = f.cluster_id  # type: ignore[assignment]
         elif f.manually_assigned and f.cluster_id is not None:
-            # Manually pinned to a cluster (even noise) — respect that.
             pinned[f.id] = f.cluster_id
         else:
             active_faces.append(f)
@@ -66,14 +173,17 @@ def run_clustering(db: Session, eps: float = 0.4, min_samples: int = 2, min_det_
     active_indices = [face_id_to_idx[f.id] for f in active_faces]
     active_embs = all_embs_norm[active_indices]
 
-    # ── Phase 3: Person centroid pre-assignment ───────────────────────────────
-    # Noise faces close to a named person's centroid snap to that person's cluster.
-    person_centroids = _compute_person_centroids(db, face_id_to_idx, all_embs_norm)
+    # ── Phase 3: Prototype pre-assignment ────────────────────────────────────
+    # Each active face is compared against all known person prototypes.
+    # Persons with sub-clusters contribute one prototype per age-range sub-cluster,
+    # giving better recall for faces that drift from the overall centroid over time.
+    # Persons without sub-clusters fall back to a single averaged centroid.
+    prototypes = _compute_matching_prototypes(db, face_id_to_idx, all_embs_norm)
     pre_assigned: dict[int, int] = {}  # index into active_faces -> person_id
 
-    if person_centroids:
-        pid_list = list(person_centroids.keys())
-        centroid_matrix = np.stack([person_centroids[pid] for pid in pid_list])
+    if prototypes:
+        pid_list = [p[0] for p in prototypes]
+        centroid_matrix = np.stack([p[1] for p in prototypes])
         sims = active_embs @ centroid_matrix.T
         dists = 1.0 - sims
         best_pidx = np.argmin(dists, axis=1)
@@ -98,10 +208,6 @@ def run_clustering(db: Session, eps: float = 0.4, min_samples: int = 2, min_det_
             dbscan_result[unassigned_pos[pos]] = int(label)
 
     # ── Phase 5: Assign active faces to clusters ──────────────────────────────
-    # Pinned faces are NOT touched at all. Existing named/unnamed clusters are
-    # preserved. We only create new clusters for newly-formed DBSCAN groups.
-
-    # Resolve person_id -> cluster id (use existing cluster if present)
     person_to_cid: dict[int, int] = {}
     for pid in set(pre_assigned.values()):
         existing = db.query(Cluster).filter(Cluster.person_id == pid).first()
@@ -114,7 +220,6 @@ def run_clustering(db: Session, eps: float = 0.4, min_samples: int = 2, min_det_
             db.flush()
             person_to_cid[pid] = c.id
 
-    # Create new unnamed clusters for DBSCAN groups among noise faces
     dbscan_label_set = set(dbscan_result.values())
     dbscan_label_to_cid: dict[int, int] = {}
 
@@ -141,6 +246,10 @@ def run_clustering(db: Session, eps: float = 0.4, min_samples: int = 2, min_det_
             face.cluster_id = dbscan_label_to_cid[dbscan_result[i]]
 
     db.commit()
+
+    # ── Phase 6: Refresh sub-clusters for all named persons ───────────────────
+    # Done after commit so the face assignments above are visible.
+    recompute_all_person_subclusters(db)
 
     n_named = len(person_to_cid)
     n_new = len(new_groups)

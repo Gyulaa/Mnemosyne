@@ -30,7 +30,7 @@ export default function ClustersTab({
   const qc = useQueryClient()
   const [selected, setSelected] = useState<Cluster | null>(null)
   const [search, setSearch] = useState('')
-  const [nameFilter, setNameFilter] = useState<'all' | 'named' | 'unnamed'>('all')
+  const [nameFilter, setNameFilter] = useState<'all' | 'named' | 'unnamed' | 'unlinked'>('all')
   const [checkedClusters, setCheckedClusters] = useState<Set<number>>(new Set())
   const [exportingClusters, setExportingClusters] = useState(false)
   const [deletingClusters, setDeletingClusters] = useState(false)
@@ -64,7 +64,12 @@ export default function ClustersTab({
   const allNamed = clusters.filter(c => c.label !== -1)
 
   const filteredNamed = named
-    .filter(c => nameFilter === 'named' ? !!c.person_name : nameFilter === 'unnamed' ? !c.person_name : true)
+    .filter(c =>
+      nameFilter === 'named'   ? !!c.person_name :
+      nameFilter === 'unnamed' ? !c.person_name :
+      nameFilter === 'unlinked'? c.person_id === null :
+      true
+    )
     .filter(c => !search.trim() || c.person_name?.toLowerCase().includes(search.toLowerCase()))
 
   async function doDeleteSelected() {
@@ -163,7 +168,7 @@ export default function ClustersTab({
             {filteredNamed.length}{filteredNamed.length !== named.length ? ` / ${named.length}` : ''} clusters
           </span>
           <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
-            {(['all', 'named', 'unnamed'] as const).map(f => (
+            {(['all', 'named', 'unnamed', 'unlinked'] as const).map(f => (
               <button
                 key={f}
                 onClick={() => setNameFilter(f)}
@@ -171,7 +176,7 @@ export default function ClustersTab({
                   nameFilter === f ? 'bg-zinc-600 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
                 }`}
               >
-                {f === 'all' ? 'All' : f === 'named' ? 'Named' : 'Unnamed'}
+                {f === 'all' ? 'All' : f === 'named' ? 'Named' : f === 'unnamed' ? 'Unnamed' : 'Not linked'}
               </button>
             ))}
           </div>

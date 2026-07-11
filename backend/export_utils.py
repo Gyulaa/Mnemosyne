@@ -50,6 +50,8 @@ def _delete_persons(conn: sqlite3.Connection, where_clause: str) -> None:
         WHERE person_a_id IN (SELECT id FROM persons WHERE {where_clause})
            OR person_b_id IN (SELECT id FROM persons WHERE {where_clause})
     """)
+    # Derived sub-cluster centroids — CASCADE would handle this but we are explicit.
+    conn.execute(f"DELETE FROM person_subclusters WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
     conn.execute(f"DELETE FROM persons WHERE {where_clause}")
 
 

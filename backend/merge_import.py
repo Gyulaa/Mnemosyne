@@ -24,6 +24,7 @@ from .gedcom_import import (
     _name_norms,
     store_session, get_session, clear_session,
     store_rollback, _try_delete_file,
+    _would_create_cycle,
 )
 
 # ── Fields ────────────────────────────────────────────────────────────────────
@@ -279,6 +280,25 @@ def _suggest_match(incoming: dict, existing: list[dict]) -> Optional[dict]:
             score = 70
         else:
             score = 55
+
+        inc_bp = (incoming.get('birth_place') or '').strip().lower()
+        ex_bp  = (person.get('birth_place') or '').strip().lower()
+        if inc_bp and ex_bp and inc_bp == ex_bp:
+            score += 15
+
+        inc_dy = incoming.get('death_year')
+        ex_dy  = person.get('death_year')
+        if inc_dy and ex_dy:
+            if inc_dy == ex_dy:
+                score += 10
+            elif abs(inc_dy - ex_dy) <= 2:
+                score += 5
+
+        inc_dp = (incoming.get('death_place') or '').strip().lower()
+        ex_dp  = (person.get('death_place') or '').strip().lower()
+        if inc_dp and ex_dp and inc_dp == ex_dp:
+            score += 5
+
         if score > best_score:
             best_score = score
             best = person
@@ -612,6 +632,8 @@ def execute_merge(
 
         if rtype == 'parent':
             if conn.execute("SELECT COUNT(*) FROM relations WHERE type='parent' AND person_b_id=?", (b,)).fetchone()[0] >= 2:
+                continue
+            if _would_create_cycle(a, b, conn):
                 continue
 
         cur = conn.execute(
