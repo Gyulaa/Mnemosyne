@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { api } from '../api'
-import { useSettings, displayPersonName } from '../SettingsContext'
+import { useSettings, displayPersonName, useT } from '../SettingsContext'
 import type {
   GedcomPreview, GedcomImportPerson, GedcomImportAction,
   GedcomImportDecision, GedcomImportStats, PersonFull, Relation,
@@ -14,15 +14,17 @@ function formatLifespan(birth_year: number | null, death_year: number | null, bi
   return years || birth_place || ''
 }
 
-function confBadge(conf: 'exact' | 'high' | 'low') {
-  if (conf === 'exact') return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-900/60 text-emerald-300">Exact match</span>
-  if (conf === 'high')  return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-900/60  text-amber-300" >Likely</span>
-  return                       <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800       text-zinc-400" >Weak</span>
+function ConfBadge({ conf }: { conf: 'exact' | 'high' | 'low' }) {
+  const t = useT()
+  if (conf === 'exact') return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-900/60 text-emerald-300">{t('gedcom.exact')}</span>
+  if (conf === 'high')  return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-900/60  text-amber-300" >{t('gedcom.likely')}</span>
+  return                       <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800       text-zinc-400" >{t('gedcom.weak')}</span>
 }
 
 // ── RelativeChips: compact inline relatives for the GEDCOM person ─────────────
 
 function RelativeChips({ relatives }: { relatives: GedcomImportPerson['relatives'] }) {
+  const t = useT()
   if (!relatives.length) return null
   const parents  = relatives.filter(r => r.role === 'parent')
   const spouses  = relatives.filter(r => r.role === 'spouse')
@@ -31,17 +33,17 @@ function RelativeChips({ relatives }: { relatives: GedcomImportPerson['relatives
     <div className="mt-1 space-y-0.5">
       {parents.length > 0 && (
         <p className="text-[10px] text-zinc-500 leading-snug">
-          <span className="text-zinc-600">Parents: </span>{parents.map(r => r.name).join(', ')}
+          <span className="text-zinc-600">{t('gedcom.parents')} </span>{parents.map(r => r.name).join(', ')}
         </p>
       )}
       {spouses.length > 0 && (
         <p className="text-[10px] text-zinc-500 leading-snug">
-          <span className="text-zinc-600">Spouse: </span>{spouses.map(r => r.name).join(', ')}
+          <span className="text-zinc-600">{t('gedcom.spouse')} </span>{spouses.map(r => r.name).join(', ')}
         </p>
       )}
       {children.length > 0 && (
         <p className="text-[10px] text-zinc-500 leading-snug">
-          <span className="text-zinc-600">Children: </span>
+          <span className="text-zinc-600">{t('gedcom.children')} </span>
           {children.length <= 3
             ? children.map(r => r.name).join(', ')
             : `${children.slice(0, 2).map(r => r.name).join(', ')} +${children.length - 2}`}
@@ -64,6 +66,7 @@ interface ComboboxProps {
 
 function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spousesOf, onChange }: ComboboxProps) {
   const { nameOrder } = useSettings()
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
@@ -105,12 +108,12 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
     : null
 
   const triggerLabel = action === 'skip'
-    ? <span className="text-zinc-500">⊘ Skip</span>
+    ? <span className="text-zinc-500">{t('gedcom.skip')}</span>
     : action === 'create'
-    ? <span className="text-brand-300">+ New person</span>
+    ? <span className="text-brand-300">{t('gedcom.createNew')}</span>
     : selectedPerson
     ? <span className="text-zinc-100">{displayPersonName(selectedPerson, nameOrder)}{selectedPerson.birth_year ? <span className="text-zinc-500 font-normal ml-1">({selectedPerson.birth_year})</span> : ''}</span>
-    : <span className="text-zinc-500">Select…</span>
+    : <span className="text-zinc-500">{t('gedcom.select')}</span>
 
   return (
     <div ref={containerRef} className="relative">
@@ -134,12 +137,12 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
             {lifespan && <p className="text-[10px] text-zinc-500">{lifespan}</p>}
             {parents.length > 0 && (
               <p className="text-[10px] text-zinc-500 leading-snug">
-                <span className="text-zinc-600">Parents: </span>{parents.join(', ')}
+                <span className="text-zinc-600">{t('gedcom.parents')} </span>{parents.join(', ')}
               </p>
             )}
             {spouses.length > 0 && (
               <p className="text-[10px] text-zinc-500 leading-snug">
-                <span className="text-zinc-600">Spouse: </span>{spouses.join(', ')}
+                <span className="text-zinc-600">{t('gedcom.spouse')} </span>{spouses.join(', ')}
               </p>
             )}
           </div>
@@ -155,7 +158,7 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
               ref={inputRef}
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Search by name…"
+              placeholder={t('gedcom.searchByName')}
               className="w-full bg-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none border border-zinc-700 focus:border-brand-400"
             />
           </div>
@@ -164,16 +167,16 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
             {/* Fixed options */}
             <button onClick={() => select('create', null)}
               className={`w-full text-left px-3 py-2 text-xs transition-colors hover:bg-zinc-800 ${action === 'create' ? 'text-brand-300' : 'text-zinc-400'}`}>
-              + Create new person
+              {t('gedcom.createNewOption')}
             </button>
             <button onClick={() => select('skip', null)}
               className={`w-full text-left px-3 py-2 text-xs border-b border-zinc-800 transition-colors hover:bg-zinc-800 ${action === 'skip' ? 'text-zinc-300' : 'text-zinc-600'}`}>
-              ⊘ Skip
+              {t('gedcom.skip')}
             </button>
 
             {/* Existing persons */}
             {filtered.length === 0 && (
-              <p className="px-3 py-3 text-xs text-zinc-600 italic">No results</p>
+              <p className="px-3 py-3 text-xs text-zinc-600 italic">{t('gedcom.noResults')}</p>
             )}
             {filtered.map(ep => {
               const lifespan = formatLifespan(ep.birth_year, ep.death_year, ep.birth_place)
@@ -196,12 +199,12 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
                   {lifespan && <p className="text-[10px] text-zinc-500 mt-0.5">{lifespan}</p>}
                   {parents.length > 0 && (
                     <p className="text-[10px] text-zinc-600 mt-0.5">
-                      <span className="text-zinc-700">Parents: </span>{parents.join(', ')}
+                      <span className="text-zinc-700">{t('gedcom.parents')} </span>{parents.join(', ')}
                     </p>
                   )}
                   {spouses.length > 0 && (
                     <p className="text-[10px] text-zinc-600 mt-0.5">
-                      <span className="text-zinc-700">Spouse: </span>{spouses.join(', ')}
+                      <span className="text-zinc-700">{t('gedcom.spouse')} </span>{spouses.join(', ')}
                     </p>
                   )}
                 </button>
@@ -228,6 +231,7 @@ interface RowProps {
 
 function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, spousesOf, onChange }: RowProps) {
   const { nameOrder } = useSettings()
+  const t = useT()
   const lifespan = formatLifespan(person.birth_year, person.death_year, person.birth_place)
   const sexIcon = person.sex === 'M' ? '♂' : person.sex === 'F' ? '♀' : ''
   const displayName = displayPersonName(person, nameOrder)
@@ -255,7 +259,7 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
 
       {/* Confidence badge */}
       <td className="py-3 px-2 text-center">
-        {person.suggested_match ? confBadge(person.suggested_match.confidence) : (
+        {person.suggested_match ? <ConfBadge conf={person.suggested_match.confidence} /> : (
           <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-brand-900/40 text-brand-300">New</span>
         )}
       </td>
@@ -271,7 +275,7 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
           onChange={onChange}
         />
         {action === 'merge' && mergeWithId != null && (
-          <div className="text-[10px] text-zinc-600 mt-1 px-0.5">Missing fields will be filled in</div>
+          <div className="text-[10px] text-zinc-600 mt-1 px-0.5">{t('gedcom.fillMissing')}</div>
         )}
       </td>
     </tr>
@@ -281,15 +285,16 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
 // ── Stats summary ─────────────────────────────────────────────────────────────
 
 function StatsSummary({ stats }: { stats: GedcomImportStats }) {
+  const t = useT()
   const rows: [string, number][] = [
-    ['Created', stats.persons_created],
-    ['Merged', stats.persons_merged],
-    ['Skipped', stats.persons_skipped],
-    ['Relations added', stats.relations_added],
-    ['Events added', stats.events_added],
-    ['Sources added', stats.sources_added],
-    ['Notes added', stats.notes_added],
-    ['Documents added', stats.documents_added],
+    [t('gedcom.statCreated'), stats.persons_created],
+    [t('gedcom.statMerged'), stats.persons_merged],
+    [t('gedcom.statSkipped'), stats.persons_skipped],
+    [t('gedcom.statRelations'), stats.relations_added],
+    [t('gedcom.statEvents'), stats.events_added],
+    [t('gedcom.statSources'), stats.sources_added],
+    [t('gedcom.statNotes'), stats.notes_added],
+    [t('gedcom.statDocs'), stats.documents_added],
   ]
   return (
     <div className="space-y-1.5">
@@ -342,6 +347,7 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
 
   // Sorted existing persons for the combobox
   const { nameOrder } = useSettings()
+  const t = useT()
 
   const sortedPersons = useMemo(() =>
     [...existingPersons].sort((a, b) =>
@@ -488,8 +494,8 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
         {/* ── Upload phase ─────────────────────────────────────────────── */}
         {phase === 'upload' && (
           <div className="p-6">
-            <h2 className="text-sm font-semibold text-zinc-100 mb-1">GEDCOM import</h2>
-            <p className="text-xs text-zinc-500 mb-5">Upload a <code>.ged</code> or <code>.zip</code> file exported from Mnemosyne or any other genealogy application.</p>
+            <h2 className="text-sm font-semibold text-zinc-100 mb-1">{t('gedcom.heading')}</h2>
+            <p className="text-xs text-zinc-500 mb-5">{t('gedcom.desc')}</p>
 
             <div
               onDragOver={e => { e.preventDefault(); setDragging(true) }}
@@ -500,14 +506,14 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
                 ${dragging ? 'border-brand-400 bg-brand-400/5' : 'border-zinc-700 hover:border-zinc-500'}`}
             >
               <div className="text-3xl mb-3">📂</div>
-              <p className="text-sm text-zinc-300">Drag a file here, or click to browse</p>
-              <p className="text-xs text-zinc-600 mt-1">.ged · .zip</p>
+              <p className="text-sm text-zinc-300">{t('gedcom.dropZone')}</p>
+              <p className="text-xs text-zinc-600 mt-1">{t('gedcom.fileTypes')}</p>
               <input ref={inputRef} type="file" accept=".ged,.zip" className="hidden" onChange={onInputChange} />
             </div>
 
             <div className="flex justify-end mt-4">
               <button onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors">
-                Cancel
+                {t('gedcom.cancel')}
               </button>
             </div>
           </div>
@@ -517,21 +523,21 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
         {phase === 'importing' && (
           <div className="p-10 flex flex-col items-center gap-4">
             <div className="w-8 h-8 border-2 border-brand-400 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-zinc-400">Processing…</p>
+            <p className="text-sm text-zinc-400">{t('gedcom.processing')}</p>
           </div>
         )}
 
         {/* ── Error ────────────────────────────────────────────────────── */}
         {phase === 'error' && (
           <div className="p-6">
-            <h2 className="text-sm font-semibold text-red-400 mb-2">Error</h2>
+            <h2 className="text-sm font-semibold text-red-400 mb-2">{t('gedcom.error')}</h2>
             <p className="text-xs text-zinc-400 mb-4 font-mono whitespace-pre-wrap">{errorMsg}</p>
             <div className="flex gap-3">
               <button onClick={() => setPhase('upload')} className="flex-1 px-4 py-2 text-sm text-zinc-300 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors">
-                Back
+                {t('gedcom.back')}
               </button>
               <button onClick={onClose} className="flex-1 px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 rounded-lg transition-colors">
-                Close
+                {t('gedcom.close')}
               </button>
             </div>
           </div>
@@ -540,13 +546,13 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
         {/* ── Done ─────────────────────────────────────────────────────── */}
         {phase === 'done' && stats && (
           <div className="p-6">
-            <h2 className="text-sm font-semibold text-zinc-100 mb-4">Import complete</h2>
+            <h2 className="text-sm font-semibold text-zinc-100 mb-4">{t('gedcom.done')}</h2>
             <StatsSummary stats={stats} />
             <button
               onClick={onClose}
               className="mt-6 w-full px-4 py-2 text-sm font-medium text-white bg-brand-500 hover:bg-brand-400 rounded-lg transition-colors"
             >
-              Close
+              {t('gedcom.close')}
             </button>
           </div>
         )}
@@ -557,27 +563,27 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
             {/* Header */}
             <div className="px-5 pt-5 pb-3 border-b border-zinc-800 shrink-0">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-zinc-100">Import preview</h2>
+                <h2 className="text-sm font-semibold text-zinc-100">{t('gedcom.preview')}</h2>
                 <button onClick={onClose} className="text-zinc-600 hover:text-zinc-300 text-lg leading-none">×</button>
               </div>
 
               {/* Info chips (persons + non-toggleable counts) */}
               <div className="flex flex-wrap gap-1.5 mt-2 mb-3">
                 <span className="text-[11px] px-2 py-0.5 bg-zinc-800 text-zinc-400 rounded-full">
-                  {preview.persons.length} person{preview.persons.length !== 1 ? 's' : ''}
+                  {preview.persons.length} {t(preview.persons.length !== 1 ? 'gedcom.personPlural' : 'gedcom.personSingle')}
                 </span>
               </div>
 
               {/* Toggleable import options */}
               <div className="space-y-1.5">
-                <p className="text-[10px] font-medium uppercase tracking-widest text-zinc-600">What to import</p>
+                <p className="text-[10px] font-medium uppercase tracking-widest text-zinc-600">{t('gedcom.whatToImport')}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {([
-                    { key: 'relations' as const, label: 'Relations',  count: preview.relations_count },
-                    { key: 'events'    as const, label: 'Events',     count: preview.events_count },
-                    { key: 'sources'   as const, label: 'Sources',    count: preview.sources_count },
-                    { key: 'notes'     as const, label: 'Notes',      count: preview.notes_count },
-                    { key: 'documents' as const, label: 'Documents',  count: preview.documents_count },
+                    { key: 'relations' as const, label: t('gedcom.relations'), count: preview.relations_count },
+                    { key: 'events'    as const, label: t('gedcom.events'),    count: preview.events_count },
+                    { key: 'sources'   as const, label: t('gedcom.sources'),   count: preview.sources_count },
+                    { key: 'notes'     as const, label: t('gedcom.notes'),     count: preview.notes_count },
+                    { key: 'documents' as const, label: t('gedcom.documents'), count: preview.documents_count },
                   ] as { key: keyof ImportOptions; label: string; count: number }[])
                     .filter(item => item.count > 0)
                     .map(({ key, label, count }) => {
@@ -593,7 +599,7 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
                               ? 'bg-zinc-700/60 border-zinc-600 text-zinc-200 hover:bg-zinc-700'
                               : 'bg-transparent border-zinc-800 text-zinc-600 hover:border-zinc-700 hover:text-zinc-500',
                           ].join(' ')}
-                          title={on ? `Exclude ${label.toLowerCase()} from import` : `Include ${label.toLowerCase()} in import`}
+                          title={on ? t('gedcom.excludeFromImport', { label: label.toLowerCase() }) : t('gedcom.includeInImport', { label: label.toLowerCase() })}
                         >
                           {on ? (
                             <svg className="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -619,13 +625,13 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
                   onClick={() => applyAll('merge')}
                   className="text-[11px] px-2.5 py-1 bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60 rounded-lg transition-colors"
                 >
-                  Merge all matched
+                  {t('gedcom.mergeAll')}
                 </button>
                 <button
                   onClick={() => applyAll('create')}
                   className="text-[11px] px-2.5 py-1 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 rounded-lg transition-colors"
                 >
-                  Create all as new
+                  {t('gedcom.createAll')}
                 </button>
               </div>
             </div>
@@ -635,9 +641,9 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
               <table className="w-full text-left">
                 <thead className="sticky top-0 bg-zinc-900 border-b border-zinc-800 z-10">
                   <tr>
-                    <th className="py-2 px-3 text-[11px] font-medium text-zinc-500 uppercase tracking-wide">Incoming person</th>
-                    <th className="py-2 px-2 text-[11px] font-medium text-zinc-500 uppercase tracking-wide text-center w-20">Match</th>
-                    <th className="py-2 px-3 text-[11px] font-medium text-zinc-500 uppercase tracking-wide">Action</th>
+                    <th className="py-2 px-3 text-[11px] font-medium text-zinc-500 uppercase tracking-wide">{t('gedcom.colIncoming')}</th>
+                    <th className="py-2 px-2 text-[11px] font-medium text-zinc-500 uppercase tracking-wide text-center w-20">{t('gedcom.colMatch')}</th>
+                    <th className="py-2 px-3 text-[11px] font-medium text-zinc-500 uppercase tracking-wide">{t('gedcom.colAction')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -674,13 +680,13 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
                   onClick={() => setPhase('upload')}
                   className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
                 >
-                  ← Back
+                  {t('gedcom.backArrow')}
                 </button>
                 <button
                   onClick={handleConfirm}
                   className="flex-1 px-4 py-2 text-sm font-medium text-white bg-brand-500 hover:bg-brand-400 rounded-lg transition-colors"
                 >
-                  Confirm import
+                  {t('gedcom.confirmImport')}
                 </button>
               </div>
             </div>

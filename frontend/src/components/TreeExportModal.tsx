@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { PersonFull } from '../types'
 import { api } from '../api'
-import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 import type { NameOrder } from '../SettingsContext'
 
 const NW = 148, NH = 82
@@ -178,6 +178,7 @@ interface Props {
 
 export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, canvasH, probandId, onClose }: Props) {
   const { nameOrder } = useSettings()
+  const t = useT()
   const [scale,  setScale]  = useState<Scale>(2)
   const [theme,  setTheme]  = useState<Theme>('dark')
   const [photos, setPhotos] = useState(true)
@@ -224,8 +225,8 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">Family Tree</p>
-            <h2 className="text-sm font-semibold text-zinc-100">Export as PNG</h2>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">{t('treeExport.family')}</p>
+            <h2 className="text-sm font-semibold text-zinc-100">{t('treeExport.heading')}</h2>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors shrink-0">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -237,7 +238,7 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
         <div className="px-5 py-5 space-y-5">
           {/* Resolution */}
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">Resolution</p>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">{t('treeExport.resolution')}</p>
             <div className="flex gap-2">
               {([1, 2] as Scale[]).map(s => (
                 <button key={s} onClick={() => setScale(s)}
@@ -247,7 +248,7 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
                       ? 'bg-violet-600/20 border-violet-500/60 text-violet-300'
                       : 'bg-zinc-800/50 border-zinc-700 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300',
                   ].join(' ')}>
-                  {s === 1 ? '1× — Screen' : '2× — Print quality'}
+                  {s === 1 ? t('treeExport.res1x') : t('treeExport.res2x')}
                 </button>
               ))}
             </div>
@@ -256,18 +257,18 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
 
           {/* Background */}
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">Background</p>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">{t('treeExport.background')}</p>
             <div className="flex gap-2">
-              {(['dark', 'light'] as Theme[]).map(t => (
-                <button key={t} onClick={() => setTheme(t)}
+              {(['dark', 'light'] as Theme[]).map(thm => (
+                <button key={thm} onClick={() => setTheme(thm)}
                   className={[
                     'flex-1 py-2 rounded-lg border text-xs font-medium transition-colors flex items-center justify-center gap-2',
-                    theme === t
+                    theme === thm
                       ? 'bg-violet-600/20 border-violet-500/60 text-violet-300'
                       : 'bg-zinc-800/50 border-zinc-700 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300',
                   ].join(' ')}>
-                  <span className={`w-3 h-3 rounded-sm border shrink-0 ${t === 'dark' ? 'bg-zinc-950 border-zinc-600' : 'bg-white border-zinc-300'}`}/>
-                  {t === 'dark' ? 'Dark' : 'Light'}
+                  <span className={`w-3 h-3 rounded-sm border shrink-0 ${thm === 'dark' ? 'bg-zinc-950 border-zinc-600' : 'bg-white border-zinc-300'}`}/>
+                  {thm === 'dark' ? t('treeExport.dark') : t('treeExport.light')}
                 </button>
               ))}
             </div>
@@ -276,8 +277,8 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
           {/* Photos toggle */}
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs font-medium text-zinc-300">Include face photos</p>
-              <p className="text-[10px] text-zinc-600 mt-0.5">Embed avatar images from the database</p>
+              <p className="text-xs font-medium text-zinc-300">{t('treeExport.includeFaces')}</p>
+              <p className="text-[10px] text-zinc-600 mt-0.5">{t('treeExport.includeFacesDesc')}</p>
             </div>
             <button onClick={() => setPhotos(v => !v)}
               className={['relative w-9 h-5 rounded-full transition-colors shrink-0', photos ? 'bg-violet-600' : 'bg-zinc-700'].join(' ')}>
@@ -299,14 +300,14 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
                 </svg>
-                Generating…
+                {t('treeExport.generating')}
               </>
             ) : (
               <>
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
                 </svg>
-                Download PNG
+                {t('treeExport.download')}
               </>
             )}
           </button>

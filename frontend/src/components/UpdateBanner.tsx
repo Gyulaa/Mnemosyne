@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../api'
-import { useSettings } from '../SettingsContext'
+import { useSettings, useT } from '../SettingsContext'
 import type { UpdateStatus } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -13,6 +13,7 @@ function fmtMB(bytes: number) {
 // ── Header icon button ────────────────────────────────────────────────────────
 
 function UpdateIcon({ status, onClick }: { status: UpdateStatus['status'] | 'unknown'; onClick: () => void }) {
+  const t = useT()
   const dotColor =
     status === 'error'            ? 'bg-red-400' :
     status === 'ready'            ? 'bg-green-400' :
@@ -24,7 +25,7 @@ function UpdateIcon({ status, onClick }: { status: UpdateStatus['status'] | 'unk
   return (
     <button
       onClick={onClick}
-      title="Updates"
+      title={t('update.title')}
       className="w-8 h-8 rounded-md flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors relative"
     >
       {/* Cloud-download icon */}
@@ -61,6 +62,7 @@ function Modal({
   onDownload: () => void
   onApply: () => void
 }) {
+  const t = useT()
   const pct = status.total > 0 ? Math.round((status.downloaded / status.total) * 100) : 0
 
   return createPortal(
@@ -75,16 +77,16 @@ function Modal({
         {/* Header */}
         <div className="flex items-start justify-between px-6 pt-6 pb-4">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">App update</p>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">{t('update.header')}</p>
             <h2 className="text-base font-semibold text-zinc-100">
-              {status.status === 'idle'             && 'Check for Updates'}
-              {status.status === 'up_to_date'       && 'You\'re up to date'}
-              {status.status === 'checking'         && 'Checking for updates…'}
-              {status.status === 'update_available' && 'Update Available'}
-              {status.status === 'downloading'      && 'Downloading…'}
-              {status.status === 'ready'            && 'Ready to Install'}
-              {status.status === 'applying'         && 'Applying Update…'}
-              {status.status === 'error'            && 'Update Failed'}
+              {status.status === 'idle'             && t('update.idle')}
+              {status.status === 'up_to_date'       && t('update.upToDate')}
+              {status.status === 'checking'         && t('update.checking')}
+              {status.status === 'update_available' && t('update.available')}
+              {status.status === 'downloading'      && t('update.downloading')}
+              {status.status === 'ready'            && t('update.ready')}
+              {status.status === 'applying'         && t('update.applying')}
+              {status.status === 'error'            && t('update.error')}
             </h2>
           </div>
           <button
@@ -104,7 +106,7 @@ function Modal({
           {status.current_version && (
             <div className="flex items-center gap-3 text-sm">
               <div className="text-center">
-                <p className="text-[10px] text-zinc-500 mb-0.5">Current version</p>
+                <p className="text-[10px] text-zinc-500 mb-0.5">{t('update.currentVersion')}</p>
                 <p className="font-mono text-xs text-zinc-300 bg-zinc-800 px-2 py-1 rounded-md">
                   {status.current_version}
                 </p>
@@ -115,7 +117,7 @@ function Modal({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
                   <div className="text-center">
-                    <p className="text-[10px] text-zinc-500 mb-0.5">Latest version</p>
+                    <p className="text-[10px] text-zinc-500 mb-0.5">{t('update.latestVersion')}</p>
                     <p className="font-mono text-xs text-green-300 bg-green-950/50 border border-green-800/40 px-2 py-1 rounded-md">
                       {status.latest_version}
                     </p>
@@ -127,7 +129,7 @@ function Modal({
 
           {/* Idle */}
           {status.status === 'idle' && (
-            <p className="text-sm text-zinc-400">Click the button below to check for a new version.</p>
+            <p className="text-sm text-zinc-400">{t('update.idleBody')}</p>
           )}
 
           {/* Checking spinner */}
@@ -137,28 +139,24 @@ function Modal({
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
               </svg>
-              Checking GitHub…
+              {t('update.checkingBody')}
             </div>
           )}
 
           {/* Up to date */}
           {status.status === 'up_to_date' && (
-            <p className="text-sm text-zinc-400">Mnemosyne is up to date — no new version available.</p>
+            <p className="text-sm text-zinc-400">{t('update.upToDateBody')}</p>
           )}
 
           {/* Update available */}
           {status.status === 'update_available' && (
             <div className="space-y-3">
-              <p className="text-sm text-zinc-300">
-                A new version is available. After downloading, the app will close, update itself, and restart automatically.
-              </p>
+              <p className="text-sm text-zinc-300">{t('update.availableBody')}</p>
               <div className="flex items-start gap-2 p-3 bg-zinc-800/60 rounded-xl border border-zinc-700/50">
                 <svg className="w-4 h-4 text-green-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
-                <p className="text-[12px] text-zinc-400 leading-relaxed">
-                  Your projects and settings are <strong className="text-zinc-200">safe</strong> — the update will not touch your data.
-                </p>
+                <p className="text-[12px] text-zinc-400 leading-relaxed">{t('update.safeNote')}</p>
               </div>
             </div>
           )}
@@ -176,7 +174,7 @@ function Modal({
                   style={{ width: `${pct}%` }}
                 />
               </div>
-              <p className="text-xs text-zinc-500">Don't close the app while downloading.</p>
+              <p className="text-xs text-zinc-500">{t('update.downloadingWarning')}</p>
             </div>
           )}
 
@@ -187,13 +185,9 @@ function Modal({
                 <svg className="w-4 h-4 text-green-400 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                 </svg>
-                <p className="text-[12px] text-green-300 leading-relaxed">
-                  Update downloaded. Click <strong>"Apply &amp; Restart"</strong> — the app will close, update itself, and restart automatically.
-                </p>
+                <p className="text-[12px] text-green-300 leading-relaxed">{t('update.readyBody')}</p>
               </div>
-              <p className="text-[11px] text-zinc-500">
-                Your projects and settings will be preserved. On macOS, if the app is installed in <code className="text-zinc-400">/Applications</code>, an admin password prompt may appear.
-              </p>
+              <p className="text-[11px] text-zinc-500">{t('update.readyNote')}</p>
             </div>
           )}
 
@@ -205,8 +199,8 @@ function Modal({
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
               </svg>
               <div>
-                <p className="font-medium">Applying update…</p>
-                <p className="text-xs text-zinc-500 mt-0.5">The app will close and restart shortly.</p>
+                <p className="font-medium">{t('update.applying')}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">{t('update.applyingBody')}</p>
               </div>
             </div>
           )}
@@ -229,7 +223,7 @@ function Modal({
                 onClick={onClose}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
               >
-                Close
+                {t('update.close')}
               </button>
               <button
                 onClick={onCheck}
@@ -238,7 +232,7 @@ function Modal({
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
-                Check for updates
+                {t('update.check')}
               </button>
             </>
           )}
@@ -249,7 +243,7 @@ function Modal({
                 onClick={onClose}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
               >
-                Not now
+                {t('update.notNow')}
               </button>
               <button
                 onClick={onDownload}
@@ -258,7 +252,7 @@ function Modal({
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                Download update
+                {t('update.download')}
               </button>
             </>
           )}
@@ -269,7 +263,7 @@ function Modal({
                 onClick={onClose}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
               >
-                Later
+                {t('update.later')}
               </button>
               <button
                 onClick={onApply}
@@ -278,7 +272,7 @@ function Modal({
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
-                Apply &amp; Restart
+                {t('update.applyRestart')}
               </button>
             </>
           )}
@@ -288,7 +282,7 @@ function Modal({
               onClick={onClose}
               className="px-4 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
             >
-              Bezár
+              {t('update.close')}
             </button>
           )}
         </div>

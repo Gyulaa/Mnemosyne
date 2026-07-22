@@ -8,7 +8,7 @@ import ExportModal from './ExportModal'
 import StatisticsView from './StatisticsView'
 import GedcomImportModal from './GedcomImportModal'
 import NameEditor, { NameParts, deriveDisplayName } from './NameEditor'
-import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 
 // ── GEDCOM export modal ───────────────────────────────────────────────────────
 
@@ -21,6 +21,7 @@ type GedcomOpts = {
 }
 
 function GedcomExportModal({ onExport, onClose }: { onExport: (opts: GedcomOpts) => void; onClose: () => void }) {
+  const t = useT()
   const [photoMode, setPhotoMode] = useState<GedcomOpts['photoMode']>('primary')
   const [includeDocuments, setIncludeDocuments] = useState(true)
   const [includeEvents, setIncludeEvents] = useState(true)
@@ -35,6 +36,19 @@ function GedcomExportModal({ onExport, onClose }: { onExport: (opts: GedcomOpts)
   const radioBase = 'w-4 h-4 accent-brand-500 shrink-0'
   const optionLabel = 'flex items-start gap-3 cursor-pointer'
 
+  const photoModes: Array<[GedcomOpts['photoMode'], string, string]> = [
+    ['none',    t('gedcomExport.noPhotos'),    t('gedcomExport.skipPhotos')],
+    ['primary', t('gedcomExport.primaryOnly'), t('gedcomExport.primaryOnlyDesc')],
+    ['all',     t('gedcomExport.allPhotos'),   t('gedcomExport.allPhotosDesc')],
+  ]
+
+  const includeOpts = [
+    { id: 'Documents', label: t('gedcomExport.documents'), checked: includeDocuments, setter: setIncludeDocuments },
+    { id: 'Events',    label: t('gedcomExport.events'),    checked: includeEvents,    setter: setIncludeEvents },
+    { id: 'Sources',   label: t('gedcomExport.sources'),   checked: includeSources,   setter: setIncludeSources },
+    { id: 'Notes',     label: t('gedcomExport.notes'),     checked: includeNotes,     setter: setIncludeNotes },
+  ]
+
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <form
@@ -42,19 +56,15 @@ function GedcomExportModal({ onExport, onClose }: { onExport: (opts: GedcomOpts)
         className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
-        <h2 className="text-sm font-semibold text-zinc-100 mb-1">GEDCOM export settings</h2>
-        <p className="text-xs text-zinc-500 mb-5">Exports a ZIP with <code>family.ged</code> and a <code>media/</code> folder.</p>
+        <h2 className="text-sm font-semibold text-zinc-100 mb-1">{t('gedcomExport.heading')}</h2>
+        <p className="text-xs text-zinc-500 mb-5">{t('gedcomExport.desc')}</p>
 
         <div className="space-y-4">
           {/* Photo mode */}
           <div>
-            <p className="text-xs text-zinc-400 mb-2">Photos</p>
+            <p className="text-xs text-zinc-400 mb-2">{t('gedcomExport.photos')}</p>
             <div className="space-y-2">
-              {([
-                ['none',    'No photos',              'Skip photos entirely'],
-                ['primary', 'Primary photo only',     'One thumbnail photo per person'],
-                ['all',     'All photos',             'Every photo the person appears in'],
-              ] as const).map(([val, label, desc]) => (
+              {photoModes.map(([val, label, desc]) => (
                 <label key={val} className={optionLabel}>
                   <input
                     type="radio"
@@ -75,14 +85,9 @@ function GedcomExportModal({ onExport, onClose }: { onExport: (opts: GedcomOpts)
 
           {/* Content toggles */}
           <div className="border-t border-zinc-800 pt-4 space-y-3">
-            <p className="text-xs text-zinc-400">Include</p>
-            {([
-              ['Documents',  includeDocuments, setIncludeDocuments] as const,
-              ['Events',     includeEvents,    setIncludeEvents]    as const,
-              ['Sources',    includeSources,   setIncludeSources]   as const,
-              ['Notes',      includeNotes,     setIncludeNotes]     as const,
-            ]).map(([label, checked, setter]) => (
-              <label key={label} className={optionLabel}>
+            <p className="text-xs text-zinc-400">{t('gedcomExport.include')}</p>
+            {includeOpts.map(({ id, label, checked, setter }) => (
+              <label key={id} className={optionLabel}>
                 <input
                   type="checkbox"
                   checked={checked}
@@ -101,13 +106,13 @@ function GedcomExportModal({ onExport, onClose }: { onExport: (opts: GedcomOpts)
             onClick={onClose}
             className="flex-1 px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
           >
-            Cancel
+            {t('gedcomExport.cancel')}
           </button>
           <button
             type="submit"
             className="flex-1 px-4 py-2 text-sm font-medium text-white bg-brand-500 hover:bg-brand-400 rounded-lg transition-colors"
           >
-            Export
+            {t('gedcomExport.export')}
           </button>
         </div>
       </form>
@@ -185,6 +190,7 @@ function FamilyDropdown({
   onSelect: (key: string | null) => void
   onRename: (key: string, name: string) => void
 }) {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [renamingKey, setRenamingKey] = useState<string | null>(null)
   const [renameVal, setRenameVal] = useState('')
@@ -202,7 +208,7 @@ function FamilyDropdown({
   const selectedGroup = selectedKey ? groups.find(g => g.key === selectedKey) : null
   const currentLabel = selectedGroup
     ? (groupNames[selectedGroup.key] ?? selectedGroup.autoName)
-    : 'All'
+    : t('tree.allFamilies')
 
   if (!groups.length) return null
 
@@ -226,7 +232,7 @@ function FamilyDropdown({
             onClick={() => { onSelect(null); setOpen(false) }}
             className={`w-full flex items-center justify-between px-3.5 py-2 text-left text-sm hover:bg-zinc-700 transition-colors ${!selectedKey ? 'text-brand-300 font-medium' : 'text-zinc-200'}`}
           >
-            <span>All</span>
+            <span>{t('tree.allFamilies')}</span>
             <span className="text-xs text-zinc-500 tabular-nums ml-3">{allCount}</span>
           </button>
 
@@ -262,7 +268,7 @@ function FamilyDropdown({
                     <button
                       onClick={() => { setRenamingKey(g.key); setRenameVal(name) }}
                       className="pr-3 py-2 opacity-0 group-hover/row:opacity-100 text-zinc-500 hover:text-zinc-200 transition-opacity text-xs shrink-0"
-                      title="Rename"
+                      title={t('tree.rename')}
                     >✎</button>
                   </>
                 )}
@@ -305,6 +311,7 @@ function PersonAvatar({ person, size = 36 }: { person: PersonFull; size?: number
 const EMPTY_NAME: NameParts = { title: '', first_name: '', last_name: '', middle_name: '', nickname: '' }
 
 function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: PersonFull) => void }) {
+  const t = useT()
   const [nameParts, setNameParts] = useState<NameParts>(EMPTY_NAME)
   const [sex, setSex]             = useState<'' | 'M' | 'F'>('')
   const [birthYear, setBirthYear] = useState('')
@@ -335,37 +342,37 @@ function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-[420px] max-w-[92vw] p-5" onClick={e => e.stopPropagation()}>
-        <h3 className="text-sm font-semibold text-zinc-100 mb-4">Add new person</h3>
+        <h3 className="text-sm font-semibold text-zinc-100 mb-4">{t('newPerson.heading')}</h3>
 
         {/* Name fields */}
         <div className="space-y-2 mb-4">
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className={LABEL}>First name *</label>
+              <label className={LABEL}>{t('newPerson.firstName')}</label>
               <input autoFocus value={nameParts.first_name} onChange={e => setNameParts(p => ({ ...p, first_name: e.target.value }))}
-                placeholder="Jane" className={INPUT} />
+                placeholder={t('newPerson.firstNamePh')} className={INPUT} />
             </div>
             <div>
-              <label className={LABEL}>Last name *</label>
+              <label className={LABEL}>{t('newPerson.lastName')}</label>
               <input value={nameParts.last_name} onChange={e => setNameParts(p => ({ ...p, last_name: e.target.value }))}
-                placeholder="Doe" className={INPUT} />
+                placeholder={t('newPerson.lastNamePh')} className={INPUT} />
             </div>
             <div>
-              <label className={LABEL}>Middle name(s)</label>
+              <label className={LABEL}>{t('newPerson.middleName')}</label>
               <input value={nameParts.middle_name} onChange={e => setNameParts(p => ({ ...p, middle_name: e.target.value }))}
-                placeholder="Marie" className={INPUT} />
+                placeholder={t('newPerson.middleNamePh')} className={INPUT} />
             </div>
             <div>
-              <label className={LABEL}>Title / Suffix</label>
+              <label className={LABEL}>{t('newPerson.titleSuffix')}</label>
               <input value={nameParts.title} onChange={e => setNameParts(p => ({ ...p, title: e.target.value }))}
-                placeholder="Dr., Jr., …" className={INPUT} />
+                placeholder={t('newPerson.titlePh')} className={INPUT} />
             </div>
           </div>
 
           {/* Preview */}
           {displayName && (
             <p className="text-[11px] text-zinc-500">
-              Displayed as: <span className="text-zinc-300 font-medium">{displayName}</span>
+              {t('newPerson.displayedAs')} <span className="text-zinc-300 font-medium">{displayName}</span>
             </p>
           )}
         </div>
@@ -373,32 +380,32 @@ function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated
         {/* Birth, death, sex */}
         <div className="grid grid-cols-3 gap-2 mb-4">
           <div>
-            <label className={LABEL}>Birth year</label>
+            <label className={LABEL}>{t('newPerson.birthYear')}</label>
             <input type="number" value={birthYear} onChange={e => setBirthYear(e.target.value)}
-              placeholder="1945" className={INPUT} />
+              placeholder={t('newPerson.birthYearPh')} className={INPUT} />
           </div>
           <div>
-            <label className={LABEL}>Death year</label>
+            <label className={LABEL}>{t('newPerson.deathYear')}</label>
             <input type="number" value={deathYear} onChange={e => setDeathYear(e.target.value)}
-              placeholder="2010" className={INPUT} />
+              placeholder={t('newPerson.deathYearPh')} className={INPUT} />
           </div>
           <div>
-            <label className={LABEL}>Sex</label>
+            <label className={LABEL}>{t('newPerson.sex')}</label>
             <select value={sex} onChange={e => setSex(e.target.value as '' | 'M' | 'F')}
               className={INPUT}>
-              <option value="">—</option>
-              <option value="M">Male</option>
-              <option value="F">Female</option>
+              <option value="">{t('newPerson.sexNone')}</option>
+              <option value="M">{t('newPerson.sexMale')}</option>
+              <option value="F">{t('newPerson.sexFemale')}</option>
             </select>
           </div>
         </div>
 
         {mut.error && <p className="mb-3 text-xs text-red-400">{String(mut.error)}</p>}
         <div className="flex gap-2">
-          <button onClick={onClose} className="flex-1 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">Cancel</button>
+          <button onClick={onClose} className="flex-1 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">{t('newPerson.cancel')}</button>
           <button onClick={() => mut.mutate()} disabled={!canSubmit || mut.isPending}
             className="flex-1 px-3 py-2 text-sm font-medium bg-brand-500 hover:bg-brand-600 disabled:opacity-40 text-white rounded-lg transition-colors">
-            {mut.isPending ? 'Saving…' : 'Create'}
+            {mut.isPending ? t('newPerson.saving') : t('newPerson.create')}
           </button>
         </div>
       </div>
@@ -424,6 +431,7 @@ export default function FamilyTreeTab({
   onNavToDocument?: (docId: number, editMode?: boolean) => void
 }) {
   const { nameOrder } = useSettings()
+  const t = useT()
   const [activeView, setActiveView] = useState<'tree' | 'stats'>('tree')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null)
@@ -613,7 +621,7 @@ export default function FamilyTreeTab({
         <button
           onClick={() => setSidebarOpen(o => !o)}
           className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors shrink-0 ${sidebarOpen ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
-          title="Person list"
+          title={t('tree.personList')}
         >
           <svg width="16" height="12" viewBox="0 0 16 12" fill="none">
             <rect x="0" y="0" width="16" height="2" rx="1" fill="currentColor"/>
@@ -626,7 +634,7 @@ export default function FamilyTreeTab({
         <button
           onClick={() => setShowNew(true)}
           className="h-7 px-3 text-xs font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-full transition-colors shrink-0"
-        >+ New person</button>
+        >{t('tree.newPerson')}</button>
 
         {/* Family dropdown — only if there are multi-person groups */}
         {groups.length > 0 && (
@@ -649,9 +657,9 @@ export default function FamilyTreeTab({
             onClick={() => setShowExportModal(true)}
             disabled={exporting}
             className="h-7 px-3 text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-600 rounded-full transition-colors shrink-0 disabled:opacity-40"
-            title="Export this family tree with linked clusters and photos"
+            title={t('tree.exportTreeTooltip')}
           >
-            {exporting ? 'Exporting…' : 'Export tree'}
+            {exporting ? t('tree.exportingPng') : t('tree.exportPng')}
           </button>
         )}
 
@@ -661,17 +669,17 @@ export default function FamilyTreeTab({
             onClick={() => setShowGedcomModal(true)}
             disabled={exportingGedcom}
             className="h-7 px-3 text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-600 rounded-full transition-colors shrink-0 disabled:opacity-40"
-            title="Export GEDCOM 5.5.1 + media ZIP"
+            title={t('tree.exportGedcomTooltip')}
           >
-            {exportingGedcom ? 'Exporting…' : 'GEDCOM ↓'}
+            {exportingGedcom ? t('tree.exportGedcomBusy') : t('tree.exportGedcom')}
           </button>
         )}
         <button
           onClick={() => setShowGedcomImport(true)}
           className="h-7 px-3 text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-600 rounded-full transition-colors shrink-0"
-          title="GEDCOM importálás (.ged vagy .zip)"
+          title={t('tree.importGedcomTooltip')}
         >
-          GEDCOM ↑
+          {t('tree.importGedcom')}
         </button>
 
         {/* View toggle */}
@@ -682,18 +690,18 @@ export default function FamilyTreeTab({
               <button
                 onClick={() => setActiveView('tree')}
                 className={`h-7 px-3 text-xs font-medium transition-colors ${activeView === 'tree' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
-              >Tree</button>
+              >{t('tree.viewTree')}</button>
               <button
                 onClick={() => setActiveView('stats')}
                 className={`h-7 px-3 text-xs font-medium transition-colors ${activeView === 'stats' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
-              >Statistics</button>
+              >{t('tree.viewStats')}</button>
             </div>
           </>
         )}
 
         {/* Stats */}
         <div className="ml-auto text-xs text-zinc-600 shrink-0 tabular-nums">
-          {displayPersons.length} persons · {displayRelations.length} relations
+          {t('tree.statsLine', { persons: displayPersons.length, relations: displayRelations.length })}
         </div>
       </div>
 
@@ -706,7 +714,7 @@ export default function FamilyTreeTab({
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search..."
+              placeholder={t('tree.search')}
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
             />
             {/* Unlinked filter — always show if unlinked persons exist */}
@@ -715,16 +723,16 @@ export default function FamilyTreeTab({
                 onClick={() => setShowOnlyUnlinked(o => !o)}
                 className={`w-full flex items-center justify-between px-2.5 py-1 rounded-lg text-xs transition-colors ${showOnlyUnlinked ? 'bg-brand-500/20 text-brand-300 border border-brand-500/30' : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300 border border-zinc-700'}`}
               >
-                <span>No relations</span>
+                <span>{t('person.noRelations')}</span>
                 <span className="tabular-nums">{unlinkedCount}</span>
               </button>
             )}
           </div>
           <div className="flex-1 overflow-y-auto">
-            {isLoading && <p className="px-4 py-6 text-center text-zinc-500 text-sm">Loading...</p>}
+            {isLoading && <p className="px-4 py-6 text-center text-zinc-500 text-sm">{t('tree.loading')}</p>}
             {!isLoading && sidebarPersons.length === 0 && (
               <p className="px-4 py-6 text-center text-zinc-500 text-sm">
-                {search || showOnlyUnlinked ? 'No results' : 'No persons'}
+                {search || showOnlyUnlinked ? t('tree.noResults') : t('tree.noPersons')}
               </p>
             )}
             {sidebarPersons.map(p => (
@@ -736,7 +744,7 @@ export default function FamilyTreeTab({
                 <PersonAvatar person={p} size={32} />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm text-zinc-100 truncate font-medium">{displayPersonName(p, nameOrder)}</div>
-                  <div className="text-xs text-zinc-500 truncate">{lifespan(p) ?? (p.face_count > 0 ? `${p.face_count} photos` : 'No photos')}</div>
+                  <div className="text-xs text-zinc-500 truncate">{lifespan(p) ?? (p.face_count > 0 ? t('tree.photos', { n: p.face_count }) : t('tree.noPhotos'))}</div>
                 </div>
               </button>
             ))}
@@ -750,10 +758,10 @@ export default function FamilyTreeTab({
           ) : displayPersons.length === 0 && !isLoading ? (
             <div className="h-full flex flex-col items-center justify-center gap-3 text-center">
               <div className="text-5xl opacity-15">🌳</div>
-              <p className="text-zinc-500 text-sm">No persons yet</p>
+              <p className="text-zinc-500 text-sm">{t('tree.empty')}</p>
               <button onClick={() => setShowNew(true)}
                 className="px-4 py-2 text-sm bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors">
-                + Add new person
+                {t('tree.addNew')}
               </button>
             </div>
           ) : (

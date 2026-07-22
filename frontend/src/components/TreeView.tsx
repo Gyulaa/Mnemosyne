@@ -2,7 +2,7 @@ import { useState, useRef, useMemo, useEffect } from 'react'
 import type { PersonFull, Relation } from '../types'
 import { api } from '../api'
 import TreeExportModal from './TreeExportModal'
-import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const NW = 148
@@ -878,6 +878,7 @@ function PersonCard({ person, selected, isProband }: {
   selected: boolean
   isProband?: boolean
 }) {
+  const t = useT()
   const [imgErr, setImgErr] = useState(false)
   const { nameOrder } = useSettings()
   const span = person.birth_year
@@ -892,7 +893,7 @@ function PersonCard({ person, selected, isProband }: {
         : 'bg-zinc-800/90 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800',
     ].join(' ')}>
       {isProband && (
-        <div className="absolute top-1 right-1 text-[10px] text-amber-400 leading-none" title="Focus person">★</div>
+        <div className="absolute top-1 right-1 text-[10px] text-amber-400 leading-none" title={t('treeView.focusPerson')}>★</div>
       )}
       {person.thumbnail_face_id && !imgErr ? (
         <img src={api.faceThumbnailUrl(person.thumbnail_face_id, 96)} alt=""
@@ -934,6 +935,7 @@ export default function TreeView({
   panelOpen?: boolean
 }) {
   const { nameOrder } = useSettings()
+  const t = useT()
   const containerRef = useRef<HTMLDivElement>(null)
   const [pan,  setPan]  = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
@@ -1082,7 +1084,7 @@ export default function TreeView({
     return (
       <div className="flex flex-col items-center justify-center h-full gap-2">
         <div className="text-4xl opacity-20">🌳</div>
-        <p className="text-zinc-500 text-sm">No persons yet</p>
+        <p className="text-zinc-500 text-sm">{t('treeView.empty')}</p>
       </div>
     )
   }
@@ -1114,11 +1116,11 @@ export default function TreeView({
           <div className="absolute bottom-3 right-3 z-10 flex gap-1.5 flex-wrap justify-end">
             <button onClick={() => setExportOpen(true)}
               className="h-7 px-2.5 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 text-xs flex items-center gap-1.5"
-              title="Export family tree as PNG">
+              title={t('treeView.exportTitle')}>
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
               </svg>
-              Export
+              {t('treeView.export')}
             </button>
             <button onClick={() => setZoom(z => clamp(z * 1.2, 0.15, 3))}
               className="w-7 h-7 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-300 hover:bg-zinc-700 flex items-center justify-center text-sm font-bold">+</button>
@@ -1127,9 +1129,9 @@ export default function TreeView({
             <button onClick={() => setZoom(z => clamp(z * 0.8, 0.15, 3))}
               className="w-7 h-7 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-300 hover:bg-zinc-700 flex items-center justify-center text-sm font-bold">−</button>
             <button onClick={resetView}
-              className="h-7 px-2.5 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 text-xs">Reset</button>
+              className="h-7 px-2.5 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 text-xs">{t('treeView.reset')}</button>
             <div className="flex items-center gap-1 ml-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7">
-              <span className="text-[10px] text-zinc-500">Anc</span>
+              <span className="text-[10px] text-zinc-500">{t('treeView.anc')}</span>
               <button onClick={() => setAncestorDepth(d => Math.max(1, d - 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
               <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{ancestorDepth}</span>
@@ -1137,7 +1139,7 @@ export default function TreeView({
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
             </div>
             <div className="flex items-center gap-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7">
-              <span className="text-[10px] text-zinc-500">Desc</span>
+              <span className="text-[10px] text-zinc-500">{t('treeView.desc')}</span>
               <button onClick={() => setDescendantDepth(d => Math.max(1, d - 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
               <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{descendantDepth}</span>
@@ -1149,13 +1151,13 @@ export default function TreeView({
           <div className="absolute bottom-3 left-3 z-10 flex items-center gap-4 text-[10px] text-zinc-600">
             <span className="flex items-center gap-1.5">
               <svg width="22" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#52525b" strokeWidth="1.5"/></svg>
-              parent–child
+              {t('treeView.legendParent')}
             </span>
             <span className="flex items-center gap-1.5">
               <svg width="22" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#7c3aed" strokeWidth="2" strokeDasharray="5 3"/></svg>
-              spouse
+              {t('treeView.legendSpouse')}
             </span>
-            <span>Drag · scroll · Shift+click=fókusz</span>
+            <span>{t('treeView.dragHint')}</span>
           </div>
         </>
       )}
@@ -1225,7 +1227,7 @@ export default function TreeView({
                   }}
                   className="absolute left-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-zinc-800 border border-zinc-600 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200 text-xs flex items-center justify-center transition-colors cursor-pointer"
                   style={{ top: NH + 4, zIndex: 20 }}
-                  title="Collapse subtree"
+                  title={t('treeView.collapse')}
                 >▼</button>
               )}
 
@@ -1238,7 +1240,7 @@ export default function TreeView({
                   }}
                   className="absolute left-1/2 -translate-x-1/2 h-5 min-w-[20px] px-1.5 flex items-center justify-center rounded-full font-bold text-[9px] bg-brand-800 border border-brand-500 text-brand-300 hover:bg-brand-700 transition-colors cursor-pointer select-none"
                   style={{ top: NH + 4, zIndex: 20 }}
-                  title={`Expand — ${hiddenCount} persons hidden`}
+                  title={t('treeView.expand', { n: hiddenCount })}
                 >▶ +{hiddenCount}</button>
               )}
 
@@ -1266,11 +1268,11 @@ export default function TreeView({
                     style={{ position: 'absolute', top: -26, left: '50%', transform: 'translateX(-50%)', zIndex: 20 }}
                     className="flex items-center h-6 rounded-full bg-zinc-900 border border-violet-600/70 text-violet-300 shadow-lg whitespace-nowrap select-none"
                   >
-                    <button onClick={goPrev} title="Previous spouse"
+                    <button onClick={goPrev} title={t('treeView.prevSpouse')}
                       className="px-1.5 h-full flex items-center text-[12px] hover:text-white transition-colors cursor-pointer rounded-l-full hover:bg-violet-900/50">←</button>
                     <span className="text-[10px] font-medium px-0.5">{firstName}</span>
                     <span className="text-[10px] text-violet-500 pr-0.5">{idx + 1}/{allSpouses.length}</span>
-                    <button onClick={goNext} title="Next spouse"
+                    <button onClick={goNext} title={t('treeView.nextSpouse')}
                       className="px-1.5 h-full flex items-center text-[12px] hover:text-white transition-colors cursor-pointer rounded-r-full hover:bg-violet-900/50">→</button>
                   </div>
                 )

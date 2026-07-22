@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { PersonFull, PersonEvent, PersonDocument } from '../types'
-import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 
 interface Props {
   open: boolean
@@ -51,6 +51,7 @@ function Avatar({ p }: { p: PersonFull }) {
 
 export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavToEvent, onViewDocument }: Props) {
   const { nameOrder } = useSettings()
+  const t = useT()
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -155,7 +156,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={handleKey}
-            placeholder="Search persons, events, notes…"
+            placeholder={t('search.placeholder')}
             className="flex-1 bg-transparent text-sm text-zinc-100 placeholder-zinc-500 outline-none"
           />
           {hasQ && (
@@ -172,13 +173,13 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
         {hasQ && (
           <div className="max-h-[420px] overflow-y-auto py-2">
             {results.length === 0 && (
-              <p className="px-4 py-5 text-sm text-zinc-500 text-center">No results for &ldquo;{query}&rdquo;</p>
+              <p className="px-4 py-5 text-sm text-zinc-500 text-center">{t('search.noResults', { q: query })}</p>
             )}
 
             {/* Person results */}
             {results.some(r => r.kind === 'person') && (
               <div>
-                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Persons</p>
+                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">{t('search.persons')}</p>
                 {results.filter(r => r.kind === 'person').map((item, i) => {
                   const p = (item as Extract<ResultItem, { kind: 'person' }>).person
                   const idx = results.indexOf(item)
@@ -212,7 +213,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
             {/* Event results */}
             {results.some(r => r.kind === 'event') && (
               <div className={results.some(r => r.kind === 'person') ? 'mt-1' : ''}>
-                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Events</p>
+                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">{t('search.events')}</p>
                 {results.filter(r => r.kind === 'event').map(item => {
                   const e = (item as Extract<ResultItem, { kind: 'event' }>).event
                   const idx = results.indexOf(item)
@@ -234,7 +235,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm text-zinc-100 truncate font-medium">{e.title ?? '(esemény)'}</p>
+                        <p className="text-sm text-zinc-100 truncate font-medium">{e.title ?? t('events.noTitle')}</p>
                         {(e.date || e.place) && (
                           <p className="text-xs text-zinc-500 truncate">
                             {[e.date, e.place].filter(Boolean).join(' · ')}
@@ -253,7 +254,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
             {/* Document results */}
             {results.some(r => r.kind === 'document') && (
               <div className={results.some(r => r.kind !== 'document') ? 'mt-1' : ''}>
-                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Documents</p>
+                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">{t('search.documents')}</p>
                 {results.filter(r => r.kind === 'document').map(item => {
                   const d = (item as Extract<ResultItem, { kind: 'document' }>).doc
                   const idx = results.indexOf(item)
@@ -291,7 +292,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
             {/* Note results */}
             {results.some(r => r.kind === 'note') && (
               <div className={results.some(r => r.kind !== 'note') ? 'mt-1' : ''}>
-                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Notes</p>
+                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">{t('search.notes')}</p>
                 {results.filter(r => r.kind === 'note').map(item => {
                   const n = (item as Extract<ResultItem, { kind: 'note' }>).note
                   const owner = (item as Extract<ResultItem, { kind: 'note' }>).person
@@ -313,7 +314,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm text-zinc-100 truncate font-medium">{n.title ?? '(megjegyzés)'}</p>
+                        <p className="text-sm text-zinc-100 truncate font-medium">{n.title ?? t('notes.noTitle')}</p>
                         <p className="text-xs text-zinc-500 truncate">
                           {owner ? displayPersonName(owner, nameOrder) : ''}
                           {n.content && ` · ${n.content.slice(0, 60)}${n.content.length > 60 ? '…' : ''}`}
@@ -335,7 +336,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
             <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" d="M3 12h18M3 6h18M3 18h18" />
             </svg>
-            Search across persons, events, documents and notes.
+            {t('search.hint')}
           </div>
         )}
       </div>

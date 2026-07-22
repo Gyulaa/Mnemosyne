@@ -2,10 +2,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import FolderPicker from './FolderPicker'
+import { useT } from '../SettingsContext'
 
 const LAST_PATH_KEY = 'organizer_scan_path'
 
 export default function ScanTab() {
+  const t = useT()
   const [path, setPath] = useState(() => localStorage.getItem(LAST_PATH_KEY) ?? '')
   const [eps, setEps] = useState(0.5)
   const [minSamples, setMinSamples] = useState(2)
@@ -15,7 +17,7 @@ export default function ScanTab() {
   } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [importing, setImporting] = useState(false)
-  const [importResult, setImportResult] = useState<{ count: number } | null>(null)
+  const [importResult, setImportResult] = useState<{ count: number; message: string } | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -58,7 +60,7 @@ export default function ScanTab() {
   const handleImport = useCallback(async (files: File[]) => {
     const imageFiles = files.filter(f => /\.(jpe?g|png|bmp|tiff?|webp|heic|heif)$/i.test(f.name))
     if (!imageFiles.length) {
-      setImportError('No supported image files found')
+      setImportError(t('scan.noImages'))
       return
     }
     setImporting(true)
@@ -66,7 +68,7 @@ export default function ScanTab() {
     setImportError(null)
     try {
       const result = await api.scan.importFiles(imageFiles)
-      setImportResult({ count: result.count })
+      setImportResult({ count: result.count, message: t('scan.imported', { n: result.count, unit: t(result.count === 1 ? 'scan.importedUnit.one' : 'scan.importedUnit.many') }) })
       qc.invalidateQueries({ queryKey: ['scan-status'] })
     } catch (e) {
       setImportError(String((e as Error).message))
@@ -94,7 +96,7 @@ export default function ScanTab() {
       {/* Folder picker */}
       <section className="space-y-3">
         <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest">
-          Source folder
+          {t('scan.sourceFolder')}
         </label>
         <FolderPicker value={path} onChange={setPath} />
 
@@ -104,7 +106,7 @@ export default function ScanTab() {
               onClick={() => stopMut.mutate()}
               className="px-5 py-2.5 bg-red-600 hover:bg-red-500 rounded-lg text-sm font-medium transition-colors"
             >
-              Stop scan
+              {t('scan.stopScan')}
             </button>
           ) : (
             <button
@@ -112,7 +114,7 @@ export default function ScanTab() {
               disabled={!path.trim() || startMut.isPending}
               className="px-5 py-2.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
             >
-              {startMut.isPending ? 'Starting…' : 'Start scan'}
+              {startMut.isPending ? t('scan.starting') : t('scan.startScan')}
             </button>
           )}
           {startMut.isError && (
@@ -126,7 +128,7 @@ export default function ScanTab() {
       {/* Individual file import */}
       <section className="space-y-2">
         <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest">
-          Or import individual files
+          {t('scan.importFiles')}
         </label>
         <div
           onDragOver={e => { e.preventDefault(); setDragOver(true) }}
@@ -155,19 +157,17 @@ export default function ScanTab() {
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
           </svg>
           {importing ? (
-            <p className="text-sm text-brand-400">Uploading & scanning…</p>
+            <p className="text-sm text-brand-400">{t('scan.uploading')}</p>
           ) : (
             <>
-              <p className="text-sm font-medium">Drag & drop images here</p>
-              <p className="text-xs mt-1 opacity-70">or click to browse files</p>
-              <p className="text-xs mt-1 opacity-50">JPG · PNG · WEBP · BMP · TIFF · HEIC</p>
+              <p className="text-sm font-medium">{t('scan.dropImages')}</p>
+              <p className="text-xs mt-1 opacity-70">{t('scan.browseFiles')}</p>
+              <p className="text-xs mt-1 opacity-50">{t('scan.supportedFormats')}</p>
             </>
           )}
         </div>
         {importResult && !importing && (
-          <p className="text-sm text-emerald-400">
-            ✓ {importResult.count} {importResult.count === 1 ? 'image' : 'images'} imported — scan started
-          </p>
+          <p className="text-sm text-emerald-400">✓ {importResult.message}</p>
         )}
         {importError && (
           <p className="text-sm text-red-400">{importError}</p>
@@ -179,12 +179,12 @@ export default function ScanTab() {
         <section className="space-y-2">
           <div className="flex justify-between text-sm">
             <span className={isRunning ? 'text-brand-400' : 'text-zinc-400'}>
-              {isRunning ? 'Scanning…' : 'Scan complete'}
+              {isRunning ? t('scan.scanning') : t('scan.complete')}
             </span>
             <span className="text-zinc-400 tabular-nums">
               {status.processed.toLocaleString()} / {status.total.toLocaleString()}
               {status.errors > 0 && (
-                <span className="text-red-400 ml-2">· {status.errors} errors</span>
+                <span className="text-red-400 ml-2">{t('scan.errors', { n: status.errors })}</span>
               )}
             </span>
           </div>
@@ -200,14 +200,14 @@ export default function ScanTab() {
       {/* Stats */}
       {stats && (
         <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatCard label="Total images" value={stats.total_images} />
+          <StatCard label={t('scan.totalImages')} value={stats.total_images} />
           <StatCard
-            label="Scanned"
+            label={t('scan.scanned')}
             value={stats.scanned}
-            sub={stats.no_face > 0 ? `${stats.no_face} no face` : undefined}
+            sub={stats.no_face > 0 ? t('scan.noFace', { n: stats.no_face }) : undefined}
           />
-          <StatCard label="Faces found" value={stats.total_faces} accent />
-          <StatCard label="Pending" value={stats.pending} />
+          <StatCard label={t('scan.facesFound')} value={stats.total_faces} accent />
+          <StatCard label={t('scan.pending')} value={stats.pending} />
         </section>
       )}
 
@@ -215,11 +215,11 @@ export default function ScanTab() {
       {hasFaces && (
         <section className="space-y-3 pt-2 border-t border-zinc-800">
           <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest">
-            Clustering
+            {t('scan.clustering')}
           </label>
           <div className="flex flex-wrap items-end gap-4">
             <NumberInput
-              label="eps"
+              label={t('scan.eps')}
               value={eps}
               onChange={setEps}
               step={0.05}
@@ -227,7 +227,7 @@ export default function ScanTab() {
               max={1}
             />
             <NumberInput
-              label="min samples"
+              label={t('scan.minSamples')}
               value={minSamples}
               onChange={setMinSamples}
               step={1}
@@ -235,7 +235,7 @@ export default function ScanTab() {
               max={20}
             />
             <NumberInput
-              label="min conf"
+              label={t('scan.minConf')}
               value={minDetScore}
               onChange={setMinDetScore}
               step={0.05}
@@ -247,7 +247,7 @@ export default function ScanTab() {
               disabled={clusterMut.isPending}
               className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 rounded-lg text-sm font-medium transition-colors"
             >
-              {clusterMut.isPending ? 'Clustering…' : 'Run clustering'}
+              {clusterMut.isPending ? t('scan.clusteringBusy') : t('scan.runClustering')}
             </button>
             {clusterMut.isError && (
               <span className="text-sm text-red-400 self-center">
@@ -256,7 +256,7 @@ export default function ScanTab() {
             )}
             {clusterResult && !clusterMut.isPending && (
               <span className="text-sm text-zinc-400 self-center">
-                ✓ {clusterResult.clusters} clusters · {clusterResult.noise} noise
+                {t('scan.clusterResult', { clusters: clusterResult.clusters, noise: clusterResult.noise })}
               </span>
             )}
           </div>

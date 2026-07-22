@@ -131,6 +131,11 @@ Private items show an **amber padlock** so they are always visible. Public items
 
 Only you can restore a private item to public — there is no "auto-export private" setting.
 
+### Language
+- The interface is available in **English** and **Hungarian**
+- Switch anytime from **Settings** (gear icon, top right) → **Language**
+- The choice is saved locally and persists across sessions
+
 ### Search
 - Press **Ctrl+K** (Windows) or **Cmd+K** (Mac) to search everything at once — names, documents, notes — from anywhere in the app
 
@@ -382,7 +387,9 @@ Image-Organizer/
 │       ├── App.tsx                    # Tab navigation, global search, cross-tab routing
 │       ├── api.ts                     # Typed API client
 │       ├── types.ts                   # TypeScript interfaces
-│       ├── SettingsContext.tsx        # Global settings (name order, auto-update toggle)
+│       ├── SettingsContext.tsx        # Global settings (name order, language, auto-update toggle)
+│       ├── i18n/
+│       │   └── translations.ts        # EN/HU translation strings (flat dot-notation keys)
 │       └── components/
 │           ├── ScanTab.tsx
 │           ├── ClustersTab.tsx

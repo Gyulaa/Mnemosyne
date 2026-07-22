@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import type { PersonFull } from '../types'
+import { useT } from '../SettingsContext'
 
 export type ExportSettings = {
   name: string
@@ -95,6 +96,7 @@ export default function ExportModal({
   onExport,
   onClose,
 }: Props) {
+  const t = useT()
   const [name, setName] = useState(defaultName)
   const [includeGenealogy, setIncludeGenealogy] = useState(true)
   const [includeNotes, setIncludeNotes] = useState(true)
@@ -130,7 +132,7 @@ export default function ExportModal({
   }
 
   const subtitleText =
-    subtitle ?? (clusterCount != null ? `${clusterCount} cluster${clusterCount !== 1 ? 's' : ''} selected` : null)
+    subtitle ?? (clusterCount != null ? t(clusterCount !== 1 ? 'export.clusterPlural' : 'export.clusterSingle', { n: clusterCount }) : null)
 
   return (
     <div
@@ -142,12 +144,12 @@ export default function ExportModal({
         className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
-        <h2 className="text-sm font-semibold text-zinc-100 mb-0.5">Export ZIP</h2>
+        <h2 className="text-sm font-semibold text-zinc-100 mb-0.5">{t('export.title')}</h2>
         {subtitleText && <p className="text-xs text-zinc-500 mb-1">{subtitleText}</p>}
 
         <div className="mt-4 space-y-0.5">
           {/* Archive name */}
-          <SectionLabel>Archive</SectionLabel>
+          <SectionLabel>{t('export.sectionArchive')}</SectionLabel>
           <div className="pb-1">
             <input
               value={name}
@@ -158,34 +160,34 @@ export default function ExportModal({
           </div>
 
           {/* Genealogy */}
-          <SectionLabel>Genealogy data</SectionLabel>
+          <SectionLabel>{t('export.sectionGenealogy')}</SectionLabel>
           {showGenealogy && (
             <Row
-              label="Include family tree"
-              desc="Persons, relations and all related data"
+              label={t('export.includeTree')}
+              desc={t('export.includeTreeDesc')}
               checked={includeGenealogy}
               onChange={setIncludeGenealogy}
             />
           )}
           <div className={`space-y-0 ${!showGenealogy || includeGenealogy ? '' : 'opacity-40 pointer-events-none'}`}>
-            <Row label="Notes" indent={showGenealogy} checked={includeNotes} onChange={setIncludeNotes} disabled={showGenealogy && !includeGenealogy} />
-            <Row label="Sources & Citations" indent={showGenealogy} checked={includeSources} onChange={setIncludeSources} disabled={showGenealogy && !includeGenealogy} />
-            <Row label="Events" indent={showGenealogy} checked={includeEvents} onChange={setIncludeEvents} disabled={showGenealogy && !includeGenealogy} />
-            <Row label="Documents" indent={showGenealogy} checked={includeDocuments} onChange={setIncludeDocuments} disabled={showGenealogy && !includeGenealogy} />
+            <Row label={t('export.notes')} indent={showGenealogy} checked={includeNotes} onChange={setIncludeNotes} disabled={showGenealogy && !includeGenealogy} />
+            <Row label={t('export.sources')} indent={showGenealogy} checked={includeSources} onChange={setIncludeSources} disabled={showGenealogy && !includeGenealogy} />
+            <Row label={t('export.events')} indent={showGenealogy} checked={includeEvents} onChange={setIncludeEvents} disabled={showGenealogy && !includeGenealogy} />
+            <Row label={t('export.documents')} indent={showGenealogy} checked={includeDocuments} onChange={setIncludeDocuments} disabled={showGenealogy && !includeGenealogy} />
           </div>
 
           {/* Photos */}
-          <SectionLabel>Photos</SectionLabel>
+          <SectionLabel>{t('export.sectionPhotos')}</SectionLabel>
           <Row
-            label="Include photos"
-            desc="Face images linked to persons"
+            label={t('export.includePhotos')}
+            desc={t('export.includePhotosDesc')}
             checked={includeImages}
             onChange={setIncludeImages}
           />
           {showFacelessOption && (
             <Row
-              label="Include faceless images"
-              desc="Photos where no face was detected"
+              label={t('export.includeFaceless')}
+              desc={t('export.includeFacelessDesc')}
               indent
               checked={includeFaceless}
               onChange={setIncludeFaceless}
@@ -196,10 +198,10 @@ export default function ExportModal({
           {/* Privacy */}
           {showExcludeLivingOption && (
             <>
-              <SectionLabel>Privacy</SectionLabel>
+              <SectionLabel>{t('export.sectionPrivacy')}</SectionLabel>
               <Row
-                label="Exclude living persons"
-                desc={`${livingCount} living · ${deceasedCount} deceased in this export`}
+                label={t('export.excludeLiving')}
+                desc={t('export.excludeLivingDesc', { living: livingCount, deceased: deceasedCount })}
                 checked={excludeLiving}
                 onChange={setExcludeLiving}
               />
@@ -213,13 +215,13 @@ export default function ExportModal({
             onClick={onClose}
             className="flex-1 px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
           >
-            Cancel
+            {t('export.cancel')}
           </button>
           <button
             type="submit"
             className="flex-1 px-4 py-2 text-sm font-medium text-white bg-brand-500 hover:bg-brand-400 rounded-lg transition-colors"
           >
-            Export
+            {t('export.export')}
           </button>
         </div>
       </form>
