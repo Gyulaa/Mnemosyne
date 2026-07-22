@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import type { PersonFull, Relation, PersonEvent, ImageItem, ImagePerson } from '../types'
 import { api } from '../api'
+import { useT, useSettings } from '../SettingsContext'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -10,15 +11,15 @@ const MONTHS_EN = ['January','February','March','April','May','June','July','Aug
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 export const EVENT_TYPE_OPTIONS = [
-  { value: 'custom',      label: 'General / Custom' },
-  { value: 'military',    label: 'Military service' },
-  { value: 'education',   label: 'Education' },
-  { value: 'emigration',  label: 'Emigration' },
-  { value: 'immigration', label: 'Immigration' },
-  { value: 'occupation',  label: 'Occupation change' },
-  { value: 'award',       label: 'Award / Honor' },
-  { value: 'religious',   label: 'Religious event' },
-  { value: 'travel',      label: 'Notable journey' },
+  { value: 'custom',      label: 'General / Custom',  key: 'timeline.typeCustom' },
+  { value: 'military',    label: 'Military service',  key: 'timeline.typeMilitary' },
+  { value: 'education',   label: 'Education',         key: 'timeline.typeEducation' },
+  { value: 'emigration',  label: 'Emigration',        key: 'timeline.typeEmigration' },
+  { value: 'immigration', label: 'Immigration',       key: 'timeline.typeImmigration' },
+  { value: 'occupation',  label: 'Occupation change', key: 'timeline.typeOccupation' },
+  { value: 'award',       label: 'Award / Honor',     key: 'timeline.typeAward' },
+  { value: 'religious',   label: 'Religious event',   key: 'timeline.typeReligious' },
+  { value: 'travel',      label: 'Notable journey',   key: 'timeline.typeJourney' },
 ]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -41,6 +42,7 @@ function getYear(date: string | null | undefined, fallbackYear?: number | null):
 // ── DatePartPicker ─────────────────────────────────────────────────────────────
 
 function DatePartPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const t = useT()
   const parts = value ? value.split('-') : []
   const yr = parts[0] ?? '', mo = parts[1] ?? '', dy = parts[2] ?? ''
 
@@ -55,19 +57,19 @@ function DatePartPicker({ value, onChange }: { value: string; onChange: (v: stri
   return (
     <div className="flex gap-1 items-center flex-wrap">
       <input type="number" value={yr} onChange={e => update(e.target.value, mo, dy)}
-        placeholder="Year" min={1000} max={2100}
+        placeholder={t('timeline.yearPh')} min={1000} max={2100}
         className="w-16 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 [appearance:textfield]" />
       {yr && (
         <select value={mo} onChange={e => update(yr, e.target.value, e.target.value ? dy : '')}
           className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-brand-400">
-          <option value="">— month —</option>
+          <option value="">{t('timeline.monthPh')}</option>
           {MONTHS_EN.map((m, i) => <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>)}
         </select>
       )}
       {yr && mo && (
         <select value={dy} onChange={e => update(yr, mo, e.target.value)}
           className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-brand-400">
-          <option value="">— day —</option>
+          <option value="">{t('timeline.dayPh')}</option>
           {Array.from({ length: maxDays }, (_, i) => i + 1).map(d => (
             <option key={d} value={String(d).padStart(2, '0')}>{d}.</option>
           ))}
@@ -108,6 +110,7 @@ function ImagePickerModal({ personId, persons, alreadyAttachedIds = new Set(), o
   const [otherPersons, setOtherPersons] = useState<ImagePerson[]>([])
   const [includedPersonIds, setIncludedPersonIds] = useState<Set<number>>(new Set())
   const [loadingPersons, setLoadingPersons] = useState(false)
+  const t = useT()
   const [sort, setSort] = useState<'exif_date_desc' | 'exif_date_asc' | 'id_desc' | 'filename_asc'>('exif_date_desc')
 
   const { data: imagesPage } = useQuery({
@@ -159,11 +162,11 @@ function ImagePickerModal({ personId, persons, alreadyAttachedIds = new Set(), o
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
           <div>
             <p className="text-sm font-semibold text-zinc-100">
-              {step === 'pick' ? 'Select a photo' : 'Who else was there?'}
+              {step === 'pick' ? t('timeline.selectPhoto') : t('timeline.whoWasThere')}
             </p>
             {step === 'pick' && alreadyCount > 0 && (
               <p className="text-[10px] text-zinc-500 mt-0.5">
-                {alreadyCount} photo{alreadyCount !== 1 ? 's' : ''} already added to this event
+                {t('timeline.photosAdded', { n: alreadyCount })}
               </p>
             )}
           </div>
@@ -174,10 +177,10 @@ function ImagePickerModal({ personId, persons, alreadyAttachedIds = new Set(), o
                 onChange={e => setSort(e.target.value as typeof sort)}
                 className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-1 text-[11px] text-zinc-400 outline-none focus:border-brand-400 cursor-pointer"
               >
-                <option value="exif_date_desc">Newest first</option>
-                <option value="exif_date_asc">Oldest first</option>
-                <option value="id_desc">Recently added</option>
-                <option value="filename_asc">By name</option>
+                <option value="exif_date_desc">{t('timeline.sortNewest')}</option>
+                <option value="exif_date_asc">{t('timeline.sortOldest')}</option>
+                <option value="id_desc">{t('timeline.sortRecent')}</option>
+                <option value="filename_asc">{t('timeline.sortByName')}</option>
               </select>
             )}
             <button onClick={onClose} className="p-1 text-zinc-500 hover:text-zinc-200 transition-colors">
@@ -191,7 +194,7 @@ function ImagePickerModal({ personId, persons, alreadyAttachedIds = new Set(), o
         <div className="flex-1 overflow-y-auto p-3">
           {step === 'pick' ? (
             images.length === 0 ? (
-              <p className="text-sm text-zinc-500 italic text-center py-6">No photos available</p>
+              <p className="text-sm text-zinc-500 italic text-center py-6">{t('timeline.noPhotos')}</p>
             ) : (
               <div className="grid grid-cols-4 gap-1.5">
                 {images.map(img => {
@@ -201,7 +204,7 @@ function ImagePickerModal({ personId, persons, alreadyAttachedIds = new Set(), o
                       <button
                         onClick={() => handlePickImage(img)}
                         disabled={loadingPersons || attached}
-                        title={attached ? 'Already added to this event' : undefined}
+                        title={attached ? t('timeline.alreadyAdded') : undefined}
                         className={`w-full h-full rounded-lg overflow-hidden bg-zinc-800 transition-all
                           ${attached
                             ? 'ring-2 ring-brand-500 cursor-default'
@@ -227,7 +230,7 @@ function ImagePickerModal({ personId, persons, alreadyAttachedIds = new Set(), o
           ) : (
             <div className="space-y-3">
               <p className="text-xs text-zinc-400">
-                This photo also features these people. Add them to the event as participants?
+                {t('timeline.alsoFeatured')}
               </p>
               <div className="space-y-1.5">
                 {otherPersons.map(ip => {
@@ -239,7 +242,7 @@ function ImagePickerModal({ personId, persons, alreadyAttachedIds = new Set(), o
                         className="w-4 h-4 accent-brand-500 shrink-0" />
                       <img src={api.faceThumbnailUrl(ip.face_id, 48)} alt=""
                         className="w-7 h-7 rounded-full object-cover shrink-0" />
-                      <span className="text-sm text-zinc-200">{p?.name ?? ip.person_name ?? '(unnamed)'}</span>
+                      <span className="text-sm text-zinc-200">{p?.name ?? ip.person_name ?? t('images.unnamed')}</span>
                     </label>
                   )
                 })}
@@ -250,10 +253,10 @@ function ImagePickerModal({ personId, persons, alreadyAttachedIds = new Set(), o
 
         {step === 'confirm' && (
           <div className="shrink-0 flex gap-2 px-4 py-3 border-t border-zinc-800">
-            <button onClick={() => setStep('pick')} className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">Back</button>
+            <button onClick={() => setStep('pick')} className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">{t('timeline.back')}</button>
             <button onClick={() => pickedImageId && onSelect(pickedImageId, [...includedPersonIds])}
               className="flex-1 px-3 py-1.5 text-xs font-medium bg-brand-500 hover:bg-brand-400 text-white rounded-lg transition-colors">
-              Add photo
+              {t('timeline.addPhoto')}
             </button>
           </div>
         )}
@@ -276,6 +279,7 @@ export interface EventEditorProps {
 }
 
 export function EventEditor({ event, prefill, personId, persons = [], onSaved, onDeleted, onCancel }: EventEditorProps) {
+  const t = useT()
   const qc = useQueryClient()
   const [type, setType] = useState(event?.event_type ?? prefill?.event_type ?? 'custom')
   const [title, setTitle] = useState(event?.title ?? '')
@@ -402,28 +406,28 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
       {/* Type */}
       <select value={type} onChange={e => setType(e.target.value)}
         className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 outline-none focus:border-brand-400">
-        {EVENT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        {EVENT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.key)}</option>)}
       </select>
 
       {/* Title */}
-      <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Title (optional)"
+      <input value={title} onChange={e => setTitle(e.target.value)} placeholder={t('timeline.titlePh')}
         className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
 
       {/* Date + Place */}
       <div className="space-y-1.5">
         <DatePartPicker value={date} onChange={setDate} />
-        <input value={place} onChange={e => setPlace(e.target.value)} placeholder="Place (optional)"
+        <input value={place} onChange={e => setPlace(e.target.value)} placeholder={t('timeline.placePh')}
           className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
       </div>
 
       {/* Description */}
-      <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Description (optional)" rows={2}
+      <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder={t('timeline.descPh')} rows={2}
         className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 resize-none" />
 
       {/* Photos section — always visible when editing existing, shown as hint when new */}
       {isExisting ? (
         <div>
-          <p className="text-[10px] text-zinc-500 mb-1.5">Photos</p>
+          <p className="text-[10px] text-zinc-500 mb-1.5">{t('timeline.photosSection')}</p>
           <div className="flex flex-wrap gap-1.5 items-center">
             {(localEvent?.images ?? []).map(ei => (
               <div key={ei.id} className="relative group/img w-12 h-12">
@@ -440,7 +444,7 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
           </div>
         </div>
       ) : (
-        <p className="text-[10px] text-zinc-600 italic">Save the event first to attach photos.</p>
+        <p className="text-[10px] text-zinc-600 italic">{t('timeline.saveFirst')}</p>
       )}
 
       {/* Participants + featured toggle (only for existing events) */}
@@ -448,13 +452,13 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
         <div>
           {(localEvent?.persons.length ?? 0) > 0 && (
             <>
-              <p className="text-[10px] text-zinc-500 mb-1.5">People — ★ = key event for them</p>
+              <p className="text-[10px] text-zinc-500 mb-1.5">{t('timeline.peopleSection')}</p>
               <div className="space-y-1 mb-2">
                 {(localEvent?.persons ?? []).map(ep => (
                   <div key={ep.id} className="flex items-center gap-1.5">
                     <button
                       onClick={() => handleToggleFeatured(ep.id, ep.featured)}
-                      title={ep.featured ? 'Unmark featured' : 'Mark as featured'}
+                      title={ep.featured ? t('timeline.unmarkFeatured') : t('timeline.markFeatured')}
                       className={`p-0.5 rounded transition-colors shrink-0 ${ep.featured ? 'text-amber-400' : 'text-zinc-700 hover:text-zinc-400'}`}
                     >
                       <svg className="w-3.5 h-3.5" fill={ep.featured ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -464,8 +468,8 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
                     {ep.thumbnail_face_id
                       ? <img src={api.faceThumbnailUrl(ep.thumbnail_face_id, 32)} alt="" className="w-4 h-4 rounded-full object-cover shrink-0" />
                       : <div className="w-4 h-4 rounded-full bg-zinc-700 shrink-0" />}
-                    <span className="text-[10px] text-zinc-300 flex-1 truncate">{ep.person_name ?? '(unnamed)'}</span>
-                    <span className="text-[9px] text-zinc-600 shrink-0">{ep.role === 'primary' ? 'primary' : ''}</span>
+                    <span className="text-[10px] text-zinc-300 flex-1 truncate">{ep.person_name ?? t('images.unnamed')}</span>
+                    <span className="text-[9px] text-zinc-600 shrink-0">{ep.role === 'primary' ? t('timeline.primary') : ''}</span>
                     {ep.role === 'participant' && (
                       <button onClick={() => handleRemovePerson(ep.id)} className="text-zinc-600 hover:text-red-400 transition-colors text-[10px] shrink-0">✕</button>
                     )}
@@ -480,7 +484,7 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
                 autoFocus
                 value={personSearchQ}
                 onChange={e => setPersonSearchQ(e.target.value)}
-                placeholder="Search person…"
+                placeholder={t('timeline.searchPerson')}
                 className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400"
               />
               {filteredPersonSearchResults.length > 0 && (
@@ -491,20 +495,20 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
                       {p.thumbnail_face_id
                         ? <img src={api.faceThumbnailUrl(p.thumbnail_face_id, 32)} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" />
                         : <div className="w-5 h-5 rounded-full bg-zinc-600 shrink-0 flex items-center justify-center text-[9px] text-zinc-400">{(p.name ?? '?')[0]}</div>}
-                      <span className="text-xs text-zinc-200 truncate">{p.name ?? '(unnamed)'}</span>
+                      <span className="text-xs text-zinc-200 truncate">{p.name ?? t('images.unnamed')}</span>
                     </button>
                   ))}
                 </div>
               )}
               <button onClick={() => { setShowPersonSearch(false); setPersonSearchQ('') }}
                 className="mt-1 text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors">
-                Cancel
+                {t('timeline.cancelSearch')}
               </button>
             </div>
           ) : (
             <button onClick={() => setShowPersonSearch(true)}
               className="text-[10px] text-zinc-600 hover:text-brand-400 transition-colors">
-              + Add participant
+              {t('timeline.addParticipant')}
             </button>
           )}
         </div>
@@ -515,21 +519,21 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
         <div className="flex gap-2">
           <button onClick={save} disabled={saving}
             className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded-lg transition-colors">
-            {saving ? 'Saving…' : isExisting ? 'Update' : 'Save'}
+            {saving ? t('events.saving') : isExisting ? t('timeline.update') : t('events.save')}
           </button>
           <button onClick={onCancel} className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors">
-            {isExisting ? 'Done' : 'Cancel'}
+            {isExisting ? t('timeline.done') : t('events.cancel')}
           </button>
         </div>
         {isExisting && (
           confirmDelete ? (
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-zinc-500">Delete?</span>
-              <button onClick={handleDelete} className="text-[10px] text-red-400 hover:text-red-300 font-medium">Yes</button>
-              <button onClick={() => setConfirmDelete(false)} className="text-[10px] text-zinc-600 hover:text-zinc-400">No</button>
+              <span className="text-[10px] text-zinc-500">{t('timeline.deleteConfirm')}</span>
+              <button onClick={handleDelete} className="text-[10px] text-red-400 hover:text-red-300 font-medium">{t('timeline.deleteYes')}</button>
+              <button onClick={() => setConfirmDelete(false)} className="text-[10px] text-zinc-600 hover:text-zinc-400">{t('timeline.deleteNo')}</button>
             </div>
           ) : (
-            <button onClick={() => setConfirmDelete(true)} className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors">Delete</button>
+            <button onClick={() => setConfirmDelete(true)} className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors">{t('timeline.deleteBtn')}</button>
           )
         )}
       </div>
@@ -561,6 +565,7 @@ interface AutoEvent {
 }
 
 function AutoEventRow({ ev, isLast, onHide }: { ev: AutoEvent; isLast: boolean; onHide?: () => void }) {
+  const t = useT()
   return (
     <div className="flex gap-3 group/auto">
       <div className="flex flex-col items-center" style={{ minWidth: 48 }}>
@@ -580,7 +585,7 @@ function AutoEventRow({ ev, isLast, onHide }: { ev: AutoEvent; isLast: boolean; 
             {ev.place && <p className="text-[10px] text-zinc-500 mt-0.5">{ev.place}</p>}
           </div>
           {onHide && (
-            <button onClick={onHide} title="Hide this auto-event"
+            <button onClick={onHide} title={t('timeline.hideAutoEvent')}
               className="opacity-0 group-hover/auto:opacity-100 p-1 rounded text-zinc-700 hover:text-zinc-400 hover:bg-zinc-800 transition-all shrink-0 mt-0.5">
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
@@ -590,10 +595,10 @@ function AutoEventRow({ ev, isLast, onHide }: { ev: AutoEvent; isLast: boolean; 
         </div>
         <div className="flex gap-3 mt-1">
           {ev.onAttachPhoto && (
-            <button onClick={ev.onAttachPhoto} className="text-[10px] text-zinc-600 hover:text-brand-400 transition-colors">+ Attach photo</button>
+            <button onClick={ev.onAttachPhoto} className="text-[10px] text-zinc-600 hover:text-brand-400 transition-colors">{t('timeline.attachPhoto')}</button>
           )}
           {ev.onEdit && (
-            <button onClick={ev.onEdit} className="text-[10px] text-zinc-700 hover:text-zinc-500 transition-colors">Edit in Bio →</button>
+            <button onClick={ev.onEdit} className="text-[10px] text-zinc-700 hover:text-zinc-500 transition-colors">{t('timeline.editInBio')}</button>
           )}
         </div>
       </div>
@@ -611,7 +616,8 @@ function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage, currentP
   onNavToEventPage?: () => void
   currentPersonId?: number
 }) {
-  const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
+  const t = useT()
+  const typeLabel = t(EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.key ?? ev.event_type)
   const dateStr = formatEventDate(ev.date, ev.year)
   const participants = ev.persons.filter(ep => ep.role === 'participant')
   const isFeatured = currentPersonId != null && ev.persons.some(ep => ep.person_id === currentPersonId && ep.featured)
@@ -644,7 +650,7 @@ function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage, currentP
             <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover/ev:opacity-100 transition-all">
               {onNavToEventPage && (
                 <button onClick={onNavToEventPage}
-                  title="Open in Events page"
+                  title={t('timeline.openInEvents')}
                   className="p-1 rounded text-zinc-600 hover:text-brand-400 hover:bg-zinc-700 transition-all">
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -669,13 +675,13 @@ function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage, currentP
           )}
           {participants.length > 0 && (
             <div className="flex gap-1 mt-1.5 flex-wrap items-center">
-              <span className="text-[9px] text-zinc-600">Also:</span>
+              <span className="text-[9px] text-zinc-600">{t('timeline.also')}</span>
               {participants.map(ep => (
                 <div key={ep.id} className="flex items-center gap-0.5">
                   {ep.thumbnail_face_id ? (
                     <img src={api.faceThumbnailUrl(ep.thumbnail_face_id, 32)} alt="" className="w-4 h-4 rounded-full object-cover" />
                   ) : <div className="w-4 h-4 rounded-full bg-zinc-700" />}
-                  <span className="text-[9px] text-zinc-500">{ep.person_name ?? '(unnamed)'}</span>
+                  <span className="text-[9px] text-zinc-500">{ep.person_name ?? t('images.unnamed')}</span>
                 </div>
               ))}
             </div>
@@ -699,6 +705,8 @@ interface Props {
 }
 
 export default function EventTimeline({ person, relations, persons, onNavigateToBio, onNavToEvent, autoPhotoEventType, onAutoPhotoConsumed }: Props) {
+  const t = useT()
+  const { lang } = useSettings()
   const qc = useQueryClient()
 
   // editingEvent: the event currently open in the editor (null = no editor open)
@@ -736,7 +744,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
   }
 
   function restoreAutoEvent(eventType: string) {
-    const updated = hiddenAutoTypes.filter(t => t !== eventType)
+    const updated = hiddenAutoTypes.filter(et => et !== eventType)
     setHiddenAutoTypes(updated)
     api.persons.update(person.id, { hidden_auto_events: updated as any })
       .then(() => qc.invalidateQueries({ queryKey: ['persons'] }))
@@ -765,7 +773,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
         kind: 'auto', eventType: 'birth',
         year: getYear(person.birth_date, person.birth_year),
         dateStr: formatEventDate(person.birth_date, person.birth_year),
-        place: person.birth_place, label: 'Born',
+        place: person.birth_place, label: t('timeline.born'),
         onEdit: onNavigateToBio,
         onAttachPhoto: () => openAttachPhotoForAuto('birth', person.birth_date ?? (person.birth_year ? String(person.birth_year) : null), person.birth_place),
       })
@@ -775,7 +783,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
         kind: 'auto', eventType: 'christening',
         year: getYear(person.christening_date, person.christening_year),
         dateStr: formatEventDate(person.christening_date, person.christening_year),
-        place: person.christening_place, label: 'Christened',
+        place: person.christening_place, label: t('timeline.christened'),
         onEdit: onNavigateToBio,
         onAttachPhoto: () => openAttachPhotoForAuto('christening', person.christening_date ?? (person.christening_year ? String(person.christening_year) : null), person.christening_place),
       })
@@ -785,12 +793,12 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
       if (r.person_a_id !== person.id && r.person_b_id !== person.id) continue
       const spouseId = r.person_a_id === person.id ? r.person_b_id : r.person_a_id
       const spouse = byId.get(spouseId)
-      const spouseName = spouse?.name ?? '(unnamed)'
+      const spouseName = spouse?.name ?? t('images.unnamed')
       if (r.marriage_year || r.marriage_place) {
         evs.push({
           kind: 'auto', eventType: 'marriage',
           year: r.marriage_year, dateStr: r.marriage_year ? String(r.marriage_year) : null,
-          place: r.marriage_place, label: `Married ${spouseName}`,
+          place: r.marriage_place, label: t('timeline.married', { spouse: spouseName }),
           onEdit: onNavigateToBio,
           onAttachPhoto: () => openAttachPhotoForAuto('marriage', r.marriage_year ? String(r.marriage_year) : null, r.marriage_place),
         })
@@ -799,7 +807,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
         evs.push({
           kind: 'auto', eventType: 'divorce',
           year: r.divorce_year, dateStr: r.divorce_year ? String(r.divorce_year) : null,
-          place: r.divorce_place, label: `Divorced ${spouseName}`,
+          place: r.divorce_place, label: t('timeline.divorced', { spouse: spouseName }),
           onEdit: onNavigateToBio,
           onAttachPhoto: () => openAttachPhotoForAuto('divorce', r.divorce_year ? String(r.divorce_year) : null, r.divorce_place),
         })
@@ -810,7 +818,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
         kind: 'auto', eventType: 'death',
         year: getYear(person.death_date, person.death_year),
         dateStr: formatEventDate(person.death_date, person.death_year),
-        place: person.death_place, label: 'Died',
+        place: person.death_place, label: t('timeline.died'),
         onEdit: onNavigateToBio,
         onAttachPhoto: () => openAttachPhotoForAuto('death', person.death_date ?? (person.death_year ? String(person.death_year) : null), person.death_place),
       })
@@ -820,13 +828,13 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
         kind: 'auto', eventType: 'burial',
         year: getYear(person.burial_date, person.burial_year),
         dateStr: formatEventDate(person.burial_date, person.burial_year),
-        place: person.burial_place, label: 'Buried',
+        place: person.burial_place, label: t('timeline.buried'),
         onEdit: onNavigateToBio,
         onAttachPhoto: () => openAttachPhotoForAuto('burial', person.burial_date ?? (person.burial_year ? String(person.burial_year) : null), person.burial_place),
       })
     }
     return evs
-  }, [person, relations, byId, onNavigateToBio])
+  }, [person, relations, byId, onNavigateToBio, lang])
 
   type Entry =
     | { kind: 'auto'; ev: AutoEvent; sortYear: number | null }
@@ -878,11 +886,11 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
     <div className="px-5 py-4">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Timeline</h3>
+        <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('timeline.heading')}</h3>
         {!showEditor && (
           <button onClick={() => { setIsCreating(true); setEditingEvent(null); setAutoEventPrefill(null) }}
             className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
-            + Add event
+            {t('timeline.addEvent')}
           </button>
         )}
       </div>
@@ -905,7 +913,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
       {/* Empty state */}
       {allEntries.length === 0 && !showEditor && (
         <p className="text-sm text-zinc-600 italic">
-          No events yet — add manually or fill in birth / death dates in the Bio tab.
+          {t('timeline.noEvents')}
         </p>
       )}
 
@@ -937,7 +945,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
         <div className="mt-3 border-t border-zinc-800/60 pt-2.5">
           <button onClick={() => setShowHidden(h => !h)}
             className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors">
-            {hiddenAutoEvents.length} hidden event{hiddenAutoEvents.length > 1 ? 's' : ''} {showHidden ? '▲' : '▼'}
+            {t('timeline.hiddenEvents', { n: hiddenAutoEvents.length })} {showHidden ? '▲' : '▼'}
           </button>
           {showHidden && (
             <div className="mt-2 space-y-1.5">
@@ -945,7 +953,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
                 <div key={ev.eventType} className="flex items-center gap-3">
                   <span className="text-[10px] text-zinc-600">{ev.label}{ev.dateStr ? ` · ${ev.dateStr}` : ''}</span>
                   <button onClick={() => restoreAutoEvent(ev.eventType)}
-                    className="text-[10px] text-brand-500 hover:text-brand-400 transition-colors">Restore</button>
+                    className="text-[10px] text-brand-500 hover:text-brand-400 transition-colors">{t('timeline.restore')}</button>
                 </div>
               ))}
             </div>

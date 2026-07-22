@@ -2,6 +2,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { ConnectionsData, GraphEdge, GraphNode } from '../types'
+import { useT } from '../SettingsContext'
 
 // ── Simulation types ───────────────────────────────────────────────────────────
 
@@ -98,6 +99,7 @@ function ForceGraph({
   onEdgeClick?: (personIds: number[]) => void
   onNodeClick?: (clusterId: number) => void
 }) {
+  const t = useT()
   const svgRef = useRef<SVGSVGElement>(null)
   const nodesRef = useRef<SimNode[]>([])
   const [display, setDisplay] = useState<SimNode[]>([])
@@ -275,9 +277,9 @@ function ForceGraph({
       <button
         onClick={resetView}
         className="absolute top-3 right-3 z-10 px-2.5 py-1 bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
-        title="Reset zoom & pan"
+        title={t('conn.resetZoom')}
       >
-        Reset view
+        {t('conn.resetView')}
       </button>
 
       <svg
@@ -436,7 +438,7 @@ function ForceGraph({
             </span>
           </div>
           {onEdgeClick && (
-            <div className="text-zinc-600 text-[10px]">Click to see shared photos →</div>
+            <div className="text-zinc-600 text-[10px]">{t('conn.clickToSee')}</div>
           )}
         </div>
       )}
@@ -562,6 +564,7 @@ export default function ConnectionsTab({
   onEdgeClick?: (personIds: number[]) => void
   onNodeClick?: (clusterId: number) => void
 }) {
+  const t = useT()
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const [minPhotos, setMinPhotos] = useState(2)   // committed → drives the query
@@ -616,9 +619,9 @@ export default function ConnectionsTab({
     <div className="flex flex-col gap-3" style={{ height: 'calc(100vh - 80px)' }}>
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap shrink-0">
-        <h2 className="text-sm font-semibold text-zinc-300">Co-occurrence graph</h2>
+        <h2 className="text-sm font-semibold text-zinc-300">{t('conn.heading')}</h2>
         <div className="flex items-center gap-2 ml-auto">
-          <label className="text-xs text-zinc-500 whitespace-nowrap">Min shared photos</label>
+          <label className="text-xs text-zinc-500 whitespace-nowrap">{t('conn.minShared')}</label>
           <input
             type="range"
             min={1} max={20} step={1}
@@ -633,7 +636,7 @@ export default function ConnectionsTab({
             <button
               onClick={() => { const v = Math.max(1, draft - 1); setDraft(v); setMinPhotos(v) }}
               className="w-6 h-6 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 flex items-center justify-center text-base leading-none transition-colors"
-              title="Decrease"
+              title={t('conn.decrease')}
             >−</button>
             <input
               type="number"
@@ -649,14 +652,14 @@ export default function ConnectionsTab({
             <button
               onClick={() => { const v = Math.min(20, draft + 1); setDraft(v); setMinPhotos(v) }}
               className="w-6 h-6 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 flex items-center justify-center text-base leading-none transition-colors"
-              title="Increase"
+              title={t('conn.increase')}
             >+</button>
           </div>
         </div>
         {data && data.nodes.length > 0 && (
           <>
             <span className="text-xs text-zinc-600 tabular-nums">
-              {visibleNodes.length}/{data.nodes.length} · {visibleEdges.length} connection{visibleEdges.length !== 1 ? 's' : ''}
+              {visibleNodes.length}/{data.nodes.length} · {visibleEdges.length} {t(visibleEdges.length !== 1 ? 'conn.connections' : 'conn.connection')}
             </span>
             <div className="flex items-center gap-1.5">
               <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
@@ -670,7 +673,7 @@ export default function ConnectionsTab({
                         : 'text-zinc-500 hover:text-zinc-300'
                     }`}
                   >
-                    {mode === 'count' ? 'Shared photos' : 'Weighted'}
+                    {mode === 'count' ? t('conn.modeCount') : t('conn.modeWeighted')}
                   </button>
                 ))}
               </div>
@@ -682,13 +685,9 @@ export default function ConnectionsTab({
                 >ℹ</button>
                 {showTooltip && (
                   <div className="absolute right-0 top-7 w-64 bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl p-3 z-50 text-xs text-zinc-300 leading-relaxed">
-                    <p className="font-semibold text-zinc-200 mb-1">Shared photos vs. Weighted</p>
-                    <p className="text-zinc-400 mb-2">
-                      <span className="text-zinc-300">Shared photos:</span> how many photos both persons appear in together.
-                    </p>
-                    <p className="text-zinc-400">
-                      <span className="text-zinc-300">Weighted:</span> 2–3 people in a photo → strong signal. 20 people in a group photo → weak signal. Adds 1/(number of people) per photo.
-                    </p>
+                    <p className="font-semibold text-zinc-200 mb-1">{t('conn.modeHelpTitle')}</p>
+                    <p className="text-zinc-400 mb-2">{t('conn.modeCountDesc')}</p>
+                    <p className="text-zinc-400">{t('conn.modeWeightedDesc')}</p>
                   </div>
                 )}
               </div>
@@ -705,10 +704,10 @@ export default function ConnectionsTab({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z" />
               </svg>
-              Filter persons
+              {t('conn.filterPersons')}
               {hiddenPersons.size > 0 && (
                 <span className="px-1.5 py-0.5 bg-brand-500 text-white rounded-full text-xs leading-none">
-                  {hiddenPersons.size} hidden
+                  {t('conn.hidden', { n: hiddenPersons.size })}
                 </span>
               )}
             </button>
@@ -716,7 +715,7 @@ export default function ConnectionsTab({
             <div className="flex bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden">
               <button
                 onClick={() => setViewMode('graph')}
-                title="Graph view"
+                title={t('conn.graphView')}
                 className={`p-1.5 transition-colors ${viewMode === 'graph' ? 'bg-zinc-600 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
@@ -731,7 +730,7 @@ export default function ConnectionsTab({
               </button>
               <button
                 onClick={() => setViewMode('list')}
-                title="Ranking"
+                title={t('conn.ranking')}
                 className={`p-1.5 transition-colors ${viewMode === 'list' ? 'bg-zinc-600 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -748,20 +747,20 @@ export default function ConnectionsTab({
         <div className="shrink-0 bg-zinc-900 border border-zinc-800 rounded-xl p-3 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs text-zinc-500">
-              {visibleNodes.length} of {data.nodes.length} persons visible
+              {t('conn.visibleOf', { visible: visibleNodes.length, total: data.nodes.length })}
             </span>
             <div className="flex gap-3">
               <button
                 onClick={() => setHiddenPersons(new Set())}
                 className="text-xs text-brand-400 hover:text-brand-300 transition-colors"
               >
-                Show all
+                {t('conn.showAll')}
               </button>
               <button
                 onClick={() => setHiddenPersons(new Set(data.nodes.map(n => n.id)))}
                 className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
               >
-                Hide all
+                {t('conn.hideAll')}
               </button>
             </div>
           </div>
@@ -801,13 +800,13 @@ export default function ConnectionsTab({
       >
         {isLoading && (
           <div className="flex items-center justify-center h-full">
-            <p className="text-zinc-600 text-sm">Loading…</p>
+            <p className="text-zinc-600 text-sm">{t('conn.loading')}</p>
           </div>
         )}
 
         {!isLoading && data?.nodes.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-8">
-            <p className="text-zinc-500 text-sm">No connections at this threshold.</p>
+            <p className="text-zinc-500 text-sm">{t('conn.noConnections')}</p>
             <p className="text-zinc-600 text-xs max-w-sm">
               Either no persons share {minPhotos}+ photos, or no clusters have been named yet.
               Try lowering the slider.
@@ -817,7 +816,7 @@ export default function ConnectionsTab({
 
         {!isLoading && data && visibleNodes.length === 0 && data.nodes.length > 0 && (
           <div className="flex items-center justify-center h-full">
-            <p className="text-zinc-600 text-sm">All persons are hidden. Use the filter to show them.</p>
+            <p className="text-zinc-600 text-sm">{t('conn.allHidden')}</p>
           </div>
         )}
 

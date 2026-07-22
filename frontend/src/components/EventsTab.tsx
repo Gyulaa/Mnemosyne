@@ -6,6 +6,7 @@ import DOMPurify from 'dompurify'
 import type { PersonEvent, PersonFull, EventImage, ImageItem, ImagePerson } from '../types'
 import { api } from '../api'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
+import { useT } from '../SettingsContext'
 
 marked.setOptions({ breaks: true, gfm: true })
 
@@ -33,6 +34,7 @@ function EventImagePreviewModal({ images, currentIdx, onNavigate, onClose }: {
   onNavigate: (i: number) => void
   onClose: () => void
 }) {
+  const t = useT()
   const imageId = images[currentIdx]?.image_id
 
   const { data: imgData } = useQuery<ImageItem>({
@@ -69,13 +71,13 @@ function EventImagePreviewModal({ images, currentIdx, onNavigate, onClose }: {
   }
 
   const metaRows = [
-    { label: 'File',     val: imgData?.filename ?? null },
-    { label: 'Date',     val: imgData?.exif_date ?? mv('DateTimeOriginal') ?? mv('DateTime') },
-    { label: 'Camera',   val: [mv('Make'), mv('Model')].filter(Boolean).join(' ') || null },
-    { label: 'Exposure', val: mv('ExposureTime') ? `${mv('ExposureTime')} s` : null },
-    { label: 'Aperture', val: mv('FNumber') ? `f/${mv('FNumber')}` : null },
-    { label: 'ISO',      val: mv('ISOSpeedRatings') ?? mv('ISO') },
-    { label: 'Focal',    val: mv('FocalLength') ? `${mv('FocalLength')} mm` : null },
+    { label: t('events.metaFile'),     val: imgData?.filename ?? null },
+    { label: t('events.metaDate'),     val: imgData?.exif_date ?? mv('DateTimeOriginal') ?? mv('DateTime') },
+    { label: t('events.metaCamera'),   val: [mv('Make'), mv('Model')].filter(Boolean).join(' ') || null },
+    { label: t('events.metaExposure'), val: mv('ExposureTime') ? `${mv('ExposureTime')} s` : null },
+    { label: t('events.metaAperture'), val: mv('FNumber') ? `f/${mv('FNumber')}` : null },
+    { label: t('events.metaISO'),      val: mv('ISOSpeedRatings') ?? mv('ISO') },
+    { label: t('events.metaFocal'),    val: mv('FocalLength') ? `${mv('FocalLength')} mm` : null },
   ].filter(r => r.val)
 
   if (!imageId) return null
@@ -116,7 +118,7 @@ function EventImagePreviewModal({ images, currentIdx, onNavigate, onClose }: {
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
-          <span className="text-xs font-semibold text-zinc-400">Image details</span>
+          <span className="text-xs font-semibold text-zinc-400">{t('events.imageDetails')}</span>
           <button onClick={onClose}
             className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -127,7 +129,7 @@ function EventImagePreviewModal({ images, currentIdx, onNavigate, onClose }: {
 
         {metaRows.length > 0 && (
           <div className="px-4 py-3 border-b border-zinc-800/60">
-            <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2.5">Metadata</h4>
+            <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2.5">{t('events.metadata')}</h4>
             <div className="space-y-1.5">
               {metaRows.map(r => (
                 <div key={r.label} className="flex gap-2">
@@ -141,7 +143,7 @@ function EventImagePreviewModal({ images, currentIdx, onNavigate, onClose }: {
 
         {persons.length > 0 && (
           <div className="px-4 py-3">
-            <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2.5">People</h4>
+            <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2.5">{t('events.people')}</h4>
             <div className="flex flex-wrap gap-2">
               {persons.map(p => (
                 <div key={p.person_id} className="flex items-center gap-1.5 bg-zinc-800 rounded-full px-2.5 py-1">
@@ -158,7 +160,7 @@ function EventImagePreviewModal({ images, currentIdx, onNavigate, onClose }: {
         )}
 
         {metaRows.length === 0 && persons.length === 0 && (
-          <p className="px-4 py-4 text-xs text-zinc-600 italic">No metadata available.</p>
+          <p className="px-4 py-4 text-xs text-zinc-600 italic">{t('events.noMetadata')}</p>
         )}
       </div>
     </div>,
@@ -177,6 +179,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
   onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
+  const t = useT()
   const qc = useQueryClient()
   const [previewIdx, setPreviewIdx] = useState<number | null>(null)
   const [exportingZip, setExportingZip] = useState(false)
@@ -210,7 +213,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
   const [sourceCreated, setSourceCreated] = useState(false)
   const descRef = useRef<HTMLTextAreaElement>(null)
 
-  const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
+  const typeLabel = t(EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.key ?? ev.event_type)
   const dateStr = formatEventDate(ev.date, ev.year)
 
   function startEditDesc() {
@@ -287,7 +290,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
           </svg>
-          Events
+          {t('events.heading')}
         </button>
         <svg className="w-3.5 h-3.5 text-zinc-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -357,14 +360,14 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
                     : 'text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50'
                 }`}
               >
-                {sourceCreated ? '✓ Source created' : creatingSource ? '…' : 'Use as source'}
+                {sourceCreated ? t('events.sourceCreated') : creatingSource ? '…' : t('events.useAsSource')}
               </button>
               <button
                 onClick={async () => {
                   await api.events.togglePrivacy(ev.id, !ev.is_private)
                   onEventUpdated({ ...ev, is_private: !ev.is_private })
                 }}
-                title={ev.is_private ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+                title={ev.is_private ? t('events.privacyOn') : t('events.privacyOff')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${ev.is_private ? 'text-amber-300 bg-amber-900/40 hover:bg-amber-900/60' : 'text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700'}`}
               >
                 {ev.is_private ? (
@@ -376,13 +379,13 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
                     <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
                   </svg>
                 )}
-                {ev.is_private ? 'Private' : 'Make private'}
+                {ev.is_private ? t('events.private') : t('events.makePrivate')}
               </button>
               <button
                 onClick={onEdit}
                 className="px-3 py-1.5 text-xs font-medium text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
               >
-                Edit event
+                {t('events.editEvent')}
               </button>
             </div>
           </div>
@@ -398,13 +401,13 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
           {/* Description */}
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800/60">
-              <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Description</h2>
+              <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('events.description')}</h2>
               {!editingDesc && (
                 <button
                   onClick={startEditDesc}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
                 >
-                  {ev.description ? 'Edit' : '+ Add'}
+                  {ev.description ? t('events.edit') : t('events.addDesc')}
                 </button>
               )}
             </div>
@@ -425,7 +428,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
                   ref={descRef}
                   value={descDraft}
                   onChange={e => setDescDraft(e.target.value)}
-                  placeholder="Write in Markdown… use **bold**, *italic*, - lists, ## headings"
+                  placeholder={t('events.mdPlaceholder')}
                   rows={6}
                   className="w-full bg-transparent px-5 py-3 text-sm text-zinc-200 placeholder-zinc-600 outline-none resize-y leading-relaxed font-mono"
                 />
@@ -435,13 +438,13 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
                     disabled={savingDesc}
                     className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded-lg transition-colors"
                   >
-                    {savingDesc ? 'Saving…' : 'Save'}
+                    {savingDesc ? t('events.saving') : t('events.save')}
                   </button>
                   <button
                     onClick={() => setEditingDesc(false)}
                     className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
                   >
-                    Cancel
+                    {t('events.cancel')}
                   </button>
                 </div>
               </div>
@@ -452,7 +455,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
               />
             ) : (
               <div className="px-5 py-6">
-                <p className="text-sm text-zinc-600 italic">No description yet.</p>
+                <p className="text-sm text-zinc-600 italic">{t('events.noDescription')}</p>
               </div>
             )}
           </div>
@@ -462,25 +465,25 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
               <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800/60">
                 <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                  Photos ({ev.images.length})
+                  {t('events.photos', { n: ev.images.length })}
                 </h2>
                 <button
                   onClick={handleExportZip}
                   disabled={exportingZip}
-                  title="Export photos as ZIP"
+                  title={t('events.exportZipTitle')}
                   className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-100 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
                 >
                   {exportingZip ? (
                     <>
                       <div className="w-3 h-3 border border-zinc-500 border-t-brand-400 rounded-full animate-spin" />
-                      Building…
+                      {t('events.exportZipBusy')}
                     </>
                   ) : (
                     <>
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                       </svg>
-                      Export ZIP
+                      {t('events.exportZipLabel')}
                     </>
                   )}
                 </button>
@@ -512,7 +515,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
           {ev.persons.length > 0 && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
               <div className="px-4 py-3 border-b border-zinc-800/60">
-                <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">People</h2>
+                <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('events.people')}</h2>
               </div>
               <div className="p-4 space-y-3">
                 {ev.persons.map(ep => (
@@ -535,7 +538,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
                     <div>
                       <p className={`text-sm ${ep.featured ? 'text-amber-100' : 'text-zinc-200'}`}>
                         {ep.featured && <span className="mr-1 text-amber-400 text-xs">★</span>}
-                        {ep.person_name ?? '(unnamed)'}
+                        {ep.person_name ?? t('images.unnamed')}
                       </p>
                       <p className="text-[10px] text-zinc-600 capitalize">{ep.role}</p>
                     </div>
@@ -547,10 +550,10 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
 
           {ev.images.length === 0 && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-center">
-              <p className="text-sm text-zinc-600 italic">No photos attached.</p>
+              <p className="text-sm text-zinc-600 italic">{t('events.noPhotos')}</p>
               <button onClick={onEdit}
                 className="mt-2 text-xs text-brand-500 hover:text-brand-400 transition-colors">
-                + Attach photos
+                {t('events.attachPhotos')}
               </button>
             </div>
           )}
@@ -578,7 +581,8 @@ function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
   onEdit: () => void
   onTogglePrivacy: (evId: number, isPrivate: boolean) => void
 }) {
-  const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
+  const t = useT()
+  const typeLabel = t(EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.key ?? ev.event_type)
   const dateStr = formatEventDate(ev.date, ev.year)
 
   const imgs = ev.images.slice(0, 4)
@@ -629,7 +633,7 @@ function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
           <div className="flex items-center gap-0.5 shrink-0">
             <button
               onClick={e => { e.stopPropagation(); onTogglePrivacy(ev.id, !ev.is_private) }}
-              title={ev.is_private ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+              title={ev.is_private ? t('events.privacyOn') : t('events.privacyOff')}
               className={`p-1 rounded transition-all ${ev.is_private ? 'text-amber-400 hover:bg-zinc-700' : 'text-zinc-700 hover:text-zinc-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100'}`}
             >
               {ev.is_private ? (
@@ -685,6 +689,7 @@ export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onE
   onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
+  const t = useT()
   const qc = useQueryClient()
   const [filter, setFilter] = useState<'all' | 'with_photos'>('with_photos')
   const [viewingEvent, setViewingEvent] = useState<PersonEvent | null>(null)
@@ -762,8 +767,8 @@ export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onE
   // ── Mode A: full-page editor ─────────────────────────────────────────────────
   if (showEditor) {
     const editorTitle = editorIsNew
-      ? 'New event'
-      : (editingEvent?.title ?? (EVENT_TYPE_OPTIONS.find(o => o.value === editingEvent?.event_type)?.label ?? 'Edit event'))
+      ? t('events.newEvent')
+      : (editingEvent?.title ?? (t(EVENT_TYPE_OPTIONS.find(o => o.value === editingEvent?.event_type)?.key ?? '') || t('events.editEvent')))
 
     return (
       <div className="max-w-2xl mx-auto px-6 py-8">
@@ -775,7 +780,7 @@ export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onE
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-            {viewingEvent !== null && !isCreating ? (editingEvent?.title || EVENT_TYPE_OPTIONS.find(o => o.value === editingEvent?.event_type)?.label || 'Event') : 'Events'}
+            {viewingEvent !== null && !isCreating ? (editingEvent?.title || t(EVENT_TYPE_OPTIONS.find(o => o.value === editingEvent?.event_type)?.key ?? '') || t('events.noTitle')) : t('events.heading')}
           </button>
           <svg className="w-3.5 h-3.5 text-zinc-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -815,17 +820,17 @@ export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onE
 
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-zinc-100">Events</h1>
+          <h1 className="text-xl font-bold text-zinc-100">{t('events.heading')}</h1>
           <p className="text-sm text-zinc-500 mt-0.5">
-            {isLoading ? '…' : `${events.length} event${events.length !== 1 ? 's' : ''}`}
+            {isLoading ? '…' : events.length !== 1 ? t('events.countPlural', { n: events.length }) : t('events.countSingular', { n: events.length })}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex gap-0.5 bg-zinc-800 rounded-lg p-0.5">
             {([
-              { value: 'with_photos', label: 'With photos' },
-              { value: 'all',         label: 'All' },
-            ] as const).map(opt => (
+              { value: 'with_photos' as const, label: t('events.filterWithPhotos') },
+              { value: 'all' as const,         label: t('events.filterAll') },
+            ]).map(opt => (
               <button key={opt.value} onClick={() => setFilter(opt.value)}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                   filter === opt.value ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
@@ -839,7 +844,7 @@ export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onE
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>
-            New event
+            {t('events.newEvent')}
           </button>
         </div>
       </div>
@@ -867,12 +872,12 @@ export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onE
           </div>
           <p className="text-zinc-500 text-sm">
             {filter === 'with_photos'
-              ? 'No events with photos yet. Create an event and attach photos to it.'
-              : 'No events yet. Create your first event.'}
+              ? t('events.noEventsPhotos')
+              : t('events.noEvents')}
           </p>
           <button onClick={() => setIsCreating(true)}
             className="mt-4 px-4 py-2 bg-brand-500 hover:bg-brand-400 text-white text-sm font-medium rounded-lg transition-colors">
-            + New event
+            {t('events.newEvent')}
           </button>
         </div>
       )}

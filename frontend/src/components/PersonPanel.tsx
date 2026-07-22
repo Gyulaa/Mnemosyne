@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument, DocumentType, Source, Citation } from '../types'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
-import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
 import EventTimeline from './EventTimeline'
@@ -73,11 +73,12 @@ function calcAge(p: PersonFull): { age: number; alive: boolean } | null {
 // ── DatePartPicker ────────────────────────────────────────────────────────────
 // value: "" | "YYYY" | "YYYY-MM" | "YYYY-MM-DD"
 
-function DatePartPicker({ value, onChange, placeholder = 'Year' }: {
+function DatePartPicker({ value, onChange, placeholder }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
 }) {
+  const t = useT()
   const parts = value ? value.split('-') : []
   const yr = parts[0] ?? ''
   const mo = parts[1] ?? ''
@@ -101,7 +102,7 @@ function DatePartPicker({ value, onChange, placeholder = 'Year' }: {
         type="number"
         value={yr}
         onChange={e => update(e.target.value, mo, dy)}
-        placeholder={placeholder}
+        placeholder={placeholder ?? t('timeline.yearPh')}
         min={1000} max={2100}
         className="w-16 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 [appearance:textfield]"
       />
@@ -111,7 +112,7 @@ function DatePartPicker({ value, onChange, placeholder = 'Year' }: {
           onChange={e => update(yr, e.target.value, e.target.value ? dy : '')}
           className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-brand-400"
         >
-          <option value="">— month —</option>
+          <option value="">{t('timeline.monthPh')}</option>
           {MONTHS_EN.map((m, i) => (
             <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>
           ))}
@@ -123,7 +124,7 @@ function DatePartPicker({ value, onChange, placeholder = 'Year' }: {
           onChange={e => update(yr, mo, e.target.value)}
           className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-brand-400"
         >
-          <option value="">— day —</option>
+          <option value="">{t('timeline.dayPh')}</option>
           {Array.from({ length: maxDays }, (_, i) => i + 1).map(d => (
             <option key={d} value={String(d).padStart(2, '0')}>{d}.</option>
           ))}
@@ -188,6 +189,7 @@ function Lightbox({ images, idx, onClose, onChange, onNavigateTo }: {
   onChange: (i: number) => void
   onNavigateTo: (id: number) => void
 }) {
+  const t = useT()
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -260,14 +262,14 @@ function Lightbox({ images, idx, onClose, onChange, onNavigateTo }: {
             </div>
             {persons.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-zinc-600">Persons:</span>
+                <span className="text-xs text-zinc-600">{t('person.lightboxPersons')}</span>
                 {persons.map(p => (
                   <button key={p.person_id}
                     onClick={() => { onNavigateTo(p.person_id); onClose() }}
                     className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 rounded-full text-xs text-zinc-300 transition-colors cursor-pointer">
                     <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
                       className="w-4 h-4 rounded-full object-cover shrink-0" />
-                    {p.person_name ?? '(unnamed)'}
+                    {p.person_name ?? t('images.unnamed')}
                   </button>
                 ))}
               </div>
@@ -345,6 +347,7 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
   onSelect: (p: PersonFull) => void
   onClose: () => void
 }) {
+  const t = useT()
   const qc = useQueryClient()
   const { nameOrder } = useSettings()
   const [search, setSearch] = useState('')
@@ -416,34 +419,34 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
         <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-96 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
           <div className="px-4 pt-3 pb-2 border-b border-zinc-700 flex items-center gap-2">
             <button onClick={() => setMode('list')} className="text-zinc-500 hover:text-zinc-200 text-lg leading-none transition-colors">‹</button>
-            <p className="text-xs font-semibold text-zinc-300">New person — {label.toLowerCase()}</p>
+            <p className="text-xs font-semibold text-zinc-300">{t('person.pickerTitle', { label: label.toLowerCase() })}</p>
           </div>
           <div className="px-4 py-4 space-y-2.5">
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className={LABEL}>First name *</label>
+                <label className={LABEL}>{t('person.firstName')}</label>
                 <input autoFocus value={newParts.first_name} onChange={e => setNewParts(p => ({ ...p, first_name: e.target.value }))}
-                  placeholder="Jane" className={INPUT} />
+                  placeholder={t('person.firstNamePh')} className={INPUT} />
               </div>
               <div>
-                <label className={LABEL}>Last name *</label>
+                <label className={LABEL}>{t('person.lastName')}</label>
                 <input value={newParts.last_name} onChange={e => setNewParts(p => ({ ...p, last_name: e.target.value }))}
-                  placeholder="Doe" className={INPUT} />
+                  placeholder={t('person.lastNamePh')} className={INPUT} />
               </div>
             </div>
             <div>
-              <label className={LABEL}>Birth year</label>
+              <label className={LABEL}>{t('person.birthYear')}</label>
               <input type="number" value={newBirthYear} onChange={e => setNewBirthYear(e.target.value)}
                 placeholder="1945" className={INPUT} />
             </div>
             {displayName && (
               <p className="text-[10px] text-zinc-500">
-                Displayed as: <span className="text-zinc-300 font-medium">{displayName}</span>
+                {t('person.displayedAs')} <span className="text-zinc-300 font-medium">{displayName}</span>
               </p>
             )}
             <button onClick={handleCreate} disabled={creating || !displayName.trim()}
               className="w-full py-2 bg-brand-500 hover:bg-brand-400 disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-colors">
-              {creating ? 'Creating…' : 'Create and add'}
+              {creating ? t('person.creating') : t('person.createAndAdd')}
             </button>
           </div>
         </div>
@@ -457,12 +460,12 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
         <div className="px-4 pt-3 pb-2 border-b border-zinc-700">
           <p className="text-xs font-semibold text-zinc-300 mb-2">{label}</p>
           <input autoFocus value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search..."
+            placeholder={t('person.pickerSearch')}
             className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
         </div>
         <div className="overflow-y-auto flex-1">
           {filtered.length === 0 ? (
-            <p className="text-sm text-zinc-500 text-center py-4 italic">No results</p>
+            <p className="text-sm text-zinc-500 text-center py-4 italic">{t('person.noResults')}</p>
           ) : filtered.map(p => {
             const lifespan = _personLifespan(p)
             const parents  = parentsOf.get(p.id) ?? []
@@ -479,12 +482,12 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
                   {lifespan && <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{lifespan}</p>}
                   {parents.length > 0 && (
                     <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
-                      <span className="text-zinc-700">Parents: </span>{parents.join(', ')}
+                      <span className="text-zinc-700">{t('person.pickerParents')} </span>{parents.join(', ')}
                     </p>
                   )}
                   {spouses.length > 0 && (
                     <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
-                      <span className="text-zinc-700">Spouse: </span>{spouses.join(', ')}
+                      <span className="text-zinc-700">{t('person.pickerSpouse')} </span>{spouses.join(', ')}
                     </p>
                   )}
                 </div>
@@ -496,7 +499,7 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
           <button onClick={() => setMode('create')}
             className="w-full flex items-center gap-2.5 px-3.5 py-2.5 text-left hover:bg-zinc-700/60 transition-colors">
             <div className="w-8 h-8 rounded-full bg-brand-700 flex items-center justify-center shrink-0 text-white text-base font-bold">+</div>
-            <span className="text-sm text-brand-300 font-medium">Create new person</span>
+            <span className="text-sm text-brand-300 font-medium">{t('person.createNew')}</span>
           </button>
         </div>
       </div>
@@ -523,6 +526,7 @@ function RelRow({
   relPrivacy?: Map<number, { relId: number; isPrivate: boolean }>
   onTogglePrivacy?: (relId: number, isPrivate: boolean) => Promise<void>
 }) {
+  const t = useT()
   const { nameOrder } = useSettings()
   const [privacyBusy, setPrivacyBusy] = useState<Set<number>>(new Set())
   if (!editing && persons.length === 0) return null
@@ -553,7 +557,7 @@ function RelRow({
               {priv && onTogglePrivacy && (
                 <button
                   onClick={() => !privacyBusy.has(priv.relId) && toggleRelPrivacy(priv.relId, !isPrivate)}
-                  title={isPrivate ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+                  title={isPrivate ? t('person.privacyOn') : t('person.privacyOff')}
                   className={`ml-0.5 w-4 h-4 flex items-center justify-center transition-colors shrink-0 ${isPrivate ? 'text-amber-400' : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-zinc-300'}`}
                 >
                   {isPrivate ? (
@@ -570,7 +574,7 @@ function RelRow({
               {editing && onRemove && (
                 <button onClick={() => onRemove(p)}
                   className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0"
-                  title="Remove relation">✕</button>
+                  title={t('person.removeRelation')}>✕</button>
               )}
             </div>
           )
@@ -589,6 +593,7 @@ function RelRow({
 // ── DocUploadForm ─────────────────────────────────────────────────────────────
 
 function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => void }) {
+  const t = useT()
   const qc = useQueryClient()
   const { data: docTypes = [] } = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
   const fileRef = useRef<HTMLInputElement>(null)
@@ -618,7 +623,7 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
       qc.invalidateQueries({ queryKey: ['person-docs', personId] })
       onDone()
     } catch (e) {
-      alert(`Upload failed: ${e}`)
+      alert(t('person.uploadFailed', { e: String(e) }))
     } finally {
       setUploading(false)
     }
@@ -638,14 +643,14 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
         {file ? (
           <p className="text-xs text-zinc-200 truncate">{file.name}</p>
         ) : (
-          <p className="text-xs text-zinc-500">Drag here or <span className="text-brand-400">click</span> to select a file</p>
+          <p className="text-xs text-zinc-500">{t('person.uploadDropZone')}</p>
         )}
       </div>
 
       <input
         value={title}
         onChange={e => setTitle(e.target.value)}
-        placeholder="Title (optional)"
+        placeholder={t('person.docTitle')}
         className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
       />
       <div className="flex gap-2">
@@ -661,7 +666,7 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
           type="number"
           value={year}
           onChange={e => setYear(e.target.value)}
-          placeholder="Year"
+          placeholder={t('person.docYear')}
           className="w-20 bg-zinc-700 border border-zinc-600 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
         />
       </div>
@@ -671,13 +676,13 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
           disabled={!file || uploading}
           className="flex-1 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors"
         >
-          {uploading ? 'Uploading…' : 'Upload'}
+          {uploading ? t('person.uploading') : t('person.upload')}
         </button>
         <button
           onClick={onDone}
           className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-700 rounded-lg transition-colors"
         >
-          Cancel
+          {t('person.cancel')}
         </button>
       </div>
     </div>
@@ -691,6 +696,7 @@ function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
   linkedDocIds: Set<number>
   onClose: () => void
 }) {
+  const t = useT()
   const qc = useQueryClient()
   const { data: allDocs = [] } = useQuery<PersonDocument[]>({ queryKey: ['docs-all'], queryFn: api.documents.listAll })
   const { data: types = [] }   = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
@@ -703,7 +709,7 @@ function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
     return () => window.removeEventListener('keydown', h)
   }, [onClose])
 
-  const typeMap = new Map(types.map(t => [t.key, t.label]))
+  const typeMap = new Map(types.map(dt => [dt.key, dt.label]))
   const available = allDocs.filter(d => !linkedDocIds.has(d.id))
   const filtered = search
     ? available.filter(d => [d.title, d.filename, ...(d.persons.map(p => p.name))].filter(Boolean).join(' ').toLowerCase().includes(search.toLowerCase()))
@@ -726,19 +732,19 @@ function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
       <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl w-[440px] max-w-[92vw] max-h-[70vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-zinc-800 shrink-0">
-          <p className="text-sm font-semibold text-zinc-100">Link existing document</p>
+          <p className="text-sm font-semibold text-zinc-100">{t('person.linkExistingDoc')}</p>
           <button onClick={onClose} className="w-7 h-7 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
           </button>
         </div>
         <div className="px-4 py-2 border-b border-zinc-800 shrink-0">
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search documents…"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('person.searchDocs')}
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
         </div>
         <div className="flex-1 overflow-y-auto divide-y divide-zinc-800/60">
           {filtered.length === 0 ? (
             <p className="px-4 py-4 text-xs text-zinc-600 italic">
-              {available.length === 0 ? 'All documents are already linked' : 'No documents found'}
+              {available.length === 0 ? t('person.allLinked') : t('person.noDocs')}
             </p>
           ) : filtered.map(doc => (
             <button key={doc.id} onClick={() => link(doc.id)} disabled={linking === doc.id}
@@ -746,7 +752,7 @@ function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-zinc-200 truncate">{doc.title || doc.filename}</p>
                 <p className="text-[10px] text-zinc-500">
-                  {typeMap.get(doc.doc_type ?? '') ?? doc.doc_type ?? 'Document'}
+                  {typeMap.get(doc.doc_type ?? '') ?? doc.doc_type ?? t('person.docFallback')}
                   {doc.year ? ` · ${doc.year}` : ''}
                 </p>
                 {doc.persons.length > 0 && (
@@ -775,6 +781,7 @@ function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
 // ── DocPreviewModal ───────────────────────────────────────────────────────────
 
 function DocPreviewModal({ doc, onClose }: { doc: PersonDocument; onClose: () => void }) {
+  const t = useT()
   const url = api.documents.fileUrl(doc.id)
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -805,7 +812,7 @@ function DocPreviewModal({ doc, onClose }: { doc: PersonDocument; onClose: () =>
         <span className="text-zinc-400 text-sm truncate max-w-xs">{doc.title || doc.filename}</span>
         <a href={api.documents.fileUrl(doc.id, true)} onClick={e => e.stopPropagation()}
           className="text-xs text-zinc-500 hover:text-zinc-200 transition-colors underline underline-offset-2">
-          Download
+          {t('person.download')}
         </a>
       </div>
     </div>,
@@ -816,6 +823,7 @@ function DocPreviewModal({ doc, onClose }: { doc: PersonDocument; onClose: () =>
 // ── DocRow ────────────────────────────────────────────────────────────────────
 
 function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDelete: () => void; onNavToDocument?: (docId: number, editMode?: boolean) => void }) {
+  const t = useT()
   const qc = useQueryClient()
   const { data: docTypes = [] } = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
   const [editing, setEditing] = useState(false)
@@ -865,7 +873,7 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
   }
 
   const displayName = doc.title || doc.filename
-  const typeMap = new Map(docTypes.map(t => [t.key, t.label]))
+  const typeMap = new Map(docTypes.map(dt => [dt.key, dt.label]))
   const typeLabel = typeMap.get(doc.doc_type ?? '') ?? DOC_TYPE_LABELS[doc.doc_type ?? ''] ?? doc.doc_type
 
   if (editing) {
@@ -875,7 +883,7 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
           autoFocus
           value={title}
           onChange={e => setTitle(e.target.value)}
-          placeholder="Title"
+          placeholder={t('person.docTitle')}
           className="w-full bg-zinc-700 border border-zinc-600 rounded px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
         />
         <div className="flex gap-1.5">
@@ -891,18 +899,18 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
             type="number"
             value={year}
             onChange={e => setYear(e.target.value)}
-            placeholder="Year"
+            placeholder={t('timeline.yearPh')}
             className="w-16 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
           />
         </div>
         <div className="flex gap-1.5">
           <button onClick={save} disabled={saving}
             className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded transition-colors">
-            {saving ? '…' : 'Save'}
+            {saving ? '…' : t('person.save')}
           </button>
           <button onClick={() => setEditing(false)}
             className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-700 rounded transition-colors">
-            Cancel
+            {t('person.cancel')}
           </button>
         </div>
       </div>
@@ -956,7 +964,7 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
         <button
           onClick={togglePrivacy}
           disabled={privacyBusy}
-          title={doc.is_private ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+          title={doc.is_private ? t('person.privacyOn') : t('person.privacyOff')}
           className={`w-6 h-6 rounded flex items-center justify-center transition-colors disabled:opacity-50 shrink-0 ${doc.is_private ? 'text-amber-400 hover:bg-zinc-700' : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-zinc-300 hover:bg-zinc-700'}`}
         >
           {doc.is_private ? (
@@ -971,7 +979,7 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
         </button>
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
           {canPreview && (
-            <button onClick={() => setPreviewing(true)} title="Preview"
+            <button onClick={() => setPreviewing(true)} title={t('person.preview')}
               className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
@@ -980,7 +988,7 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
             </button>
           )}
           {doc.source_id == null && (
-            <button onClick={promote} disabled={promoting} title="Add to source library"
+            <button onClick={promote} disabled={promoting} title={t('person.addToSourceLib')}
               className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-amber-400 hover:bg-zinc-700 transition-colors">
               {promoting ? (
                 <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -996,20 +1004,20 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
           )}
           <a
             href={api.documents.fileUrl(doc.id, true)}
-            title="Download"
+            title={t('person.download')}
             className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
           </a>
-          <button onClick={() => onNavToDocument ? onNavToDocument(doc.id, true) : setEditing(true)} title="Edit"
+          <button onClick={() => onNavToDocument ? onNavToDocument(doc.id, true) : setEditing(true)} title={t('person.editDocTitle')}
             className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700 transition-colors">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
             </svg>
           </button>
-          <button onClick={onDelete} title="Delete"
+          <button onClick={onDelete} title={t('person.deleteDocTitle')}
             className="w-6 h-6 rounded flex items-center justify-center text-zinc-600 hover:text-red-400 hover:bg-zinc-700 transition-colors">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1044,6 +1052,7 @@ function CitationsInline({
   sources: Source[]
   onMutated: () => void
 }) {
+  const t = useT()
   const [expanded, setExpanded] = useState(false)
   const [adding, setAdding] = useState(false)
   const [selectedSourceId, setSelectedSourceId] = useState<number | ''>('')
@@ -1088,7 +1097,7 @@ function CitationsInline({
           }`}
         >
           <BookIcon />
-          {count > 0 ? `${count} source${count > 1 ? 's' : ''}` : 'Cite source'}
+          {count > 0 ? (count > 1 ? t('person.citeSrcCountPlural', { n: count }) : t('person.citeSrcCount', { n: count })) : t('person.citeSrc')}
         </button>
       )}
 
@@ -1097,7 +1106,7 @@ function CitationsInline({
         <div className="mt-1 rounded-lg border border-zinc-700/60 bg-zinc-900/60 overflow-hidden">
           {/* header */}
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Sources</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{t('person.sources')}</span>
             <button onClick={() => { setExpanded(false); setAdding(false) }}
               className="text-zinc-600 hover:text-zinc-300 transition-colors">
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1109,7 +1118,7 @@ function CitationsInline({
           {/* citation list */}
           <div className="px-3 py-2 space-y-2">
             {citations.length === 0 && !adding && (
-              <p className="text-[10px] text-zinc-600 italic">No sources cited yet.</p>
+              <p className="text-[10px] text-zinc-600 italic">{t('person.noSources')}</p>
             )}
             {citations.map(c => (
               <div key={c.id} className="flex items-start gap-2 group/c">
@@ -1141,7 +1150,7 @@ function CitationsInline({
                   </div>
                   {c.detail && (
                     <p className="text-[10px] text-zinc-500 leading-snug">
-                      <span className="text-zinc-600">p. </span>{c.detail}
+                      <span className="text-zinc-600">{t('person.sourcePagePrefix')} </span>{c.detail}
                     </p>
                   )}
                   {c.source_document_id != null && (
@@ -1153,11 +1162,11 @@ function CitationsInline({
                       <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
                       </svg>
-                      View document
+                      {t('person.viewDocument')}
                     </a>
                   )}
                 </div>
-                <button onClick={() => removeCitation(c.id)} title="Remove citation"
+                <button onClick={() => removeCitation(c.id)} title={t('person.removeCitation')}
                   className="shrink-0 mt-0.5 opacity-0 group-hover/c:opacity-100 text-zinc-600 hover:text-red-400 transition-all">
                   <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1170,13 +1179,11 @@ function CitationsInline({
             {adding ? (
               <div className="space-y-1.5 pt-1 border-t border-zinc-800">
                 {sources.length === 0 ? (
-                  <p className="text-[10px] text-zinc-500 italic">
-                    No sources in library yet. Upload a document and use "Add to source library" to create one.
-                  </p>
+                  <p className="text-[10px] text-zinc-500 italic">{t('person.noSourcesLibHint')}</p>
                 ) : (
                   <select value={selectedSourceId} onChange={e => setSelectedSourceId(Number(e.target.value) || '')}
                     className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-100 outline-none focus:border-amber-500">
-                    <option value="">— select source —</option>
+                    <option value="">{t('person.selectSource')}</option>
                     {sources.map(s => (
                       <option key={s.id} value={s.id}>
                         {s.title}{s.year ? ` (${s.year})` : ''}
@@ -1185,23 +1192,23 @@ function CitationsInline({
                   </select>
                 )}
                 <input value={detail} onChange={e => setDetail(e.target.value)}
-                  placeholder="Page / entry / timestamp (optional)"
+                  placeholder={t('person.citationPh')}
                   className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500" />
                 <div className="flex gap-1.5">
                   <button onClick={addCitation} disabled={saving || !selectedSourceId || sources.length === 0}
                     className="px-2.5 py-1 text-[10px] font-medium bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white rounded transition-colors">
-                    {saving ? '…' : 'Save'}
+                    {saving ? '…' : t('person.save')}
                   </button>
                   <button onClick={() => { setAdding(false); if (count === 0) setExpanded(false) }}
                     className="px-2.5 py-1 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors">
-                    Cancel
+                    {t('person.cancel')}
                   </button>
                 </div>
               </div>
             ) : (
               <button onClick={() => setAdding(true)}
                 className="text-[10px] text-zinc-500 hover:text-amber-400 transition-colors pt-0.5">
-                + Add citation
+                {t('person.addCitation')}
               </button>
             )}
           </div>
@@ -1245,6 +1252,7 @@ function detailsFromPerson(p: PersonFull) {
 }
 
 export default function PersonPanel({ person, persons, relations, onClose, onNavigateTo, onNavToEvent, onNavToDocument, onDeleted }: Props) {
+  const t = useT()
   const qc = useQueryClient()
   const { nameOrder } = useSettings()
   const [visible, setVisible] = useState(false)
@@ -1293,8 +1301,8 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   const [showLinkForm, setShowLinkForm] = useState(false)
 
   useEffect(() => {
-    const t = requestAnimationFrame(() => setVisible(true))
-    return () => cancelAnimationFrame(t)
+    const raf = requestAnimationFrame(() => setVisible(true))
+    return () => cancelAnimationFrame(raf)
   }, [])
 
   // Reset details and tab when person changes
@@ -1469,16 +1477,16 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
     switch (pickerMode) {
       case 'parent':
-        if (exists('parent', p.id, person.id)) { warn(`${p.name ?? 'This person'} is already listed as a parent.`); return }
+        if (exists('parent', p.id, person.id)) { warn(t('person.alreadyListed', { name: displayPersonName(p, nameOrder) })); return }
         addRelMut.mutate({ type: 'parent',  a: p.id,      b: person.id }); break
       case 'child':
-        if (exists('parent', person.id, p.id)) { warn(`${p.name ?? 'This person'} is already listed as a child.`); return }
+        if (exists('parent', person.id, p.id)) { warn(t('person.alreadyListed', { name: displayPersonName(p, nameOrder) })); return }
         addRelMut.mutate({ type: 'parent',  a: person.id, b: p.id });      break
       case 'spouse':
-        if (exists('spouse', person.id, p.id)) { warn(`${p.name ?? 'This person'} is already listed as a spouse.`); return }
+        if (exists('spouse', person.id, p.id)) { warn(t('person.alreadyListed', { name: displayPersonName(p, nameOrder) })); return }
         addRelMut.mutate({ type: 'spouse',  a: person.id, b: p.id });      break
       case 'sibling':
-        if (exists('sibling', person.id, p.id)) { warn(`${p.name ?? 'This person'} is already listed as a sibling.`); return }
+        if (exists('sibling', person.id, p.id)) { warn(t('person.alreadyListed', { name: displayPersonName(p, nameOrder) })); return }
         addRelMut.mutate({ type: 'sibling', a: person.id, b: p.id });      break
     }
   }
@@ -1619,10 +1627,10 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   )
 
   const pickerLabels: Record<NonNullable<PickerMode>, string> = {
-    parent: 'Add parent', child: 'Add child', spouse: 'Add spouse', sibling: 'Add sibling',
+    parent: t('person.addParentLabel'), child: t('person.addChildLabel'), spouse: t('person.addSpouseLabel'), sibling: t('person.addSiblingLabel'),
   }
 
-  const SEX_LABEL: Record<string, string> = { M: 'Male', F: 'Female' }
+  const SEX_LABEL: Record<string, string> = { M: t('person.sexMale'), F: t('person.sexFemale') }
 
   return (
     <>
@@ -1639,7 +1647,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           className="absolute top-3 right-3 z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-300 hover:text-white transition-colors text-sm">✕</button>
 
         {/* Find relation button */}
-        <button onClick={() => setRelatePickerOpen(true)} title="Find relationship path"
+        <button onClick={() => setRelatePickerOpen(true)} title={t('person.findPath')}
           className="absolute top-3 right-[7.5rem] z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <circle cx="5" cy="12" r="2" />
@@ -1650,7 +1658,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
         </button>
 
         {/* Merge button — always visible (useful even with clusters) */}
-        <button onClick={() => setMergePickerOpen(true)} title="Merge with another person"
+        <button onClick={() => setMergePickerOpen(true)} title={t('person.mergeWith')}
           className="absolute top-3 right-[5.25rem] z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
@@ -1658,7 +1666,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
         </button>
 
         {person.clusters.length === 0 && (
-          <button onClick={() => setConfirmDelete(true)} title="Delete person"
+          <button onClick={() => setConfirmDelete(true)} title={t('person.deletePerson')}
             className="absolute top-3 right-12 z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -1669,16 +1677,16 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
         {confirmDelete && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 rounded-none">
             <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 shadow-2xl w-64 text-center">
-              <p className="text-zinc-100 font-medium mb-1 text-sm">Delete this person?</p>
-              <p className="text-zinc-400 text-xs mb-4 leading-relaxed">{displayPersonName(person, nameOrder)} will be permanently deleted along with all their relationships.</p>
+              <p className="text-zinc-100 font-medium mb-1 text-sm">{t('person.deleteConfirmTitle')}</p>
+              <p className="text-zinc-400 text-xs mb-4 leading-relaxed">{t('person.deleteConfirmBody', { name: displayPersonName(person, nameOrder) })}</p>
               <div className="flex gap-2 justify-center">
                 <button onClick={() => setConfirmDelete(false)}
                   className="px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-300 text-xs hover:bg-zinc-600 transition-colors">
-                  Cancel
+                  {t('person.cancel')}
                 </button>
                 <button onClick={handleDeletePerson} disabled={deleting}
                   className="px-3 py-1.5 rounded-lg bg-red-700 text-white text-xs hover:bg-red-600 transition-colors disabled:opacity-50">
-                  {deleting ? 'Deleting…' : 'Delete'}
+                  {deleting ? t('person.deleting') : t('person.delete')}
                 </button>
               </div>
             </div>
@@ -1688,24 +1696,21 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
         {mergePending && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 rounded-none">
             <div className="bg-zinc-800 border border-zinc-700 rounded-xl p-5 shadow-2xl w-72 text-center">
-              <p className="text-zinc-100 font-medium mb-1 text-sm">Confirm merge</p>
+              <p className="text-zinc-100 font-medium mb-1 text-sm">{t('person.mergeConfirmTitle')}</p>
               <p className="text-zinc-400 text-xs mb-1 leading-relaxed">
-                <span className="text-zinc-200">{displayPersonName(mergePending, nameOrder)}</span>
-                {' '}will be merged into{' '}
-                <span className="text-zinc-200">{displayPersonName(person, nameOrder)}</span>.
+                {t('person.mergeConfirmBody', { nameA: displayPersonName(mergePending, nameOrder), nameB: displayPersonName(person, nameOrder) })}
               </p>
               <p className="text-zinc-600 text-[10px] mb-4 leading-relaxed">
-                <span className="text-zinc-400">{displayPersonName(person, nameOrder)}</span> survives.
-                {' '}Relationships, clusters, events and documents are transferred from the other person, which is then deleted.
+                {t('person.mergeConfirmNote', { name: displayPersonName(person, nameOrder) })}
               </p>
               <div className="flex gap-2 justify-center">
                 <button onClick={() => setMergePending(null)}
                   className="px-3 py-1.5 rounded-lg bg-zinc-700 text-zinc-300 text-xs hover:bg-zinc-600 transition-colors">
-                  Cancel
+                  {t('person.cancel')}
                 </button>
                 <button onClick={handleMergePerson} disabled={merging}
                   className="px-3 py-1.5 rounded-lg bg-brand-600 text-white text-xs hover:bg-brand-500 transition-colors disabled:opacity-50">
-                  {merging ? 'Merging…' : 'Merge'}
+                  {merging ? t('person.merging') : t('person.merge')}
                 </button>
               </div>
             </div>
@@ -1740,11 +1745,11 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   {ageInfo && (
                     <p className="text-xs text-zinc-500">
                       {ageInfo.alive
-                        ? `${ageInfo.age} years old today`
-                        : `Lived ${ageInfo.age} years`}
+                        ? t('person.ageTodayDisplay', { n: ageInfo.age })
+                        : t('person.ageLived', { n: ageInfo.age })}
                     </p>
                   )}
-                  <p className="text-xs text-zinc-600">{person.face_count > 0 ? `${person.face_count} photo(s) in app` : 'No photos in app'}</p>
+                  <p className="text-xs text-zinc-600">{person.face_count > 0 ? t('person.photosInApp', { n: person.face_count }) : t('person.noPhotos')}</p>
                 </div>
               )}
             </div>
@@ -1753,13 +1758,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             {editingHeader ? (
               <>
                 <button onClick={saveHeader} disabled={saveMut.isPending}
-                  className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors">Save</button>
+                  className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-600 text-white rounded-lg transition-colors">{t('person.save')}</button>
                 <button onClick={() => setEditingHeader(false)}
-                  className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">Cancel</button>
+                  className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">{t('person.cancel')}</button>
               </>
             ) : (
               <button onClick={startHeaderEdit}
-                className="px-3 py-1 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors">Edit</button>
+                className="px-3 py-1 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors">{t('person.edit')}</button>
             )}
           </div>
         </div>
@@ -1776,7 +1781,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   : 'text-zinc-500 hover:text-zinc-300'
               }`}
             >
-              {tab === 'bio' ? 'Bio' : tab === 'events' ? 'Events' : tab === 'documents' ? `Docs${docs.length > 0 ? ` (${docs.length})` : ''}` : `Notes${personNotes.length > 0 ? ` (${personNotes.length})` : ''}`}
+              {tab === 'bio' ? t('person.tabBio') : tab === 'events' ? t('person.tabEvents') : tab === 'documents' ? (docs.length > 0 ? t('person.tabDocsN', { n: docs.length }) : t('person.tabDocs')) : (personNotes.length > 0 ? t('person.tabNotesN', { n: personNotes.length }) : t('person.tabNotes'))}
             </button>
           ))}
         </div>
@@ -1790,18 +1795,18 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {/* Details */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-2.5">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Details</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('person.details')}</h3>
               {!editingDetails ? (
                 <button onClick={() => { setDetailsData(detailsFromPerson(person)); setEditingDetails(true) }}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
-                  {hasDetails ? 'Edit' : '+ Add'}
+                  {hasDetails ? t('person.edit') : t('person.add')}
                 </button>
               ) : (
                 <div className="flex gap-3">
                   <button onClick={saveDetails} disabled={saveMut.isPending}
-                    className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Save</button>
+                    className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">{t('person.save')}</button>
                   <button onClick={() => setEditingDetails(false)}
-                    className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Cancel</button>
+                    className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">{t('person.cancel')}</button>
                 </div>
               )}
             </div>
@@ -1810,34 +1815,34 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               <div className="space-y-2">
                 {/* Birth */}
                 <div>
-                  <span className="text-xs text-zinc-500 block mb-1">Birth</span>
+                  <span className="text-xs text-zinc-500 block mb-1">{t('person.birth')}</span>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DatePartPicker value={detailsData.birth_date} onChange={v => setDetailsData(d => ({ ...d, birth_date: v }))} />
                     <input value={detailsData.birth_place} onChange={e => setDetailsData(d => ({ ...d, birth_place: e.target.value }))}
-                      placeholder="Place"
+                      placeholder={t('person.place')}
                       className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                   <CitationsInline personId={person.id} fact="birth" citations={citationsFor('birth')} sources={sources} onMutated={invalidateCitations} />
                 </div>
                 {/* Death */}
                 <div>
-                  <span className="text-xs text-zinc-500 block mb-1">Death</span>
+                  <span className="text-xs text-zinc-500 block mb-1">{t('person.death')}</span>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DatePartPicker value={detailsData.death_date} onChange={v => setDetailsData(d => ({ ...d, death_date: v }))} />
                     <input value={detailsData.death_place} onChange={e => setDetailsData(d => ({ ...d, death_place: e.target.value }))}
-                      placeholder="Place"
+                      placeholder={t('person.place')}
                       className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                   <CitationsInline personId={person.id} fact="death" citations={citationsFor('death')} sources={sources} onMutated={invalidateCitations} />
                 </div>
                 {/* Sex */}
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-500 w-20 shrink-0">Sex</span>
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.sex')}</span>
                   <div className="flex gap-1">
                     {(['', 'M', 'F'] as const).map(v => (
                       <button key={v} onClick={() => setDetailsData(d => ({ ...d, sex: v }))}
                         className={`px-2.5 py-0.5 rounded text-xs transition-colors ${detailsData.sex === v ? 'bg-brand-500 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}`}>
-                        {v === '' ? '—' : v === 'M' ? 'Male' : 'Female'}
+                        {v === '' ? '—' : v === 'M' ? t('person.sexMale') : t('person.sexFemale')}
                       </button>
                     ))}
                   </div>
@@ -1845,59 +1850,59 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 {/* Occupation */}
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-zinc-500 w-20 shrink-0">Occupation</span>
+                    <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.occupation')}</span>
                     <input value={detailsData.occupation} onChange={e => setDetailsData(d => ({ ...d, occupation: e.target.value }))}
-                      placeholder="e.g. teacher, farmer…"
+                      placeholder={t('person.occupationPh')}
                       className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                   <CitationsInline personId={person.id} fact="occupation" citations={citationsFor('occupation')} sources={sources} onMutated={invalidateCitations} />
                 </div>
                 {/* Education */}
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-500 w-20 shrink-0">Education</span>
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.education')}</span>
                   <input value={detailsData.education} onChange={e => setDetailsData(d => ({ ...d, education: e.target.value }))}
-                    placeholder="e.g. university, degree…"
+                    placeholder={t('person.educationPh')}
                     className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                 </div>
                 {/* Religion */}
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-500 w-20 shrink-0">Religion</span>
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.religion')}</span>
                   <input value={detailsData.religion} onChange={e => setDetailsData(d => ({ ...d, religion: e.target.value }))}
-                    placeholder="e.g. Catholic, Protestant…"
+                    placeholder={t('person.religionPh')}
                     className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                 </div>
                 {/* Nationality */}
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-500 w-20 shrink-0">Nationality</span>
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.nationality')}</span>
                   <input value={detailsData.nationality} onChange={e => setDetailsData(d => ({ ...d, nationality: e.target.value }))}
-                    placeholder="e.g. Hungarian, German…"
+                    placeholder={t('person.nationalityPh')}
                     className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                 </div>
                 {/* Cause of death */}
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-500 w-20 shrink-0">Cause of death</span>
+                  <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.causeOfDeath')}</span>
                   <input value={detailsData.cause_of_death} onChange={e => setDetailsData(d => ({ ...d, cause_of_death: e.target.value }))}
-                    placeholder="e.g. heart attack…"
+                    placeholder={t('person.causeOfDeathPh')}
                     className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                 </div>
                 {/* Christening */}
                 <div>
-                  <span className="text-xs text-zinc-500 block mb-1">Christening</span>
+                  <span className="text-xs text-zinc-500 block mb-1">{t('person.christening')}</span>
                   <div className="flex items-center gap-1.5 flex-wrap pl-0">
                     <DatePartPicker value={detailsData.christening_date} onChange={v => setDetailsData(d => ({ ...d, christening_date: v }))} />
                     <input value={detailsData.christening_place} onChange={e => setDetailsData(d => ({ ...d, christening_place: e.target.value }))}
-                      placeholder="Place"
+                      placeholder={t('person.place')}
                       className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                   <CitationsInline personId={person.id} fact="christening" citations={citationsFor('christening')} sources={sources} onMutated={invalidateCitations} />
                 </div>
                 {/* Burial */}
                 <div>
-                  <span className="text-xs text-zinc-500 block mb-1">Burial</span>
+                  <span className="text-xs text-zinc-500 block mb-1">{t('person.burial')}</span>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DatePartPicker value={detailsData.burial_date} onChange={v => setDetailsData(d => ({ ...d, burial_date: v }))} />
                     <input value={detailsData.burial_place} onChange={e => setDetailsData(d => ({ ...d, burial_place: e.target.value }))}
-                      placeholder="Place"
+                      placeholder={t('person.place')}
                       className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                   <CitationsInline personId={person.id} fact="burial" citations={citationsFor('burial')} sources={sources} onMutated={invalidateCitations} />
@@ -1908,9 +1913,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 {(person.birth_date || person.birth_year || person.birth_place) && (
                   <div>
                     <div className="flex gap-2 text-xs items-center">
-                      <span className="text-zinc-500 w-20 shrink-0">Birth</span>
+                      <span className="text-zinc-500 w-20 shrink-0">{t('person.birth')}</span>
                       <span className="text-zinc-300 flex-1">{[formatDate(person.birth_date, person.birth_year), person.birth_place].filter(Boolean).join(', ')}</span>
-                      <button onClick={() => { setAutoPhotoEventType('birth'); setActiveTab('events') }} title="Attach photo to birth"
+                      <button onClick={() => { setAutoPhotoEventType('birth'); setActiveTab('events') }} title={t('person.attachPhotoBirth')}
                         className="text-zinc-600 hover:text-brand-400 transition-colors shrink-0">
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
@@ -1924,9 +1929,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 {(person.death_date || person.death_year || person.death_place) && (
                   <div>
                     <div className="flex gap-2 text-xs items-center">
-                      <span className="text-zinc-500 w-20 shrink-0">Death</span>
+                      <span className="text-zinc-500 w-20 shrink-0">{t('person.death')}</span>
                       <span className="text-zinc-300 flex-1">{[formatDate(person.death_date, person.death_year), person.death_place].filter(Boolean).join(', ')}</span>
-                      <button onClick={() => { setAutoPhotoEventType('death'); setActiveTab('events') }} title="Attach photo to death"
+                      <button onClick={() => { setAutoPhotoEventType('death'); setActiveTab('events') }} title={t('person.attachPhotoDeath')}
                         className="text-zinc-600 hover:text-brand-400 transition-colors shrink-0">
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                           <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
@@ -1940,23 +1945,23 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 {ageInfo && (
                   <div className="flex gap-2 text-xs">
                     <span className="text-zinc-500 w-20 shrink-0">
-                      {ageInfo.alive ? 'Age today' : 'Age at death'}
+                      {ageInfo.alive ? t('person.ageToday') : t('person.ageAtDeath')}
                     </span>
                     <span className="text-zinc-400 tabular-nums">
-                      {ageInfo.age} years{ageInfo.alive ? ' (approx.)' : ''}
+                      {ageInfo.alive ? t('person.ageApprox', { n: ageInfo.age }) : t('person.yearsN', { n: ageInfo.age })}
                     </span>
                   </div>
                 )}
                 {person.sex && (
                   <div className="flex gap-2 text-xs">
-                    <span className="text-zinc-500 w-20 shrink-0">Sex</span>
+                    <span className="text-zinc-500 w-20 shrink-0">{t('person.sex')}</span>
                     <span className="text-zinc-300">{SEX_LABEL[person.sex]}</span>
                   </div>
                 )}
                 {person.occupation && (
                   <div>
                     <div className="flex gap-2 text-xs">
-                      <span className="text-zinc-500 w-20 shrink-0">Occupation</span>
+                      <span className="text-zinc-500 w-20 shrink-0">{t('person.occupation')}</span>
                       <span className="text-zinc-300">{person.occupation}</span>
                     </div>
                     <div className="ml-0">
@@ -1966,32 +1971,32 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 )}
                 {person.education && (
                   <div className="flex gap-2 text-xs">
-                    <span className="text-zinc-500 w-20 shrink-0">Education</span>
+                    <span className="text-zinc-500 w-20 shrink-0">{t('person.education')}</span>
                     <span className="text-zinc-300">{person.education}</span>
                   </div>
                 )}
                 {person.religion && (
                   <div className="flex gap-2 text-xs">
-                    <span className="text-zinc-500 w-20 shrink-0">Religion</span>
+                    <span className="text-zinc-500 w-20 shrink-0">{t('person.religion')}</span>
                     <span className="text-zinc-300">{person.religion}</span>
                   </div>
                 )}
                 {person.nationality && (
                   <div className="flex gap-2 text-xs">
-                    <span className="text-zinc-500 w-20 shrink-0">Nationality</span>
+                    <span className="text-zinc-500 w-20 shrink-0">{t('person.nationality')}</span>
                     <span className="text-zinc-300">{person.nationality}</span>
                   </div>
                 )}
                 {person.cause_of_death && (
                   <div className="flex gap-2 text-xs">
-                    <span className="text-zinc-500 w-20 shrink-0">Cause of death</span>
+                    <span className="text-zinc-500 w-20 shrink-0">{t('person.causeOfDeath')}</span>
                     <span className="text-zinc-300">{person.cause_of_death}</span>
                   </div>
                 )}
                 {(person.christening_date || person.christening_place) && (
                   <div>
                     <div className="flex gap-2 text-xs">
-                      <span className="text-zinc-500 w-20 shrink-0">Christening</span>
+                      <span className="text-zinc-500 w-20 shrink-0">{t('person.christening')}</span>
                       <span className="text-zinc-300">{[formatDate(person.christening_date, person.christening_year), person.christening_place].filter(Boolean).join(', ')}</span>
                     </div>
                     <div className="ml-0">
@@ -2002,7 +2007,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 {(person.burial_date || person.burial_place) && (
                   <div>
                     <div className="flex gap-2 text-xs">
-                      <span className="text-zinc-500 w-20 shrink-0">Burial</span>
+                      <span className="text-zinc-500 w-20 shrink-0">{t('person.burial')}</span>
                       <span className="text-zinc-300">{[formatDate(person.burial_date, person.burial_year), person.burial_place].filter(Boolean).join(', ')}</span>
                     </div>
                     <div className="ml-0">
@@ -2019,13 +2024,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {/* Relations */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Relations</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('person.relations')}</h3>
               {!editingRelations ? (
                 <button onClick={() => setEditingRelations(true)}
-                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">Edit</button>
+                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">{t('person.relEdit')}</button>
               ) : (
                 <button onClick={() => { setEditingRelations(false); setRelWarning(null) }}
-                  className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">Done</button>
+                  className="text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">{t('person.relDone')}</button>
               )}
             </div>
 
@@ -2040,14 +2045,14 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             )}
 
             <div className="space-y-3.5">
-              <RelRow label="Parents" persons={parents} editing={editingRelations} onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('parent', p)} addLabel="Parent" onAdd={() => setPickerMode('parent')} addDisabled={parents.length >= 2}
+              <RelRow label={t('person.parents')} persons={parents} editing={editingRelations} onNavigate={onNavigateTo}
+                onRemove={p => handleRemove('parent', p)} addLabel={t('person.addParent')} onAdd={() => setPickerMode('parent')} addDisabled={parents.length >= 2}
                 relPrivacy={parentRelPrivacy} onTogglePrivacy={handleToggleRelPrivacy} />
 
               {/* Spouses — rendered manually for marriage details */}
               {(editingRelations || spouseRelations.length > 0) && (
                 <div>
-                  <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1.5">Spouse / Partner</p>
+                  <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1.5">{t('person.spouses')}</p>
                   <div className="space-y-2">
                     {spouseRelations.map(({ rel, p }) => (
                       <div key={rel.id}>
@@ -2060,7 +2065,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                             </button>
                             <button
                               onClick={() => handleToggleRelPrivacy(rel.id, !rel.is_private)}
-                              title={rel.is_private ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+                              title={rel.is_private ? t('person.privacyOn') : t('person.privacyOff')}
                               className={`ml-0.5 w-4 h-4 flex items-center justify-center transition-colors shrink-0 ${rel.is_private ? 'text-amber-400' : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-zinc-300'}`}
                             >
                               {rel.is_private ? (
@@ -2076,7 +2081,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                             {editingRelations && (
                               <button onClick={() => handleRemove('spouse', p)}
                                 className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0"
-                                title="Remove">✕</button>
+                                title={t('person.removeRelation')}>✕</button>
                             )}
                           </div>
                           <button
@@ -2084,28 +2089,28 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                             className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${expandedRelId === rel.id ? 'text-brand-400 bg-brand-500/10' : 'text-zinc-600 hover:text-zinc-300'}`}
                           >
                             {rel.marriage_year || rel.marriage_place
-                              ? `Marriage: ${[rel.marriage_year, rel.marriage_place].filter(Boolean).join(', ')}`
-                              : '+ marriage details'}
+                              ? `${t('person.marriagePrefix')}: ${[rel.marriage_year, rel.marriage_place].filter(Boolean).join(', ')}`
+                              : t('person.addMarriageDetails')}
                           </button>
                         </div>
                         {expandedRelId === rel.id && (
                           <div className="mt-2 ml-2 pl-3 border-l border-zinc-700 space-y-1.5">
                             <div className="flex gap-1.5">
-                              <input type="number" placeholder="Marriage year"
+                              <input type="number" placeholder={t('person.marriageYear')}
                                 value={marriageEdits[rel.id]?.marriage_year ?? ''}
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], marriage_year: e.target.value } }))}
                                 className="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
-                              <input placeholder="Location"
+                              <input placeholder={t('person.location')}
                                 value={marriageEdits[rel.id]?.marriage_place ?? ''}
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], marriage_place: e.target.value } }))}
                                 className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                             </div>
                             <div className="flex gap-1.5">
-                              <input type="number" placeholder="Divorce year"
+                              <input type="number" placeholder={t('person.divorceYear')}
                                 value={marriageEdits[rel.id]?.divorce_year ?? ''}
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], divorce_year: e.target.value } }))}
                                 className="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
-                              <input placeholder="Location"
+                              <input placeholder={t('person.location')}
                                 value={marriageEdits[rel.id]?.divorce_place ?? ''}
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], divorce_place: e.target.value } }))}
                                 className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
@@ -2120,11 +2125,11 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                             <div className="flex gap-1.5 pt-0.5">
                               <button onClick={() => saveMarriage(rel.id)} disabled={updateRelMut.isPending}
                                 className="px-3 py-0.5 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded transition-colors">
-                                Save
+                                {t('person.save')}
                               </button>
                               <button onClick={() => setExpandedRelId(null)}
                                 className="px-3 py-0.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
-                                Cancel
+                                {t('person.cancel')}
                               </button>
                             </div>
                           </div>
@@ -2134,22 +2139,22 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                     {editingRelations && (
                       <button onClick={() => setPickerMode('spouse')}
                         className="inline-flex items-center gap-1 h-7 px-2.5 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-dashed border-zinc-700 hover:border-zinc-500 rounded-full transition-colors">
-                        + Spouse
+                        {t('person.addSpouse')}
                       </button>
                     )}
                   </div>
                 </div>
               )}
 
-              <RelRow label="Children" persons={children} editing={editingRelations} onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('parent', p)} addLabel="Child" onAdd={() => setPickerMode('child')}
+              <RelRow label={t('person.children')} persons={children} editing={editingRelations} onNavigate={onNavigateTo}
+                onRemove={p => handleRemove('parent', p)} addLabel={t('person.addChild')} onAdd={() => setPickerMode('child')}
                 relPrivacy={childRelPrivacy} onTogglePrivacy={handleToggleRelPrivacy} />
-              <RelRow label="Siblings" persons={siblings} editing={editingRelations} onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('sibling', p)} addLabel="Sibling" onAdd={() => setPickerMode('sibling')}
+              <RelRow label={t('person.siblings')} persons={siblings} editing={editingRelations} onNavigate={onNavigateTo}
+                onRemove={p => handleRemove('sibling', p)} addLabel={t('person.addSibling')} onAdd={() => setPickerMode('sibling')}
                 relPrivacy={siblingRelPrivacy} onTogglePrivacy={handleToggleRelPrivacy} />
 
               {!editingRelations && parents.length === 0 && spouseRelations.length === 0 && children.length === 0 && siblings.length === 0 && (
-                <p className="text-sm text-zinc-600 italic">No relations</p>
+                <p className="text-sm text-zinc-600 italic">{t('person.noRelations')}</p>
               )}
             </div>
           </section>
@@ -2157,29 +2162,29 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {/* Clusters */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-2.5">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Photo Clusters</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('person.clusters')}</h3>
               {person.clusters.length === 0 && (
                 <button onClick={() => { setShowClusterPicker(p => !p); setClusterSearch('') }}
-                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">+ Add cluster</button>
+                  className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">{t('person.addCluster')}</button>
               )}
             </div>
             {person.clusters.length === 0 && !showClusterPicker && (
-              <p className="text-sm text-zinc-600 italic">No cluster assigned</p>
+              <p className="text-sm text-zinc-600 italic">{t('person.noCluster')}</p>
             )}
             {person.clusters.length > 0 && (
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-2">
                   {person.clusters.map(c => (
                     <div key={c.id} className="flex items-center gap-1.5 bg-zinc-800 border border-zinc-700 rounded-full pl-2.5 pr-1.5 py-1">
-                      <span className="text-xs text-zinc-300">Cluster {String(c.label).padStart(3, '0')}</span>
-                      <span className="text-xs text-zinc-600 tabular-nums">· {c.face_count} faces</span>
-                      <button onClick={() => handleUnlinkCluster(c.id)} title="Unlink"
+                      <span className="text-xs text-zinc-300">{t('person.clusterN', { n: String(c.label).padStart(3, '0') })}</span>
+                      <span className="text-xs text-zinc-600 tabular-nums">{t('person.clusterFaces', { n: c.face_count })}</span>
+                      <button onClick={() => handleUnlinkCluster(c.id)} title={t('person.unlinkCluster')}
                         className="w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0">✕</button>
                     </div>
                   ))}
                 </div>
                 {person.clusters.length > 1 && (
-                  <p className="text-xs text-amber-600">Multiple clusters assigned — merge them on the Clusters tab.</p>
+                  <p className="text-xs text-amber-600">{t('person.multipleClusters')}</p>
                 )}
               </div>
             )}
@@ -2187,7 +2192,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               <div className="mt-2 bg-zinc-800 border border-zinc-700 rounded-xl overflow-hidden">
                 <div className="p-2 border-b border-zinc-700">
                   <input autoFocus type="search" value={clusterSearch}
-                    onChange={e => setClusterSearch(e.target.value)} placeholder="Search cluster…"
+                    onChange={e => setClusterSearch(e.target.value)} placeholder={t('person.searchCluster')}
                     className="w-full bg-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
                 </div>
                 <div className="max-h-52 overflow-y-auto">
@@ -2199,16 +2204,16 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                           <img key={fid} src={api.faceThumbnailUrl(fid, 32)} className="w-7 h-7 rounded object-cover" alt="" />
                         )) ?? <div className="w-7 h-7 rounded bg-zinc-600" />}
                       </div>
-                      <span className="text-zinc-200">Cluster {String(c.label).padStart(3, '0')}</span>
-                      <span className="ml-auto text-xs text-zinc-500 shrink-0 tabular-nums">{c.face_count} faces</span>
+                      <span className="text-zinc-200">{t('person.clusterN', { n: String(c.label).padStart(3, '0') })}</span>
+                      <span className="ml-auto text-xs text-zinc-500 shrink-0 tabular-nums">{t('person.facesN', { n: c.face_count })}</span>
                     </button>
                   ))}
                   {unlinkedClusters.filter(c => String(c.label).includes(clusterSearch) || clusterSearch === '').length === 0 && (
-                    <p className="text-xs text-zinc-600 px-3 py-3">No free clusters</p>
+                    <p className="text-xs text-zinc-600 px-3 py-3">{t('person.noFreeClusters')}</p>
                   )}
                 </div>
                 <div className="border-t border-zinc-700 px-3 py-2">
-                  <button onClick={() => setShowClusterPicker(false)} className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">Close</button>
+                  <button onClick={() => setShowClusterPicker(false)} className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">{t('person.close')}</button>
                 </div>
               </div>
             )}
@@ -2218,12 +2223,12 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                Photos{imagesPage ? ` (${imagesPage.total})` : ''}
+                {`${t('person.photosSection')}${imagesPage ? ` (${imagesPage.total})` : ''}`}
               </h3>
               {images.length > PHOTOS_CAP && (
                 <button onClick={() => setShowAllPhotos(s => !s)}
                   className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
-                  {showAllPhotos ? 'Less' : `All (${images.length})`}
+                  {showAllPhotos ? t('person.showLess') : t('person.showAll', { n: images.length })}
                 </button>
               )}
             </div>
@@ -2232,14 +2237,14 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 {Array.from({ length: PHOTOS_CAP }).map((_, i) => <div key={i} className="aspect-square rounded-lg bg-zinc-800 animate-pulse" />)}
               </div>
             ) : images.length === 0 ? (
-              <p className="text-sm text-zinc-600 italic">No photos</p>
+              <p className="text-sm text-zinc-600 italic">{t('person.noPhotosSection')}</p>
             ) : (
               <>
                 <PhotoGallery images={visibleImages} onOpen={setLightboxIdx} />
                 {!showAllPhotos && images.length > PHOTOS_CAP && (
                   <button onClick={() => setShowAllPhotos(true)}
                     className="mt-2 w-full text-xs text-zinc-500 hover:text-zinc-300 transition-colors py-1">
-                    + {images.length - PHOTOS_CAP} more photos
+                    {t('person.morePhotos', { n: images.length - PHOTOS_CAP })}
                   </button>
                 )}
               </>
@@ -2266,20 +2271,20 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           <section className="px-5 py-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                Documents{docs.length > 0 ? ` (${docs.length})` : ''}
+                {`${t('person.docsSection')}${docs.length > 0 ? ` (${docs.length})` : ''}`}
               </h3>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => { setShowLinkForm(true); setShowUploadForm(false) }}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
                 >
-                  + Link
+                  {t('person.linkDoc')}
                 </button>
                 <button
                   onClick={() => setShowUploadForm(s => !s)}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
                 >
-                  {showUploadForm ? 'Cancel' : '+ Upload'}
+                  {showUploadForm ? t('person.cancel') : t('person.uploadDoc')}
                 </button>
               </div>
             </div>
@@ -2301,7 +2306,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 {[1, 2].map(i => <div key={i} className="h-8 rounded bg-zinc-800 animate-pulse" />)}
               </div>
             ) : docs.length === 0 && !showUploadForm ? (
-              <p className="text-sm text-zinc-600 italic">No documents attached</p>
+              <p className="text-sm text-zinc-600 italic">{t('person.noDocuments')}</p>
             ) : (
               <div className="divide-y divide-zinc-800/60">
                 {docs.map(doc => (
@@ -2316,10 +2321,10 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {activeTab === 'notes' && (
           <section className="px-5 py-4">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Notes</h3>
+              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('person.notesSection')}</h3>
               <button onClick={startNewNote}
                 className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
-                + Add
+                {t('person.addNote')}
               </button>
             </div>
             <div className="space-y-3">
@@ -2355,7 +2360,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 />
               )}
               {personNotes.length === 0 && !creatingNote && (
-                <p className="text-sm text-zinc-600 italic">No notes yet</p>
+                <p className="text-sm text-zinc-600 italic">{t('person.noNotes')}</p>
               )}
             </div>
           </section>
@@ -2381,7 +2386,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           persons={persons}
           excludeIds={new Set([person.id])}
           relations={relations}
-          label="Merge into — select surviving person"
+          label={t('person.mergeIntoLabel')}
           onSelect={p => { setMergePending(p); setMergePickerOpen(false) }}
           onClose={() => setMergePickerOpen(false)}
         />
@@ -2392,7 +2397,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           persons={persons}
           excludeIds={new Set([person.id])}
           relations={relations}
-          label="Find relationship to…"
+          label={t('person.findRelLabel')}
           onSelect={p => { setRelatePerson(p); setRelatePickerOpen(false) }}
           onClose={() => setRelatePickerOpen(false)}
         />

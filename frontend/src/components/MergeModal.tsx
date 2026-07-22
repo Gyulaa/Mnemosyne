@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { api } from '../api'
+import { useT } from '../SettingsContext'
 import type {
   MergePreviewResponse, MergePersonEntry,
   MergeDecision, MergeOptions, MergeStats, MergeAction,
@@ -9,19 +10,21 @@ type Step = 'upload' | 'review' | 'options' | 'confirm' | 'done'
 type LocalDecision = { action: MergeAction; merge_with_id: number | null }
 type Decisions = Record<number, LocalDecision>
 
-const FIELD_LABELS: Record<string, string> = {
-  title: 'Title', first_name: 'First name', last_name: 'Last name',
-  middle_name: 'Middle name', nickname: 'Nickname', sex: 'Sex',
-  occupation: 'Occupation',
-  birth_date: 'Birth date', birth_year: 'Birth year', birth_place: 'Birth place',
-  christening_date: 'Christening date', christening_year: 'Christening year', christening_place: 'Christening place',
-  death_date: 'Death date', death_year: 'Death year', death_place: 'Death place',
-  burial_date: 'Burial date', burial_year: 'Burial year', burial_place: 'Burial place',
+function getFieldLabels(t: (k: string) => string): Record<string, string> {
+  return {
+    title: t('merge.fieldTitle'), first_name: t('merge.fieldFirstName'), last_name: t('merge.fieldLastName'),
+    middle_name: t('merge.fieldMiddleName'), nickname: t('merge.fieldNickname'), sex: t('merge.fieldSex'),
+    occupation: t('merge.fieldOccupation'),
+    birth_date: t('merge.fieldBirthDate'), birth_year: t('merge.fieldBirthYear'), birth_place: t('merge.fieldBirthPlace'),
+    christening_date: t('merge.fieldChristeningDate'), christening_year: t('merge.fieldChristeningYear'), christening_place: t('merge.fieldChristeningPlace'),
+    death_date: t('merge.fieldDeathDate'), death_year: t('merge.fieldDeathYear'), death_place: t('merge.fieldDeathPlace'),
+    burial_date: t('merge.fieldBurialDate'), burial_year: t('merge.fieldBurialYear'), burial_place: t('merge.fieldBurialPlace'),
+  }
 }
 
-function incomingName(p: Pick<MergePersonEntry, 'name' | 'first_name' | 'last_name'>): string {
+function incomingName(p: Pick<MergePersonEntry, 'name' | 'first_name' | 'last_name'>, unnamed = '(unnamed)'): string {
   if (p.first_name || p.last_name) return [p.first_name, p.last_name].filter(Boolean).join(' ')
-  return p.name ?? '(unnamed)'
+  return p.name ?? unnamed
 }
 
 function yearsStr(birthYear: number | null | undefined, deathYear: number | null | undefined): string {
@@ -79,6 +82,7 @@ function SectionHeader({ title, color, open, onToggle }: {
 function ActionPill({ current, hasSuggestion, onChange }: {
   current: MergeAction; hasSuggestion: boolean; onChange: (a: MergeAction) => void
 }) {
+  const t = useT()
   return (
     <div className="shrink-0 flex gap-0.5 bg-zinc-800 rounded-md p-0.5">
       {hasSuggestion && (
@@ -86,20 +90,20 @@ function ActionPill({ current, hasSuggestion, onChange }: {
           onClick={() => onChange('merge')}
           className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${current === 'merge' ? 'bg-brand-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
         >
-          Merge
+          {t('merge.actionMerge')}
         </button>
       )}
       <button
         onClick={() => onChange('create')}
         className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${current === 'create' ? 'bg-zinc-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
       >
-        New
+        {t('merge.actionNew')}
       </button>
       <button
         onClick={() => onChange('skip')}
         className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${current === 'skip' ? 'bg-red-900/70 text-red-300' : 'text-zinc-500 hover:text-zinc-300'}`}
       >
-        Skip
+        {t('merge.actionSkip')}
       </button>
     </div>
   )
@@ -110,8 +114,10 @@ function MatchedPersonRow({ person: p, decision, onActionChange }: {
   decision: LocalDecision
   onActionChange: (a: MergeAction) => void
 }) {
+  const t = useT()
+  const fieldLabels = getFieldLabels(t)
   const newFieldCount = Object.keys(p.new_fields ?? {}).length
-  const newFieldNames = Object.keys(p.new_fields ?? {}).map(f => FIELD_LABELS[f] ?? f).join(', ')
+  const newFieldNames = Object.keys(p.new_fields ?? {}).map(f => fieldLabels[f] ?? f).join(', ')
   const skipped   = decision.action === 'skip'
   const isConflict = p.context_status === 'conflict'
   const isConfirmed = p.context_status === 'confirmed'
@@ -130,41 +136,41 @@ function MatchedPersonRow({ person: p, decision, onActionChange }: {
     <div className={`flex items-start gap-3 px-3 py-2.5 rounded-lg bg-zinc-800/40 border transition-opacity ${borderCls}`}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium text-zinc-100">{incomingName(p)}</span>
+          <span className="text-sm font-medium text-zinc-100">{incomingName(p, t('merge.unnamed'))}</span>
           <span className="text-zinc-500 text-xs">{yearsStr(p.birth_year, p.death_year)}</span>
           {p.suggested_match && (
             <>
               <span className="text-zinc-600 text-[10px]">→</span>
               <span className="text-zinc-400 text-xs">
-                {p.suggested_match.name ?? incomingName(p.suggested_match)}
+                {p.suggested_match.name ?? incomingName(p.suggested_match, t('merge.unnamed'))}
                 {p.suggested_match.birth_year ? ` *${p.suggested_match.birth_year}` : ''}
               </span>
               {p.suggested_match.match_source === 'family' && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-400 font-medium">via family</span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-400 font-medium">{t('merge.viaFamily')}</span>
               )}
             </>
           )}
           {isConfirmed && (
-            <span className="text-[9px] text-emerald-500 font-medium">✓ context</span>
+            <span className="text-[9px] text-emerald-500 font-medium">{t('merge.confirmed')}</span>
           )}
           {isConflict && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 font-medium">⚠ check match</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 font-medium">{t('merge.checkMatch')}</span>
           )}
         </div>
         {familyLine && (
           <p className="text-[10px] text-zinc-600 mt-0.5">{familyLine}</p>
         )}
         {decision.action === 'merge' && newFieldCount > 0 && (
-          <p className="text-[10px] text-zinc-500 mt-0.5">Will fill: {newFieldNames}</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">{t('merge.willFill', { fields: newFieldNames })}</p>
         )}
         {decision.action === 'merge' && newFieldCount === 0 && (
-          <p className="text-[10px] text-zinc-600 mt-0.5">No missing fields — records are already complete</p>
+          <p className="text-[10px] text-zinc-600 mt-0.5">{t('merge.alreadyComplete')}</p>
         )}
         {decision.action === 'create' && isConflict && (
-          <p className="text-[10px] text-amber-600 mt-0.5">Family context conflicts with suggestion — defaulted to New</p>
+          <p className="text-[10px] text-amber-600 mt-0.5">{t('merge.conflictDefaultNew')}</p>
         )}
         {decision.action === 'create' && !isConflict && (
-          <p className="text-[10px] text-zinc-500 mt-0.5">Will be added as a separate new person</p>
+          <p className="text-[10px] text-zinc-500 mt-0.5">{t('merge.addAsNew')}</p>
         )}
       </div>
       <ActionPill current={decision.action} hasSuggestion={!!p.suggested_match} onChange={onActionChange} />
@@ -177,6 +183,7 @@ function NewPersonRow({ person: p, decision, onToggle }: {
   decision: LocalDecision
   onToggle: () => void
 }) {
+  const t = useT()
   const included = decision.action !== 'skip'
   return (
     <label className={`flex items-center gap-3 px-3 py-2.5 rounded-lg bg-zinc-800/40 border cursor-pointer transition-opacity ${included ? 'border-zinc-700/50' : 'border-zinc-800 opacity-40'}`}>
@@ -187,7 +194,7 @@ function NewPersonRow({ person: p, decision, onToggle }: {
         className="w-3.5 h-3.5 rounded accent-brand-500 shrink-0"
       />
       <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
-        <span className="text-sm font-medium text-zinc-100">{incomingName(p)}</span>
+        <span className="text-sm font-medium text-zinc-100">{incomingName(p, t('merge.unnamed'))}</span>
         <span className="text-zinc-500 text-xs">{yearsStr(p.birth_year, p.death_year)}</span>
         {p.occupation && <span className="text-zinc-600 text-[10px]">{p.occupation}</span>}
         {p.birth_place && <span className="text-zinc-600 text-[10px]">{p.birth_place}</span>}
@@ -252,6 +259,7 @@ interface Props {
 }
 
 export default function MergeModal({ onClose, onDone }: Props) {
+  const t = useT()
   const [step, setStep]         = useState<Step>('upload')
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError]       = useState<string | null>(null)
@@ -356,8 +364,8 @@ export default function MergeModal({ onClose, onDone }: Props) {
         {/* Header */}
         <div className="shrink-0 flex items-center justify-between px-6 pt-5 pb-4 border-b border-zinc-800">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">Import</p>
-            <h2 className="text-sm font-semibold text-zinc-100">Merge from ZIP</h2>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">{t('merge.importLabel')}</p>
+            <h2 className="text-sm font-semibold text-zinc-100">{t('merge.heading')}</h2>
           </div>
           <div className="flex items-center gap-4">
             {step !== 'upload' && step !== 'done' && <StepDots step={step} />}
@@ -391,7 +399,7 @@ export default function MergeModal({ onClose, onDone }: Props) {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
                     </svg>
-                    <p className="text-sm text-zinc-400">Analyzing…</p>
+                    <p className="text-sm text-zinc-400">{t('merge.analyzing')}</p>
                   </>
                 ) : (
                   <>
@@ -399,8 +407,8 @@ export default function MergeModal({ onClose, onDone }: Props) {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
                     </svg>
                     <div className="text-center">
-                      <p className="text-sm font-medium text-zinc-300">Drop a project ZIP here</p>
-                      <p className="text-xs text-zinc-500 mt-1">or click to browse</p>
+                      <p className="text-sm font-medium text-zinc-300">{t('merge.dropZone')}</p>
+                      <p className="text-xs text-zinc-500 mt-1">{t('merge.clickBrowse')}</p>
                     </div>
                   </>
                 )}
@@ -411,7 +419,7 @@ export default function MergeModal({ onClose, onDone }: Props) {
                 <p className="mt-4 text-xs text-red-400 bg-red-950/50 border border-red-900/50 rounded-lg px-3 py-2">{error}</p>
               )}
               <p className="mt-4 text-xs text-zinc-600 text-center leading-relaxed">
-                Accepts a ZIP exported from Mnemosyne. Only genealogy data is merged — photos and face data are not imported.
+                {t('merge.acceptsZip')}
               </p>
             </div>
           )}
@@ -421,17 +429,17 @@ export default function MergeModal({ onClose, onDone }: Props) {
             <div className="px-6 py-5 space-y-5">
               {/* Summary chips */}
               <div className="flex flex-wrap gap-2">
-                <Chip color="green" count={counts.create} label="new" />
-                <Chip color="blue"  count={counts.merge}  label="matched" />
-                {uncertain.length > 0 && <Chip color="yellow" count={uncertain.length} label="uncertain" />}
-                {counts.skip > 0 && <Chip color="gray" count={counts.skip} label="skipped" />}
+                <Chip color="green" count={counts.create} label={t('merge.chipNew')} />
+                <Chip color="blue"  count={counts.merge}  label={t('merge.chipMatched')} />
+                {uncertain.length > 0 && <Chip color="yellow" count={uncertain.length} label={t('merge.chipUncertain')} />}
+                {counts.skip > 0 && <Chip color="gray" count={counts.skip} label={t('merge.chipSkipped')} />}
               </div>
 
               {/* Matched */}
               {matched.length > 0 && (
                 <div>
                   <SectionHeader
-                    title={`Matched — ${matched.length}`} color="blue"
+                    title={t('merge.sectionMatched', { n: matched.length })} color="blue"
                     open={openSections.matched}
                     onToggle={() => setOpenSections(s => ({ ...s, matched: !s.matched }))}
                   />
@@ -453,7 +461,7 @@ export default function MergeModal({ onClose, onDone }: Props) {
               {uncertain.length > 0 && (
                 <div>
                   <SectionHeader
-                    title={`Uncertain — ${uncertain.length}`} color="yellow"
+                    title={t('merge.sectionUncertain', { n: uncertain.length })} color="yellow"
                     open={openSections.uncertain}
                     onToggle={() => setOpenSections(s => ({ ...s, uncertain: !s.uncertain }))}
                   />
@@ -475,7 +483,7 @@ export default function MergeModal({ onClose, onDone }: Props) {
               {newP.length > 0 && (
                 <div>
                   <SectionHeader
-                    title={`New — ${newP.length}`} color="green"
+                    title={t('merge.sectionNew', { n: newP.length })} color="green"
                     open={openSections.newp}
                     onToggle={() => setOpenSections(s => ({ ...s, newp: !s.newp }))}
                   />
@@ -500,53 +508,53 @@ export default function MergeModal({ onClose, onDone }: Props) {
           {step === 'options' && (
             <div className="px-6 py-6 space-y-6">
               <div>
-                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">Import content</p>
+                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">{t('merge.optImportContent')}</p>
                 <div className="space-y-4">
                   <ToggleRow
                     checked={options.include_documents}
                     onChange={v => setOptions(o => ({ ...o, include_documents: v }))}
-                    label="Documents"
-                    sublabel={`${preview?.documents_count ?? 0} files`}
+                    label={t('gedcom.documents')}
+                    sublabel={t('merge.countFiles', { n: preview?.documents_count ?? 0 })}
                   />
                   <ToggleRow
                     checked={options.include_events}
                     onChange={v => setOptions(o => ({ ...o, include_events: v }))}
-                    label="Events"
-                    sublabel={`${preview?.events_count ?? 0} events`}
+                    label={t('gedcom.events')}
+                    sublabel={t('merge.countEvents', { n: preview?.events_count ?? 0 })}
                   />
                   <ToggleRow
                     checked={options.include_sources}
                     onChange={v => setOptions(o => ({ ...o, include_sources: v }))}
-                    label="Sources"
-                    sublabel={`${preview?.sources_count ?? 0} sources · with citations`}
+                    label={t('gedcom.sources')}
+                    sublabel={t('merge.countSources', { n: preview?.sources_count ?? 0 })}
                   />
                   <ToggleRow
                     checked={options.include_images}
                     onChange={v => setOptions(o => ({ ...o, include_images: v }))}
-                    label="Photos"
-                    sublabel={`${preview?.images_count ?? 0} image${(preview?.images_count ?? 0) !== 1 ? 's' : ''} · ${preview?.clusters_count ?? 0} face cluster${(preview?.clusters_count ?? 0) !== 1 ? 's' : ''}`}
+                    label={t('export.sectionPhotos')}
+                    sublabel={t('merge.countImagesAndClusters', { images: String(preview?.images_count ?? 0), clusters: String(preview?.clusters_count ?? 0) })}
                   />
                   {(preview?.notes_count ?? 0) > 0 && (
                     <p className="text-xs text-zinc-500 pt-1">
-                      {preview?.notes_count} note{preview?.notes_count !== 1 ? 's' : ''} will always be imported (content-deduplicated).
+                      {t('merge.optNotesAlways', { n: preview?.notes_count ?? 0 })}
                     </p>
                   )}
                 </div>
               </div>
               <div>
-                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">Merge strategy for matched persons</p>
+                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">{t('merge.optStrategy')}</p>
                 <div className="space-y-2">
                   <RadioRow
                     value="fill_missing" current={options.merge_strategy}
                     onChange={v => setOptions(o => ({ ...o, merge_strategy: v as MergeOptions['merge_strategy'] }))}
-                    label="Fill missing fields only"
-                    sublabel="Safe — keeps your existing data, fills empty fields from the incoming file"
+                    label={t('merge.stratFillMissing')}
+                    sublabel={t('merge.stratFillMissingDesc')}
                   />
                   <RadioRow
                     value="incoming_priority" current={options.merge_strategy}
                     onChange={v => setOptions(o => ({ ...o, merge_strategy: v as MergeOptions['merge_strategy'] }))}
-                    label="Incoming data takes priority"
-                    sublabel="Overwrites your existing field values with values from the incoming file"
+                    label={t('merge.stratIncoming')}
+                    sublabel={t('merge.stratIncomingDesc')}
                   />
                 </div>
               </div>
@@ -559,43 +567,43 @@ export default function MergeModal({ onClose, onDone }: Props) {
               <div className="bg-zinc-800/50 rounded-xl p-4 space-y-2">
                 {counts.create > 0 && (
                   <SummaryLine icon="+" color="text-emerald-400"
-                    text={`${counts.create} new person${counts.create !== 1 ? 's' : ''} will be added`} />
+                    text={t('merge.summaryNew', { n: counts.create })} />
                 )}
                 {counts.merge > 0 && (
                   <SummaryLine icon="↔" color="text-blue-400"
-                    text={`${counts.merge} person${counts.merge !== 1 ? 's' : ''} will be merged into existing records`} />
+                    text={t('merge.summaryMerged', { n: counts.merge })} />
                 )}
                 {counts.skip > 0 && (
                   <SummaryLine icon="–" color="text-zinc-500"
-                    text={`${counts.skip} person${counts.skip !== 1 ? 's' : ''} skipped`} />
+                    text={t('merge.summarySkipped', { n: counts.skip })} />
                 )}
                 {preview.relations_count > 0 && (
                   <SummaryLine icon="~" color="text-zinc-500"
-                    text={`${preview.relations_count} relation${preview.relations_count !== 1 ? 's' : ''} will be imported (duplicates skipped)`} />
+                    text={t('merge.summaryRelations', { n: preview.relations_count })} />
                 )}
                 {options.include_events && preview.events_count > 0 && (
                   <SummaryLine icon="~" color="text-zinc-500"
-                    text={`${preview.events_count} event${preview.events_count !== 1 ? 's' : ''} will be imported (duplicates skipped)`} />
+                    text={t('merge.summaryEvents', { n: preview.events_count })} />
                 )}
                 {options.include_documents && preview.documents_count > 0 && (
                   <SummaryLine icon="~" color="text-zinc-500"
-                    text={`${preview.documents_count} document${preview.documents_count !== 1 ? 's' : ''} will be imported`} />
+                    text={t('merge.summaryDocuments', { n: preview.documents_count })} />
                 )}
                 {(preview.notes_count ?? 0) > 0 && (
                   <SummaryLine icon="~" color="text-zinc-500"
-                    text={`up to ${preview.notes_count} note${preview.notes_count !== 1 ? 's' : ''} will be imported (duplicates skipped)`} />
+                    text={t('merge.summaryNotes', { n: preview.notes_count ?? 0 })} />
                 )}
                 {options.include_sources && (preview.sources_count ?? 0) > 0 && (
                   <SummaryLine icon="~" color="text-zinc-500"
-                    text={`up to ${preview.sources_count} source${(preview.sources_count ?? 0) !== 1 ? 's' : ''} will be imported (with citations)`} />
+                    text={t('merge.summarySources', { n: preview.sources_count ?? 0 })} />
                 )}
                 {options.include_images && (preview.images_count ?? 0) > 0 && (
                   <SummaryLine icon="~" color="text-zinc-500"
-                    text={`up to ${preview.images_count} photo${(preview.images_count ?? 0) !== 1 ? 's' : ''} and ${preview.clusters_count} face cluster${(preview.clusters_count ?? 0) !== 1 ? 's' : ''} will be linked`} />
+                    text={t('merge.summaryPhotos', { n: preview.images_count ?? 0, clusters: String(preview.clusters_count ?? 0) })} />
                 )}
               </div>
               <p className="text-xs text-zinc-600 leading-relaxed">
-                The operation runs in a transaction and can be undone within 30 minutes.
+                {t('merge.txNote')}
               </p>
               {error && (
                 <p className="text-xs text-red-400 bg-red-950/50 border border-red-900/50 rounded-lg px-3 py-2">{error}</p>
@@ -612,15 +620,15 @@ export default function MergeModal({ onClose, onDone }: Props) {
                 </svg>
               </div>
               <div>
-                <p className="text-sm font-semibold text-zinc-100">Merge complete</p>
+                <p className="text-sm font-semibold text-zinc-100">{t('merge.done')}</p>
                 <p className="text-xs text-zinc-500 mt-1.5 leading-relaxed">
-                  {stats.persons_created} added · {stats.persons_merged} merged · {stats.persons_skipped} skipped
-                  {stats.relations_added > 0 ? ` · ${stats.relations_added} relations` : ''}
-                  {stats.events_added > 0 ? ` · ${stats.events_added} events` : ''}
-                  {stats.documents_added > 0 ? ` · ${stats.documents_added} documents` : ''}
-                  {(stats.sources_added ?? 0) > 0 ? ` · ${stats.sources_added} sources` : ''}
-                  {(stats.images_imported ?? 0) > 0 ? ` · ${stats.images_imported} photos` : ''}
-                  {(stats.clusters_linked ?? 0) > 0 ? ` · ${stats.clusters_linked} clusters` : ''}
+                  {t('merge.statsLine', { created: String(stats.persons_created), merged: String(stats.persons_merged), skipped: String(stats.persons_skipped) })}
+                  {stats.relations_added > 0 ? ` · ${stats.relations_added} ${t('merge.statsRelations')}` : ''}
+                  {stats.events_added > 0 ? ` · ${stats.events_added} ${t('merge.statsEvents')}` : ''}
+                  {stats.documents_added > 0 ? ` · ${stats.documents_added} ${t('merge.statsDocs')}` : ''}
+                  {(stats.sources_added ?? 0) > 0 ? ` · ${stats.sources_added} ${t('merge.statsSources')}` : ''}
+                  {(stats.images_imported ?? 0) > 0 ? ` · ${stats.images_imported} ${t('merge.statsPhotos')}` : ''}
+                  {(stats.clusters_linked ?? 0) > 0 ? ` · ${stats.clusters_linked} ${t('merge.statsClusters')}` : ''}
                 </p>
               </div>
               {stats.rollback_available && rollbackState !== 'done' && (
@@ -637,11 +645,11 @@ export default function MergeModal({ onClose, onDone }: Props) {
                   disabled={rollbackState === 'pending'}
                   className="mt-2 px-4 py-1.5 text-xs text-amber-400 border border-amber-800/60 rounded-lg hover:bg-amber-950/40 disabled:opacity-50 transition-colors"
                 >
-                  {rollbackState === 'pending' ? 'Undoing…' : rollbackState === 'error' ? 'Undo failed — try again' : 'Undo Merge'}
+                  {rollbackState === 'pending' ? t('merge.undoing') : rollbackState === 'error' ? t('merge.undoFailed') : t('merge.undo')}
                 </button>
               )}
               {rollbackState === 'done' && (
-                <p className="text-xs text-zinc-500">Merge undone successfully.</p>
+                <p className="text-xs text-zinc-500">{t('merge.undoDone')}</p>
               )}
             </div>
           )}
@@ -659,20 +667,20 @@ export default function MergeModal({ onClose, onDone }: Props) {
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" d="M15 19l-7-7 7-7" />
               </svg>
-              Back
+              {t('merge.back')}
             </button>
           )}
 
           {step === 'review' && (
             <button onClick={() => setStep('options')}
               className="px-5 py-2 bg-brand-500 hover:bg-brand-400 text-white text-xs font-semibold rounded-lg transition-colors">
-              Options →
+              {t('merge.optionsBtn')}
             </button>
           )}
           {step === 'options' && (
             <button onClick={() => setStep('confirm')}
               className="px-5 py-2 bg-brand-500 hover:bg-brand-400 text-white text-xs font-semibold rounded-lg transition-colors">
-              Review summary →
+              {t('merge.reviewSummary')}
             </button>
           )}
           {step === 'confirm' && (
@@ -684,13 +692,13 @@ export default function MergeModal({ onClose, onDone }: Props) {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
                 </svg>
               )}
-              {executing ? 'Merging…' : 'Execute Merge'}
+              {executing ? t('merge.merging') : t('merge.execute')}
             </button>
           )}
           {step === 'done' && (
             <button onClick={() => { onDone(); onClose() }}
               className="px-5 py-2 bg-brand-500 hover:bg-brand-400 text-white text-xs font-semibold rounded-lg transition-colors">
-              Done
+              {t('merge.btnDone')}
             </button>
           )}
         </div>

@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import type { PersonFull, Relation } from '../types'
 import { api } from '../api'
+import { useT } from '../SettingsContext'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -43,7 +44,8 @@ function BarList({ items, maxCount, color = 'bg-brand-500' }: {
   maxCount: number
   color?: string
 }) {
-  if (!items.length) return <p className="text-xs text-zinc-600 py-1">No data</p>
+  const t = useT()
+  if (!items.length) return <p className="text-xs text-zinc-600 py-1">{t('stats.noData')}</p>
   return (
     <div className="space-y-1.5">
       {items.map(({ label, count }) => (
@@ -65,6 +67,7 @@ function BarList({ items, maxCount, color = 'bg-brand-500' }: {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function StatisticsView({ persons, relations }: { persons: PersonFull[]; relations: Relation[] }) {
+  const t = useT()
   const s = useMemo(() => {
     const total = persons.length
     const maleCount = persons.filter(p => p.sex === 'M').length
@@ -154,7 +157,7 @@ export default function StatisticsView({ persons, relations }: { persons: Person
   if (!persons.length) {
     return (
       <div className="h-full flex items-center justify-center text-zinc-600 text-sm">
-        No persons in this family
+        {t('stats.noPersons')}
       </div>
     )
   }
@@ -165,7 +168,7 @@ export default function StatisticsView({ persons, relations }: { persons: Person
     ? `${s.maleCount}M / ${s.femaleCount}F`
     : '—'
   const sexSub = s.total - s.maleCount - s.femaleCount > 0
-    ? `${s.total - s.maleCount - s.femaleCount} unknown`
+    ? t('stats.unknown', { n: s.total - s.maleCount - s.femaleCount })
     : undefined
 
   return (
@@ -174,33 +177,33 @@ export default function StatisticsView({ persons, relations }: { persons: Person
 
         {/* ── Summary cards ── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatCard label="People" value={s.total} />
-          <StatCard label="Sex ratio" value={sexLabel} sub={sexSub} />
+          <StatCard label={t('stats.people')} value={s.total} />
+          <StatCard label={t('stats.sexRatio')} value={sexLabel} sub={sexSub} />
           <StatCard
-            label="Avg. lifespan"
-            value={s.avgLifespan != null ? `${s.avgLifespan} yrs` : '—'}
-            sub={s.lifespanCount > 0 ? `from ${s.lifespanCount} people` : undefined}
+            label={t('stats.avgLifespan')}
+            value={s.avgLifespan != null ? t('stats.yrs', { n: s.avgLifespan }) : '—'}
+            sub={s.lifespanCount > 0 ? t('stats.fromPeople', { n: s.lifespanCount }) : undefined}
           />
           <StatCard
-            label="Generations"
+            label={t('stats.generations')}
             value={s.generationDepth ?? '—'}
-            sub={!s.generationDepth ? 'no parent links' : undefined}
+            sub={!s.generationDepth ? t('stats.noParentLinks') : undefined}
           />
         </div>
 
         {/* ── Names ── */}
         <div className="grid grid-cols-2 gap-3">
-          <SectionCard title="Most common first names">
+          <SectionCard title={t('stats.firstNames')}>
             <BarList items={s.firstNames} maxCount={s.firstNames[0]?.count ?? 1} />
           </SectionCard>
-          <SectionCard title="Most common last names">
+          <SectionCard title={t('stats.lastNames')}>
             <BarList items={s.lastNames} maxCount={s.lastNames[0]?.count ?? 1} />
           </SectionCard>
         </div>
 
         {/* ── Longest lived ── */}
         {s.longestLived.length > 0 && (
-          <SectionCard title="Longest lived">
+          <SectionCard title={t('stats.longestLived')}>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2">
               {s.longestLived.map(({ person, years }, i) => (
                 <div key={person.id} className="flex items-center gap-2 min-w-0">
@@ -214,8 +217,8 @@ export default function StatisticsView({ persons, relations }: { persons: Person
                   ) : (
                     <div className="w-6 h-6 rounded-full bg-zinc-800 shrink-0" />
                   )}
-                  <span className="text-sm text-zinc-200 truncate flex-1 min-w-0">{person.name ?? '(unnamed)'}</span>
-                  <span className="text-xs font-semibold text-zinc-400 shrink-0 tabular-nums ml-1">{years}y</span>
+                  <span className="text-sm text-zinc-200 truncate flex-1 min-w-0">{person.name ?? t('images.unnamed')}</span>
+                  <span className="text-xs font-semibold text-zinc-400 shrink-0 tabular-nums ml-1">{years}{t('stats.lifespanSuffix')}</span>
                 </div>
               ))}
             </div>
@@ -224,11 +227,11 @@ export default function StatisticsView({ persons, relations }: { persons: Person
 
         {/* ── Birth decades ── */}
         {s.decades.length > 0 && (
-          <SectionCard title="Births by decade">
+          <SectionCard title={t('stats.birthsByDecade')}>
             <div className="space-y-1.5">
               {s.decades.map(([decade, count]) => (
                 <div key={decade} className="flex items-center gap-2">
-                  <span className="text-xs text-zinc-400 w-12 shrink-0 text-right tabular-nums">{decade}s</span>
+                  <span className="text-xs text-zinc-400 w-12 shrink-0 text-right tabular-nums">{decade}{t('stats.decadeSuffix')}</span>
                   <div className="flex-1 bg-zinc-800 rounded-full h-1.5">
                     <div
                       className="bg-indigo-500 h-1.5 rounded-full"
@@ -246,7 +249,7 @@ export default function StatisticsView({ persons, relations }: { persons: Person
         {(s.occupations.length > 0 || s.birthPlaces.length > 0) && (
           <div className="grid grid-cols-2 gap-3">
             {s.occupations.length > 0 && (
-              <SectionCard title="Most common occupations">
+              <SectionCard title={t('stats.occupations')}>
                 <BarList
                   items={s.occupations}
                   maxCount={s.occupations[0]?.count ?? 1}
@@ -255,7 +258,7 @@ export default function StatisticsView({ persons, relations }: { persons: Person
               </SectionCard>
             )}
             {s.birthPlaces.length > 0 && (
-              <SectionCard title="Most common birth places">
+              <SectionCard title={t('stats.birthPlaces')}>
                 <BarList
                   items={s.birthPlaces}
                   maxCount={s.birthPlaces[0]?.count ?? 1}
@@ -267,15 +270,15 @@ export default function StatisticsView({ persons, relations }: { persons: Person
         )}
 
         {/* ── Data completeness ── */}
-        <SectionCard title="Data completeness">
+        <SectionCard title={t('stats.completeness')}>
           <div className="space-y-2">
             {(
               [
-                ['Birth year',  s.withBirthYear],
-                ['Death year',  s.withDeathYear],
-                ['Photo',       s.withPhoto],
-                ['First name',  s.withFirstName],
-                ['Last name',   s.withLastName],
+                [t('stats.birthYear'),  s.withBirthYear],
+                [t('stats.deathYear'),  s.withDeathYear],
+                [t('stats.photo'),      s.withPhoto],
+                [t('stats.firstName'),  s.withFirstName],
+                [t('stats.lastName'),   s.withLastName],
               ] as [string, number][]
             ).map(([label, count]) => {
               const p = pct(count)

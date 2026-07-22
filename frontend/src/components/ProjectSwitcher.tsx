@@ -1,6 +1,7 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
+import { useT } from '../SettingsContext'
 import ExportModal from './ExportModal'
 import MergeModal from './MergeModal'
 
@@ -18,6 +19,7 @@ export default function ProjectSwitcher({
   onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
+  const t = useT()
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -90,7 +92,7 @@ export default function ProjectSwitcher({
         qc.invalidateQueries({ queryKey: ['projects'] })
       }
     },
-    onError: (e) => alert(`Delete failed: ${e}`),
+    onError: (e) => alert(t('projects.deleteFailed', { e: String(e) })),
   })
 
   async function handleExport({ name, includeGenealogy, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages }: { name: string; includeGenealogy: boolean; includeFaceless: boolean; includeNotes: boolean; includeSources: boolean; includeEvents: boolean; includeDocuments: boolean; includeImages: boolean }) {
@@ -125,7 +127,7 @@ export default function ProjectSwitcher({
         setImportDedup({ reused: result.images_reused, added: result.images_new })
       }
     } catch (e) {
-      alert(`Import failed: ${e}`)
+      alert(t('projects.importFailed', { e: String(e) }))
     } finally {
       setImporting(false)
       if (importInputRef.current) importInputRef.current.value = ''
@@ -208,7 +210,7 @@ export default function ProjectSwitcher({
           {/* Project list */}
           <div className="p-1.5 max-h-72 overflow-y-auto">
             {projects.length === 0 && (
-              <p className="px-3 py-2 text-xs text-zinc-500">No collections yet</p>
+              <p className="px-3 py-2 text-xs text-zinc-500">{t('projects.noCollections')}</p>
             )}
             {projects.map(p => (
               <div key={p.id}>
@@ -225,7 +227,7 @@ export default function ProjectSwitcher({
                       disabled={!renameVal.trim() || renameMut.isPending}
                       className="px-2 py-1 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-xs rounded"
                     >
-                      OK
+                      {t('projects.ok')}
                     </button>
                     <button
                       type="button"
@@ -248,13 +250,13 @@ export default function ProjectSwitcher({
                         {p.name}
                       </span>
                       {p.is_active && (
-                        <span className="shrink-0 text-xs text-brand-400 font-medium">active</span>
+                        <span className="shrink-0 text-xs text-brand-400 font-medium">{t('projects.active')}</span>
                       )}
                     </button>
                     <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
                         onClick={() => startRename(p.id, p.name)}
-                        title="Rename"
+                        title={t('projects.rename')}
                         className="p-1 text-zinc-600 hover:text-zinc-300 transition-colors rounded"
                       >
                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -265,11 +267,11 @@ export default function ProjectSwitcher({
                       <button
                         onClick={() => {
                           const msg = p.is_active
-                            ? `Delete active collection "${p.name}"? The app will switch to another collection. This cannot be undone.`
-                            : `Delete collection "${p.name}"? This cannot be undone.`
+                            ? t('projects.deleteActiveConfirm', { name: p.name })
+                            : t('projects.deleteConfirm', { name: p.name })
                           if (confirm(msg)) deleteMut.mutate(p.id)
                         }}
-                        title="Delete"
+                        title={t('projects.delete')}
                         className="p-1 text-zinc-600 hover:text-red-400 transition-colors rounded"
                       >
                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -292,7 +294,7 @@ export default function ProjectSwitcher({
                   type="text"
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
-                  placeholder="Collection name…"
+                  placeholder={t('projects.namePh')}
                   autoFocus
                   className="flex-1 bg-zinc-800 border border-zinc-600 rounded-lg px-2 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400"
                 />
@@ -301,7 +303,7 @@ export default function ProjectSwitcher({
                   disabled={!newName.trim() || createMut.isPending}
                   className="px-2.5 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-xs rounded-lg transition-colors"
                 >
-                  {createMut.isPending ? '…' : 'Create'}
+                  {createMut.isPending ? '…' : t('projects.create')}
                 </button>
               </form>
             ) : (
@@ -312,7 +314,7 @@ export default function ProjectSwitcher({
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                 </svg>
-                New collection
+                {t('projects.newCollection')}
               </button>
             )}
           </div>
@@ -323,24 +325,24 @@ export default function ProjectSwitcher({
               <button
                 onClick={() => setShowExportModal(true)}
                 disabled={exporting || importing}
-                title="Export active collection as ZIP (includes all images)"
+                title={t('projects.exportTooltip')}
                 className="flex-1 px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                {exporting ? 'Building ZIP…' : 'Export'}
+                {exporting ? t('projects.building') : t('projects.export')}
               </button>
               <button
                 onClick={() => importInputRef.current?.click()}
                 disabled={importing || exporting}
-                title="Import a collection from a ZIP archive"
+                title={t('projects.importTooltip')}
                 className="flex-1 px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1M12 14V4m-4 4l4-4 4 4" />
                 </svg>
-                {importing ? 'Importing…' : 'Import'}
+                {importing ? t('projects.importing') : t('projects.import')}
               </button>
               <input
                 ref={importInputRef}
@@ -353,13 +355,13 @@ export default function ProjectSwitcher({
             <button
               onClick={() => { setOpen(false); setShowMergeModal(true) }}
               disabled={importing || exporting}
-              title="Merge genealogy data from a ZIP into this collection"
+              title={t('projects.mergeTooltip')}
               className="w-full px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-lg transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-wait"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
-              Merge from ZIP…
+              {t('projects.mergeBtn')}
             </button>
             {(exporting || importing) && (
               <div className="h-0.5 rounded-full bg-zinc-800 overflow-hidden mx-0.5">

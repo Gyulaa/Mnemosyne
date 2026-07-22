@@ -4,7 +4,7 @@ import { api } from '../api'
 import type { Cluster, ClusterConnection, FaceInfo, ImageItem, ImagePerson, PersonEvent, PersonFull, Relation, SimilarFaceInfo } from '../types'
 import ExportModal from './ExportModal'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
-import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 
 type ModalTab = 'faces' | 'photos' | 'merge' | 'connections' | 'genealogy'
 
@@ -28,6 +28,7 @@ export default function ClustersTab({
   onExportEnd?: (error?: string) => void
 }) {
   const qc = useQueryClient()
+  const t = useT()
   const [selected, setSelected] = useState<Cluster | null>(null)
   const [search, setSearch] = useState('')
   const [nameFilter, setNameFilter] = useState<'all' | 'named' | 'unnamed' | 'unlinked'>('all')
@@ -75,15 +76,14 @@ export default function ClustersTab({
 
   async function doDeleteSelected() {
     const ids = [...checkedClusters]
-    const msg = `Delete ${ids.length} selected cluster${ids.length !== 1 ? 's' : ''}? Their faces will move to unclassified. Linked persons in the genealogy will be preserved. This cannot be undone.`
-    if (!confirm(msg)) return
+    if (!confirm(t('clusters.deleteConfirm', { n: ids.length }))) return
     setDeletingClusters(true)
     try {
       await api.cluster.batchDelete(ids)
       setCheckedClusters(new Set())
       qc.invalidateQueries({ queryKey: ['clusters'] })
     } catch (e) {
-      alert(`Delete failed: ${e}`)
+      alert(t('clusters.deleteFailed', { e: String(e) }))
     } finally {
       setDeletingClusters(false)
     }
@@ -123,18 +123,16 @@ export default function ClustersTab({
   }
 
   if (isLoading) {
-    return <div className="text-zinc-600 text-sm py-20 text-center">Loading clusters…</div>
+    return <div className="text-zinc-600 text-sm py-20 text-center">{t('clusters.loading')}</div>
   }
   if (isError) {
-    return <div className="text-red-400 text-sm py-20 text-center">Failed to load clusters</div>
+    return <div className="text-red-400 text-sm py-20 text-center">{t('clusters.loadFailed')}</div>
   }
   if (!clusters.length) {
     return (
       <div className="py-24 text-center space-y-2">
-        <p className="text-zinc-400 text-base">No clusters yet.</p>
-        <p className="text-zinc-600 text-sm">
-          Run a scan and then click "Run clustering" in the Scan tab.
-        </p>
+        <p className="text-zinc-400 text-base">{t('clusters.noClusters')}</p>
+        <p className="text-zinc-600 text-sm">{t('clusters.runFirst')}</p>
       </div>
     )
   }
@@ -157,20 +155,20 @@ export default function ClustersTab({
           <div className="bg-amber-950/40 border border-amber-800/50 rounded-xl px-5 py-3.5 flex items-center justify-between gap-4">
             <div>
               <p className="text-amber-300 font-semibold text-base leading-tight">
-                {pending} unclassified face{pending !== 1 ? 's' : ''} to sort
+                {pending !== 1 ? t('clusters.unclassifiedFaces', { n: pending }) : t('clusters.unclassifiedFaceSingle', { n: pending })}
                 {dismissed > 0 && (
-                  <span className="ml-2 text-amber-700 font-normal text-xs">· {noiseCluster.face_count} total</span>
+                  <span className="ml-2 text-amber-700 font-normal text-xs">{t('clusters.total', { n: noiseCluster.face_count })}</span>
                 )}
               </p>
               <p className="text-amber-700 text-xs mt-0.5">
-                Review and assign them to complete the organization
+                {t('clusters.unclassifiedSub')}
               </p>
             </div>
             <button
               onClick={() => setSelected(noiseCluster)}
               className="px-4 py-1.5 bg-amber-800/60 hover:bg-amber-700/70 text-amber-300 text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
             >
-              Review →
+              {t('clusters.review')}
             </button>
           </div>
         )
@@ -180,7 +178,7 @@ export default function ClustersTab({
       <div className="sticky top-0 z-10 bg-zinc-950 pb-3 space-y-2">
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-sm text-zinc-500 whitespace-nowrap">
-            {filteredNamed.length}{filteredNamed.length !== named.length ? ` / ${named.length}` : ''} clusters
+            {filteredNamed.length}{filteredNamed.length !== named.length ? ` / ${named.length}` : ''} {t('clusters.clustersLabel')}
           </span>
           <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
             {(['all', 'named', 'unnamed', 'unlinked'] as const).map(f => (
@@ -191,7 +189,7 @@ export default function ClustersTab({
                   nameFilter === f ? 'bg-zinc-600 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
                 }`}
               >
-                {f === 'all' ? 'All' : f === 'named' ? 'Named' : f === 'unnamed' ? 'Unnamed' : 'Not linked'}
+                {f === 'all' ? t('clusters.filterAll') : f === 'named' ? t('clusters.filterNamed') : f === 'unnamed' ? t('clusters.filterUnnamed') : t('clusters.filterNotLinked')}
               </button>
             ))}
           </div>
@@ -199,7 +197,7 @@ export default function ClustersTab({
             type="search"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search by name…"
+            placeholder={t('clusters.search')}
             className="flex-1 max-w-xs bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 transition-colors"
           />
           {checkedClusters.size > 0 && (() => {
@@ -208,13 +206,13 @@ export default function ClustersTab({
             return (
             <>
               <div className="h-4 w-px bg-zinc-700 shrink-0" />
-              <span className="text-xs text-zinc-500 whitespace-nowrap">{checkedClusters.size} selected</span>
+              <span className="text-xs text-zinc-500 whitespace-nowrap">{t('clusters.selected', { n: checkedClusters.size })}</span>
               {filteredNamed.some(c => !checkedClusters.has(c.id)) && (
                 <button
                   onClick={() => setCheckedClusters(new Set(filteredNamed.map(c => c.id)))}
                   className="text-xs text-brand-400 hover:text-brand-300 transition-colors whitespace-nowrap"
                 >
-                  Select All ({filteredNamed.length})
+                  {t('clusters.selectAll', { n: filteredNamed.length })}
                 </button>
               )}
               <button
@@ -225,7 +223,7 @@ export default function ClustersTab({
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                {exportingClusters ? 'Building ZIP…' : `Export ${checkedClusters.size}`}
+                {exportingClusters ? t('clusters.buildingZip') : t('clusters.exportN', { n: checkedClusters.size })}
               </button>
               <button
                 onClick={() => doMakePrivate(!allPrivate)}
@@ -241,7 +239,7 @@ export default function ClustersTab({
                     <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
                   </svg>
                 )}
-                {bulkPrivacying ? 'Saving…' : allPrivate ? 'Make public' : 'Make private'}
+                {bulkPrivacying ? t('clusters.saving') : allPrivate ? t('clusters.makePublic') : t('clusters.makePrivate')}
               </button>
               <button
                 onClick={doDeleteSelected}
@@ -251,13 +249,13 @@ export default function ClustersTab({
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0a2 2 0 012-2h4a2 2 0 012 2M4 7h16" />
                 </svg>
-                {deletingClusters ? 'Deleting…' : `Delete ${checkedClusters.size}`}
+                {deletingClusters ? t('clusters.deleting') : t('clusters.deleteN', { n: checkedClusters.size })}
               </button>
               <button
                 onClick={() => setCheckedClusters(new Set())}
                 className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
               >
-                Clear
+                {t('clusters.clearSelection')}
               </button>
             </>
             )
@@ -273,7 +271,7 @@ export default function ClustersTab({
 
       {/* Cluster grid */}
       {filteredNamed.length === 0 && search.trim() ? (
-        <p className="text-sm text-zinc-600 py-4">No clusters match "{search}"</p>
+        <p className="text-sm text-zinc-600 py-4">{t('clusters.noMatch', { q: search })}</p>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
           {filteredNamed.map(c => (
@@ -328,6 +326,7 @@ function ClusterCard({
   onToggle: () => void
   onTogglePrivacy: (clusterId: number, isPrivate: boolean) => void
 }) {
+  const t = useT()
   const previews = cluster.preview_face_ids.slice(0, 4)
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasLongPress = useRef(false)
@@ -405,11 +404,11 @@ function ClusterCard({
                 Cluster {String(cluster.label).padStart(3, '0')}
               </div>
             )}
-            <div className="text-xs text-zinc-500 mt-0.5 tabular-nums">{cluster.face_count} faces</div>
+            <div className="text-xs text-zinc-500 mt-0.5 tabular-nums">{cluster.face_count} {t('clusters.faces')}</div>
           </div>
           <button
             onClick={e => { e.stopPropagation(); onTogglePrivacy(cluster.id, !(cluster.is_private ?? false)) }}
-            title={cluster.is_private ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+            title={cluster.is_private ? t('images.privacyOn') : t('images.privacyOff')}
             className={`shrink-0 p-1 rounded transition-all ${cluster.is_private ? 'text-amber-400 hover:bg-zinc-700' : 'text-zinc-700 hover:text-zinc-300 hover:bg-zinc-700 opacity-0 group-hover:opacity-100'}`}
           >
             {cluster.is_private ? (
@@ -448,6 +447,7 @@ function ClusterModal({
   onNavToGenealogy?: (personId: number) => void
 }) {
   const queryClient = useQueryClient()
+  const t = useT()
   const isNoise = cluster.label === -1
 
   const [tab, setTab] = useState<ModalTab>('faces')
@@ -584,8 +584,8 @@ function ClusterModal({
   }
 
   const headingLabel = isNoise
-    ? 'Unclassified faces'
-    : cluster.person_name ?? `Cluster ${String(cluster.label).padStart(3, '0')}`
+    ? t('clusters.modal.unclassifiedFaces')
+    : cluster.person_name ?? t('clusters.clusterN', { n: String(cluster.label).padStart(3, '0') })
 
   const otherClusters = allClusters.filter(c => c.id !== cluster.id)
 
@@ -611,15 +611,15 @@ function ClusterModal({
                 deleteConfirm ? (
                   <div className="flex items-center gap-3 flex-wrap">
                     <span className="text-sm text-zinc-400">
-                      Move {cluster.face_count} faces to unclassified and delete this cluster?
+                      {t('clusters.modal.moveAndDelete', { n: cluster.face_count })}
                     </span>
                     <button onClick={() => setDeleteConfirm(false)}
                       className="px-3 py-1 text-xs bg-zinc-700 hover:bg-zinc-600 rounded-lg text-zinc-300 transition-colors">
-                      Cancel
+                      {t('clusters.modal.cancel')}
                     </button>
                     <button onClick={doDelete} disabled={deleting}
                       className="px-3 py-1 text-xs bg-red-700 hover:bg-red-600 disabled:opacity-50 rounded-lg text-white transition-colors">
-                      {deleting ? 'Deleting…' : 'Delete'}
+                      {deleting ? t('clusters.modal.deleting') : t('clusters.modal.delete')}
                     </button>
                   </div>
                 ) : editingName ? (
@@ -637,18 +637,18 @@ function ClusterModal({
                         className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
                           derivedName ? 'bg-brand-500 hover:bg-brand-400 text-white' : 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
                         }`}>
-                        {saving ? 'Saving…' : 'Save'}
+                        {saving ? t('clusters.modal.saving') : t('clusters.modal.save')}
                       </button>
                       {savedName && (
                         <button onClick={() => setEditingName(false)}
                           className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 rounded-lg transition-colors">
-                          Cancel
+                          {t('clusters.modal.cancel')}
                         </button>
                       )}
                       {/* Person picker */}
                       <button onClick={() => setShowPersonPicker(true)}
                         className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 border border-zinc-700 rounded-lg transition-colors whitespace-nowrap">
-                        {cluster.person_id ? 'Change person' : 'Assign to person →'}
+                        {cluster.person_id ? t('clusters.modal.changePerson') : t('clusters.modal.assignPersonArrow')}
                       </button>
                       {showPersonPicker && (
                         <ClusterPersonPickerModal
@@ -662,7 +662,7 @@ function ClusterModal({
                       )}
                       <button onClick={() => setDeleteConfirm(true)}
                         className="px-3 py-1.5 text-xs text-zinc-600 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors whitespace-nowrap">
-                        Delete
+                        {t('clusters.modal.delete')}
                       </button>
                     </div>
                   </div>
@@ -678,7 +678,7 @@ function ClusterModal({
                         <span className="ml-2 text-xs text-zinc-600">{currentPerson.title}</span>
                       )}
                     </div>
-                    <button onClick={() => setEditingName(true)} title="Edit name"
+                    <button onClick={() => setEditingName(true)} title={t('clusters.modal.editName')}
                       className="shrink-0 p-1 rounded text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-colors">
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
@@ -698,7 +698,7 @@ function ClusterModal({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M7 11l5-5m0 0l5 5m-5-5v12" />
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 20h18" />
                   </svg>
-                  Show on tree
+                  {t('clusters.modal.navToTree')}
                 </button>
               )}
               {!isNoise && (
@@ -708,7 +708,7 @@ function ClusterModal({
                     setIsPrivate(p => !p)
                     queryClient.invalidateQueries({ queryKey: ['clusters'] })
                   }}
-                  title={isPrivate ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+                  title={isPrivate ? t('images.privacyOn') : t('images.privacyOff')}
                   className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                     isPrivate
                       ? 'text-amber-300 bg-amber-900/40 hover:bg-amber-900/60'
@@ -724,7 +724,7 @@ function ClusterModal({
                       <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
                     </svg>
                   )}
-                  {isPrivate ? 'Private' : 'Make private'}
+                  {isPrivate ? t('clusters.private') : t('clusters.makePrivate')}
                 </button>
               )}
               <button
@@ -738,21 +738,21 @@ function ClusterModal({
 
           {!isNoise && (
             <div className="flex items-center gap-1 flex-wrap">
-              {(['faces', 'photos', 'merge'] as const).map(t => (
+              {(['faces', 'photos', 'merge'] as const).map(tabKey => (
                 <button
-                  key={t}
-                  onClick={() => { setTab(t); setShowSplit(false) }}
+                  key={tabKey}
+                  onClick={() => { setTab(tabKey); setShowSplit(false) }}
                   className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                    tab === t && !showSplit
+                    tab === tabKey && !showSplit
                       ? 'bg-zinc-700 text-zinc-100'
                       : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
                   }`}
                 >
-                  {t === 'faces'
-                    ? `Faces (${cluster.face_count})`
-                    : t === 'photos'
-                    ? 'Photos'
-                    : 'Merge into…'}
+                  {tabKey === 'faces'
+                    ? `${t('clusters.modal.faces')} (${cluster.face_count})`
+                    : tabKey === 'photos'
+                    ? t('clusters.modal.photos')
+                    : t('clusters.modal.merge')}
                 </button>
               ))}
               {cluster.person_id != null && (
@@ -764,7 +764,7 @@ function ClusterModal({
                       : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
                   }`}
                 >
-                  Connections
+                  {t('clusters.modal.connections')}
                 </button>
               )}
               {cluster.person_id != null && (
@@ -776,7 +776,7 @@ function ClusterModal({
                       : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
                   }`}
                 >
-                  Genealogy
+                  {t('clusters.modal.genealogy')}
                 </button>
               )}
               {cluster.face_count >= 6 && (
@@ -2754,6 +2754,7 @@ function MergePanel({
   onMerged: () => void
 }) {
   const queryClient = useQueryClient()
+  const t = useT()
   const [target, setTarget] = useState<Cluster | null>(null)
   const [merging, setMerging] = useState(false)
   const [search, setSearch] = useState('')
@@ -2839,7 +2840,7 @@ function MergePanel({
         )}
       </div>
       {filtered.length === 0 && (
-        <p className="text-sm text-zinc-600 py-4">No clusters match "{search}"</p>
+        <p className="text-sm text-zinc-600 py-4">{t('clusters.noMatch', { q: search })}</p>
       )}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
         {filtered.map(c => (

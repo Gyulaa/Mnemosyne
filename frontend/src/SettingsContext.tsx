@@ -1,12 +1,16 @@
 import { createContext, useContext, useState } from 'react'
+import { translations, type Lang } from './i18n/translations'
 
 export type NameOrder = 'en' | 'hu'
+export type { Lang }
 
 interface Settings {
   nameOrder: NameOrder
   setNameOrder: (o: NameOrder) => void
   autoCheckUpdates: boolean
   setAutoCheckUpdates: (v: boolean) => void
+  lang: Lang
+  setLang: (l: Lang) => void
 }
 
 const SettingsContext = createContext<Settings>({
@@ -14,6 +18,8 @@ const SettingsContext = createContext<Settings>({
   setNameOrder: () => {},
   autoCheckUpdates: true,
   setAutoCheckUpdates: () => {},
+  lang: 'en',
+  setLang: () => {},
 })
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
@@ -22,6 +28,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   )
   const [autoCheckUpdates, setAutoCheckUpdatesState] = useState<boolean>(
     () => localStorage.getItem('mnemosyne_autoCheckUpdates') !== 'false'
+  )
+  const [lang, setLangState] = useState<Lang>(
+    () => (localStorage.getItem('mnemosyne_lang') as Lang) ?? 'en'
   )
 
   function setNameOrder(o: NameOrder) {
@@ -34,8 +43,13 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('mnemosyne_autoCheckUpdates', String(v))
   }
 
+  function setLang(l: Lang) {
+    setLangState(l)
+    localStorage.setItem('mnemosyne_lang', l)
+  }
+
   return (
-    <SettingsContext.Provider value={{ nameOrder, setNameOrder, autoCheckUpdates, setAutoCheckUpdates }}>
+    <SettingsContext.Provider value={{ nameOrder, setNameOrder, autoCheckUpdates, setAutoCheckUpdates, lang, setLang }}>
       {children}
     </SettingsContext.Provider>
   )
@@ -43,6 +57,20 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
 export function useSettings() {
   return useContext(SettingsContext)
+}
+
+export function useT() {
+  const { lang } = useSettings()
+  return (key: string, vars?: Record<string, string | number>) => {
+    const dict = translations[lang]
+    let str = dict[key] ?? translations.en[key] ?? key
+    if (vars) {
+      for (const [k, v] of Object.entries(vars)) {
+        str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v))
+      }
+    }
+    return str
+  }
 }
 
 type NameLike = {

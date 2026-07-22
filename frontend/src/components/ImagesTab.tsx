@@ -4,16 +4,23 @@ import { createPortal } from 'react-dom'
 import { api } from '../api'
 import type { Cluster, ImageItem, ImagePerson, PersonEvent } from '../types'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
+import { useT } from '../SettingsContext'
 
 type FilterType = 'all' | 'done' | 'no_face' | 'error' | 'pending' | 'private'
 type SortOrder = 'id_desc' | 'exif_date_desc' | 'exif_date_asc' | 'filename_asc'
 type ViewMode = 'list' | 'grid'
 
-const STATUS_META: Record<string, { label: string; cls: string }> = {
-  done:    { label: 'Has faces', cls: 'bg-green-900/50 text-green-400 border-green-800' },
-  no_face: { label: 'No face',   cls: 'bg-zinc-800 text-zinc-500 border-zinc-700' },
-  error:   { label: 'Error',     cls: 'bg-red-900/50 text-red-400 border-red-800' },
-  pending: { label: 'Pending',   cls: 'bg-amber-900/40 text-amber-400 border-amber-800' },
+const STATUS_CLS: Record<string, string> = {
+  done:    'bg-green-900/50 text-green-400 border-green-800',
+  no_face: 'bg-zinc-800 text-zinc-500 border-zinc-700',
+  error:   'bg-red-900/50 text-red-400 border-red-800',
+  pending: 'bg-amber-900/40 text-amber-400 border-amber-800',
+}
+const STATUS_KEY: Record<string, string> = {
+  done:    'images.statusDone',
+  no_face: 'images.statusNoFace',
+  error:   'images.statusError',
+  pending: 'images.statusPending',
 }
 
 function fmtExifDate(iso: string) {
@@ -42,6 +49,7 @@ export default function ImagesTab({
   onExportEnd?: (error?: string) => void
 }) {
   const qc = useQueryClient()
+  const t = useT()
   const [filter, setFilter] = useState<FilterType>('all')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
@@ -155,7 +163,7 @@ export default function ImagesTab({
   async function deleteSelected() {
     if (!selected.size || bulkDeleting) return
     const n = selected.size
-    if (!confirm(`Delete ${n} image${n !== 1 ? 's' : ''} from the database?\nAssociated faces will also be removed. This cannot be undone.`)) return
+    if (!confirm(t('images.deleteConfirm', { n }))) return
     setBulkDeleting(true)
     try {
       await api.images.bulkDelete([...selected])
@@ -333,12 +341,12 @@ export default function ImagesTab({
   }
 
   const filterTabs: { key: FilterType; label: string; count: number | undefined; amber?: boolean }[] = [
-    { key: 'all',     label: 'All',       count: counts ? counts.done + counts.no_face + counts.error + counts.pending : undefined },
-    { key: 'done',    label: 'Has faces', count: counts?.done },
-    { key: 'no_face', label: 'No face',   count: counts?.no_face },
-    { key: 'error',   label: 'Error',     count: counts?.error },
-    { key: 'pending', label: 'Pending',   count: counts?.pending },
-    { key: 'private', label: 'Private',   count: data?.private_count, amber: true },
+    { key: 'all',     label: t('images.filterAll'),      count: counts ? counts.done + counts.no_face + counts.error + counts.pending : undefined },
+    { key: 'done',    label: t('images.filterHasFaces'), count: counts?.done },
+    { key: 'no_face', label: t('images.filterNoFace'),   count: counts?.no_face },
+    { key: 'error',   label: t('images.filterError'),    count: counts?.error },
+    { key: 'pending', label: t('images.filterPending'),  count: counts?.pending },
+    { key: 'private', label: t('images.filterPrivate'),  count: data?.private_count, amber: true },
   ]
 
   return (
@@ -379,7 +387,7 @@ export default function ImagesTab({
 
         <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
           {isFetching && !isLoading && (
-            <span className="text-xs text-zinc-600">Refreshing…</span>
+            <span className="text-xs text-zinc-600">{t('images.refreshing')}</span>
           )}
 
           {/* Sort */}
@@ -388,10 +396,10 @@ export default function ImagesTab({
             onChange={e => changeSort(e.target.value as SortOrder)}
             className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-400 focus:outline-none focus:border-zinc-600 cursor-pointer"
           >
-            <option value="id_desc">Recently scanned</option>
-            <option value="exif_date_desc">Newest photo first</option>
-            <option value="exif_date_asc">Oldest photo first</option>
-            <option value="filename_asc">Filename A→Z</option>
+            <option value="id_desc">{t('images.sortRecentScanned')}</option>
+            <option value="exif_date_desc">{t('images.sortNewestFirst')}</option>
+            <option value="exif_date_asc">{t('images.sortOldestFirst')}</option>
+            <option value="filename_asc">{t('images.sortFilename')}</option>
           </select>
 
           {/* Page size */}
@@ -400,9 +408,9 @@ export default function ImagesTab({
             onChange={e => changePageSize(Number(e.target.value))}
             className="bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1.5 text-xs text-zinc-400 focus:outline-none focus:border-zinc-600 cursor-pointer"
           >
-            <option value={50}>50 / page</option>
-            <option value={100}>100 / page</option>
-            <option value={200}>200 / page</option>
+            <option value={50}>{t('images.perPage', { n: 50 })}</option>
+            <option value={100}>{t('images.perPage', { n: 100 })}</option>
+            <option value={200}>{t('images.perPage', { n: 200 })}</option>
           </select>
 
           {/* Export ZIP */}
@@ -411,13 +419,13 @@ export default function ImagesTab({
               <button
                 onClick={exportZip}
                 disabled={exportingZip}
-                title={`Export ${total.toLocaleString()} images as ZIP`}
+                title={t('images.exportTitle', { n: total.toLocaleString() })}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-900 border border-zinc-800 hover:border-zinc-600 hover:text-zinc-200 rounded-lg text-xs text-zinc-500 transition-colors disabled:opacity-50 disabled:cursor-wait"
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                {exportingZip ? 'Building ZIP…' : `Export ${total.toLocaleString()}`}
+                {exportingZip ? t('images.buildingZip') : t('images.exportN', { n: total.toLocaleString() })}
               </button>
               {exportingZip && (
                 <div className="h-0.5 rounded-full bg-zinc-800 overflow-hidden">
@@ -432,7 +440,7 @@ export default function ImagesTab({
           <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
             <button
               onClick={() => changeViewMode('list')}
-              title="List view"
+              title={t('images.listView')}
               className={`p-1.5 transition-colors ${viewMode === 'list' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-600 hover:text-zinc-300'}`}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -441,7 +449,7 @@ export default function ImagesTab({
             </button>
             <button
               onClick={() => changeViewMode('grid')}
-              title="Grid view"
+              title={t('images.gridView')}
               className={`p-1.5 transition-colors ${viewMode === 'grid' ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-600 hover:text-zinc-300'}`}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -464,7 +472,7 @@ export default function ImagesTab({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
               </svg>
-              Filter by person
+              {t('images.filterByPerson')}
               {activePersonFilters > 0 && (
                 <span className="px-1.5 py-0.5 bg-brand-500 text-white rounded-full text-xs leading-none">
                   {activePersonFilters}
@@ -477,7 +485,7 @@ export default function ImagesTab({
             type="search"
             value={search}
             onChange={e => changeSearch(e.target.value)}
-            placeholder="Search by filename or path…"
+            placeholder={t('images.searchPlaceholder')}
             className="w-64 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 transition-colors"
           />
         </div>
@@ -489,13 +497,13 @@ export default function ImagesTab({
           {/* Top row: instruction + AND/OR toggle + clear */}
           <div className="flex items-center gap-3 flex-wrap">
             <p className="text-xs text-zinc-500 flex-1 min-w-0">
-              Click once to <span className="text-green-400">include</span>, again to <span className="text-red-400">exclude</span>, third time to clear.
+              Click once to <span className="text-green-400">{t('images.personFilterHintInclude')}</span>, again to <span className="text-red-400">{t('images.personFilterHintExclude')}</span>{t('images.personFilterHintSuffix')}
             </p>
             {namedClusters.length > 6 && (
               <input
                 value={personFilterSearch}
                 onChange={e => setPersonFilterSearch(e.target.value)}
-                placeholder="Search by name…"
+                placeholder={t('images.searchByName')}
                 className="w-40 bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400 transition-colors"
               />
             )}
@@ -503,21 +511,21 @@ export default function ImagesTab({
             {/* AND / OR toggle — only shown when persons are included */}
             {includePersonIds.size > 1 && (
               <div className="flex items-center gap-1.5 shrink-0">
-                <span className="text-xs text-zinc-600">Included match:</span>
+                <span className="text-xs text-zinc-600">{t('images.includedMatch')}</span>
                 <div className="flex items-center bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden text-xs font-medium">
                   <button
                     onClick={() => { setIncludeMode('or'); setPage(1) }}
                     className={`px-2.5 py-1 transition-colors ${includeMode === 'or' ? 'bg-brand-500 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
                     title="Show images where any of the included persons appear"
                   >
-                    Any (OR)
+                    {t('images.matchAny')}
                   </button>
                   <button
                     onClick={() => { setIncludeMode('and'); setPage(1) }}
                     className={`px-2.5 py-1 transition-colors ${includeMode === 'and' ? 'bg-brand-500 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
                     title="Show only images where all included persons appear together"
                   >
-                    All (AND)
+                    {t('images.matchAll')}
                   </button>
                 </div>
               </div>
@@ -525,7 +533,7 @@ export default function ImagesTab({
 
             {activePersonFilters > 0 && (
               <button onClick={clearPersonFilter} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors shrink-0">
-                Clear all
+                {t('images.clearAll')}
               </button>
             )}
           </div>
@@ -542,7 +550,7 @@ export default function ImagesTab({
                 <button
                   key={pid}
                   onClick={() => cyclePerson(pid)}
-                  title={isInc ? 'Click to exclude' : isExc ? 'Click to remove filter' : 'Click to include'}
+                  title={isInc ? t('images.clickToExclude') : isExc ? t('images.clickToRemoveFilter') : t('images.clickToInclude')}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
                     isInc ? 'bg-green-900/40 border-green-700/60 text-green-300' :
                     isExc ? 'bg-red-900/40 border-red-700/60 text-red-300' :
@@ -564,8 +572,8 @@ export default function ImagesTab({
           {includePersonIds.size > 0 && (
             <p className="text-xs text-zinc-700">
               {includeMode === 'and' && includePersonIds.size > 1
-                ? `Showing images where all ${includePersonIds.size} included persons appear together.`
-                : `Showing images where any included person appears.`}
+                ? t('images.showImagesAll', { n: includePersonIds.size })
+                : t('images.showImagesAny')}
             </p>
           )}
         </div>
@@ -583,17 +591,17 @@ export default function ImagesTab({
               className="w-4 h-4 rounded accent-brand-400 shrink-0"
             />
             <span className="w-24 shrink-0" />
-            <span className="flex-1">File</span>
-            <span className="w-24 text-center shrink-0">Status</span>
-            <span className="w-14 text-right shrink-0">Faces</span>
+            <span className="flex-1">{t('images.headerFile')}</span>
+            <span className="w-24 text-center shrink-0">{t('images.headerStatus')}</span>
+            <span className="w-14 text-right shrink-0">{t('images.headerFaces')}</span>
             <span className="w-8 shrink-0" />
           </div>
 
           {isLoading ? (
-            <div className="py-16 text-center text-zinc-600 text-sm">Loading…</div>
+            <div className="py-16 text-center text-zinc-600 text-sm">{t('images.loading')}</div>
           ) : pageItems.length === 0 ? (
             <div className="py-16 text-center text-zinc-600 text-sm">
-              {search.trim() ? `No images match "${search}"` : 'No images match this filter.'}
+              {search.trim() ? t('images.noMatchSearch', { q: search }) : t('images.noMatchFilter')}
             </div>
           ) : (
             <div className="divide-y divide-zinc-800/70">
@@ -617,10 +625,10 @@ export default function ImagesTab({
       ) : (
         /* Grid view */
         isLoading ? (
-          <div className="py-16 text-center text-zinc-600 text-sm">Loading…</div>
+          <div className="py-16 text-center text-zinc-600 text-sm">{t('images.loading')}</div>
         ) : pageItems.length === 0 ? (
           <div className="py-16 text-center text-zinc-600 text-sm">
-            {search.trim() ? `No images match "${search}"` : 'No images match this filter.'}
+            {search.trim() ? t('images.noMatchSearch', { q: search }) : t('images.noMatchFilter')}
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
@@ -668,7 +676,7 @@ export default function ImagesTab({
         const allPrivate = selItems.length > 0 && selItems.every(i => i.is_private)
         return (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-6 py-3.5 bg-zinc-900/90 backdrop-blur-xl border border-zinc-700/60 rounded-2xl shadow-2xl">
-          <span className="text-sm text-zinc-200 font-semibold tabular-nums">{selected.size} selected</span>
+          <span className="text-sm text-zinc-200 font-semibold tabular-nums">{t('images.selected', { n: selected.size })}</span>
           <div className="w-px h-5 bg-zinc-700 shrink-0" />
           <button
             onClick={() => setShowAttachModal(true)}
@@ -678,7 +686,7 @@ export default function ImagesTab({
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
-            Add to event
+            {t('images.addToEvent')}
           </button>
           <button
             onClick={exportSelected}
@@ -688,7 +696,7 @@ export default function ImagesTab({
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
-            {exportingSelected ? 'Building ZIP…' : `Export ${selected.size}`}
+            {exportingSelected ? t('images.buildingZip') : t('images.exportN', { n: selected.size })}
           </button>
           <button
             onClick={() => markSelectedPrivate(!allPrivate)}
@@ -704,20 +712,20 @@ export default function ImagesTab({
                 <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
               </svg>
             )}
-            {bulkPrivacying ? 'Saving…' : allPrivate ? 'Make public' : 'Make private'}
+            {bulkPrivacying ? t('images.saving') : allPrivate ? t('images.makePublic') : t('images.makePrivate')}
           </button>
           <button
             onClick={deleteSelected}
             disabled={bulkDeleting || exportingSelected || bulkPrivacying}
             className="px-4 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
           >
-            {bulkDeleting ? 'Deleting…' : `Delete ${selected.size}`}
+            {bulkDeleting ? t('images.deleting') : t('images.deleteN', { n: selected.size })}
           </button>
           <button
             onClick={() => setSelected(new Set())}
             className="px-3 py-1.5 text-zinc-500 hover:text-zinc-300 text-sm transition-colors whitespace-nowrap"
           >
-            Clear
+            {t('images.clearSelection')}
           </button>
         </div>
         )
@@ -769,7 +777,8 @@ function ImageCard({
   onDragMouseEnter: () => void
   onTogglePrivacy: (id: number, isPrivate: boolean) => void
 }) {
-  const meta = STATUS_META[img.scan_status]
+  const t = useT()
+  const statusCls = STATUS_CLS[img.scan_status] ?? 'bg-zinc-800 text-zinc-400 border-zinc-700'
 
   return (
     <div
@@ -808,7 +817,7 @@ function ImageCard({
 
       {/* Event badge */}
       {hasEvent && (
-        <div className="absolute top-2 right-5 w-4 h-4 rounded-full bg-brand-500/90 flex items-center justify-center" title="Linked to an event">
+        <div className="absolute top-2 right-5 w-4 h-4 rounded-full bg-brand-500/90 flex items-center justify-center" title={t('images.linkedToEvent')}>
           <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
           </svg>
@@ -827,13 +836,13 @@ function ImageCard({
         <button
           onClick={e => { e.stopPropagation(); onTogglePrivacy(img.id, false) }}
           onMouseDown={e => e.stopPropagation()}
-          title="Private — not exported. Click to make public."
+          title={t('images.privacyOn')}
           className="absolute bottom-8 right-2 flex items-center gap-1 px-1.5 py-0.5 bg-amber-900/80 hover:bg-amber-800/90 text-amber-300 rounded-md text-[10px] font-medium transition-colors"
         >
           <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
           </svg>
-          Private
+          {t('images.private')}
         </button>
       )}
 
@@ -842,7 +851,7 @@ function ImageCard({
         onClick={e => { e.stopPropagation(); onDelete() }}
         onMouseDown={e => e.stopPropagation()}
         className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 p-1 bg-black/60 hover:bg-red-900/80 text-zinc-400 hover:text-red-300 rounded-lg transition-all"
-        title="Remove from database"
+        title={t('images.removeFromDb')}
       >
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round"
@@ -856,10 +865,10 @@ function ImageCard({
         {img.exif_date ? (
           <p className="text-xs text-zinc-600 leading-tight tabular-nums">{fmtExifDate(img.exif_date)}</p>
         ) : img.face_count > 0 ? (
-          <p className="text-xs text-zinc-600 leading-tight">{img.face_count} face{img.face_count !== 1 ? 's' : ''}</p>
+          <p className="text-xs text-zinc-600 leading-tight">{img.face_count} {img.face_count === 1 ? t('images.face') : t('images.faces')}</p>
         ) : (
           <p className="text-xs leading-tight">
-            <span className={`inline-flex px-1.5 py-0.5 rounded text-xs border ${meta?.cls ?? ''}`}>{meta?.label ?? img.scan_status}</span>
+            <span className={`inline-flex px-1.5 py-0.5 rounded text-xs border ${statusCls}`}>{t(STATUS_KEY[img.scan_status] ?? img.scan_status)}</span>
           </p>
         )}
       </div>
@@ -902,7 +911,8 @@ function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster, onT
     staleTime: 30_000,
   })
 
-  const meta = STATUS_META[img.scan_status]
+  const t = useT()
+  const statusCls = STATUS_CLS[img.scan_status] ?? 'bg-zinc-800 text-zinc-400 border-zinc-700'
   const exifMeta = parseMeta(img.meta_json)
 
   return (
@@ -965,7 +975,7 @@ function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster, onT
             {/* Linked events */}
             {linkedEvents.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-zinc-600">Events:</span>
+                <span className="text-xs text-zinc-600">{t('images.events')}</span>
                 {linkedEvents.map(ev => (
                   <span key={ev.id}
                     className="inline-flex items-center gap-1 px-2 py-0.5 bg-brand-900/40 border border-brand-700/50 rounded-full text-xs text-brand-300">
@@ -982,7 +992,7 @@ function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster, onT
             {/* Persons in image */}
             {persons.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-zinc-600">Persons:</span>
+                <span className="text-xs text-zinc-600">{t('images.persons')}</span>
                 {persons.map(p => {
                   const canNav = onNavToCluster && p.cluster_id != null
                   return canNav ? (
@@ -991,14 +1001,14 @@ function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster, onT
                       className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 rounded-full text-xs text-zinc-300 transition-colors cursor-pointer">
                       <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
                         className="w-4 h-4 rounded-full object-cover shrink-0" />
-                      {p.person_name ?? '(unnamed)'}
+                      {p.person_name ?? t('images.unnamed')}
                     </button>
                   ) : (
                     <span key={p.person_id}
                       className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded-full text-xs text-zinc-300">
                       <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
                         className="w-4 h-4 rounded-full object-cover shrink-0" />
-                      {p.person_name ?? '(unnamed)'}
+                      {p.person_name ?? t('images.unnamed')}
                     </span>
                   )
                 })}
@@ -1007,14 +1017,14 @@ function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster, onT
           </div>
 
           <div className="flex items-start gap-2 shrink-0">
-            {meta && (
-              <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium border ${meta.cls}`}>
-                {meta.label}
+            {STATUS_KEY[img.scan_status] && (
+              <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium border ${statusCls}`}>
+                {t(STATUS_KEY[img.scan_status])}
               </span>
             )}
             <button
               onClick={() => onTogglePrivacy(img.id, !img.is_private)}
-              title={img.is_private ? 'Private — not exported. Click to make public.' : 'Mark as private (excluded from all exports)'}
+              title={img.is_private ? t('images.privacyOn') : t('images.privacyOff')}
               className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
                 img.is_private
                   ? 'text-amber-300 bg-amber-900/40 hover:bg-amber-900/60'
@@ -1030,7 +1040,7 @@ function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster, onT
                   <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
                 </svg>
               )}
-              {img.is_private ? 'Private' : 'Make private'}
+              {img.is_private ? t('images.private') : t('images.makePrivate')}
             </button>
             <button onClick={onClose}
               className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
@@ -1068,7 +1078,8 @@ function ImageRow({
   onDragMouseEnter: () => void
   onTogglePrivacy: (id: number, isPrivate: boolean) => void
 }) {
-  const meta = STATUS_META[img.scan_status] ?? { label: img.scan_status, cls: 'bg-zinc-800 text-zinc-400 border-zinc-700' }
+  const t = useT()
+  const statusCls = STATUS_CLS[img.scan_status] ?? 'bg-zinc-800 text-zinc-400 border-zinc-700'
 
   return (
     <div
@@ -1091,7 +1102,7 @@ function ImageRow({
       <button
         onClick={onPreview}
         className="w-24 h-16 rounded-lg overflow-hidden bg-zinc-800 shrink-0 hover:ring-2 hover:ring-brand-400 transition-all focus:outline-none focus:ring-2 focus:ring-brand-400"
-        title="Click to preview"
+        title={t('images.clickToPreview')}
       >
         <img
           src={api.imageViewUrl(img.id, 160)}
@@ -1108,24 +1119,24 @@ function ImageRow({
             {img.filename}
           </p>
           {hasEvent && (
-            <span className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-brand-900/60 text-brand-400 border border-brand-700/50" title="Linked to an event">
+            <span className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-brand-900/60 text-brand-400 border border-brand-700/50" title={t('images.linkedToEvent')}>
               <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              Event
+              {t('images.event')}
             </span>
           )}
           {img.is_private && (
             <button
               onClick={e => { e.stopPropagation(); onTogglePrivacy(img.id, false) }}
               onMouseDown={e => e.stopPropagation()}
-              title="Private — not exported. Click to make public."
+              title={t('images.privacyOn')}
               className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-900/60 text-amber-300 border border-amber-700/50 hover:bg-amber-800/80 transition-colors"
             >
               <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
               </svg>
-              Private
+              {t('images.private')}
             </button>
           )}
         </div>
@@ -1146,8 +1157,8 @@ function ImageRow({
 
       {/* Status badge */}
       <div className="w-24 flex justify-center shrink-0">
-        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium border ${meta.cls}`}>
-          {meta.label}
+        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium border ${statusCls}`}>
+          {t(STATUS_KEY[img.scan_status] ?? img.scan_status)}
         </span>
       </div>
 
@@ -1164,7 +1175,7 @@ function ImageRow({
           onClick={onDelete}
           onMouseDown={e => e.stopPropagation()}
           className="opacity-0 group-hover:opacity-100 p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-900/30 rounded-lg transition-all"
-          title="Remove from database (source file untouched)"
+          title={t('images.removeFromDb')}
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}

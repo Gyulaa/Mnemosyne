@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import type { PersonDocument, PersonFull, DocumentType, Relation } from '../types'
 import DocumentViewer from './DocumentViewer'
+import { useT } from '../SettingsContext'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -55,6 +56,7 @@ function PersonCombobox({ persons, value, onChange }: {
   value: number | null
   onChange: (id: number | null) => void
 }) {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const containerRef = useRef<HTMLDivElement>(null)
@@ -93,7 +95,7 @@ function PersonCombobox({ persons, value, onChange }: {
         className="flex items-center justify-between gap-2 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs outline-none hover:border-zinc-600 focus:border-brand-400 min-w-[140px] max-w-[180px]"
       >
         <span className={selected ? 'text-zinc-100 truncate' : 'text-zinc-500'}>
-          {selected ? (selected.name ?? '(unnamed)') : 'All persons'}
+          {selected ? (selected.name ?? '(unnamed)') : t('docs.allPersons')}
         </span>
         <svg className={`w-3 h-3 text-zinc-500 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -107,7 +109,7 @@ function PersonCombobox({ persons, value, onChange }: {
               autoFocus
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search persons…"
+              placeholder={t('docs.searchPersons')}
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
             />
           </div>
@@ -116,7 +118,7 @@ function PersonCombobox({ persons, value, onChange }: {
               onClick={() => select(null)}
               className={`w-full px-3 py-1.5 text-xs text-left hover:bg-zinc-800 transition-colors ${value === null ? 'text-brand-300' : 'text-zinc-400'}`}
             >
-              All persons
+              {t('docs.allPersons')}
             </button>
             {filtered.map(p => {
               const sum = personSummary(p)
@@ -130,7 +132,7 @@ function PersonCombobox({ persons, value, onChange }: {
               )
             })}
             {filtered.length === 0 && (
-              <p className="px-3 py-2 text-xs text-zinc-600 italic">No results</p>
+              <p className="px-3 py-2 text-xs text-zinc-600 italic">{t('docs.noResults')}</p>
             )}
           </div>
         </div>
@@ -157,6 +159,7 @@ function PersonChip({ person, onClick }: { person: { id: number; name: string | 
 function TypeManagerModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
   const { data: types = [] } = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
+  const t = useT()
   const [newKey, setNewKey] = useState('')
   const [newLabel, setNewLabel] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -186,8 +189,8 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">Documents</p>
-            <h2 className="text-sm font-semibold text-zinc-100">Manage Types</h2>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">{t('docs.heading')}</p>
+            <h2 className="text-sm font-semibold text-zinc-100">{t('docs.manageTypesTitle')}</h2>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
@@ -197,38 +200,38 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
         <div className="flex-1 overflow-y-auto">
           {/* Existing types */}
           <ul className="divide-y divide-zinc-800">
-            {types.map(t => (
-              <li key={t.id} className="flex items-center gap-3 px-5 py-2.5 group">
-                <code className="text-[10px] text-zinc-600 font-mono min-w-[100px] shrink-0">{t.key}</code>
-                {editingId === t.id ? (
+            {types.map(dt => (
+              <li key={dt.id} className="flex items-center gap-3 px-5 py-2.5 group">
+                <code className="text-[10px] text-zinc-600 font-mono min-w-[100px] shrink-0">{dt.key}</code>
+                {editingId === dt.id ? (
                   <input
                     autoFocus
                     value={editLabel}
                     onChange={e => setEditLabel(e.target.value)}
                     onKeyDown={e => {
-                      if (e.key === 'Enter') updateMut.mutate({ id: t.id, label: editLabel })
+                      if (e.key === 'Enter') updateMut.mutate({ id: dt.id, label: editLabel })
                       if (e.key === 'Escape') setEditingId(null)
                     }}
                     className="flex-1 bg-zinc-700 border border-zinc-500 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-brand-400"
                   />
                 ) : (
-                  <span className="flex-1 text-xs text-zinc-200">{t.label}</span>
+                  <span className="flex-1 text-xs text-zinc-200">{dt.label}</span>
                 )}
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                  {editingId === t.id ? (
+                  {editingId === dt.id ? (
                     <>
-                      <button onClick={() => updateMut.mutate({ id: t.id, label: editLabel })}
-                        className="text-[10px] px-2 py-0.5 bg-brand-600 hover:bg-brand-500 text-white rounded transition-colors">Save</button>
+                      <button onClick={() => updateMut.mutate({ id: dt.id, label: editLabel })}
+                        className="text-[10px] px-2 py-0.5 bg-brand-600 hover:bg-brand-500 text-white rounded transition-colors">{t('docs.save')}</button>
                       <button onClick={() => setEditingId(null)}
-                        className="text-[10px] px-2 py-0.5 bg-zinc-700 text-zinc-400 hover:text-zinc-200 rounded transition-colors">Cancel</button>
+                        className="text-[10px] px-2 py-0.5 bg-zinc-700 text-zinc-400 hover:text-zinc-200 rounded transition-colors">{t('docs.cancel')}</button>
                     </>
                   ) : (
                     <>
-                      <button onClick={() => { setEditingId(t.id); setEditLabel(t.label) }}
+                      <button onClick={() => { setEditingId(dt.id); setEditLabel(dt.label) }}
                         className="w-6 h-6 rounded flex items-center justify-center text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors">
                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z"/></svg>
                       </button>
-                      <button onClick={() => { if (confirm(`Delete type "${t.label}"?`)) deleteMut.mutate(t.id) }}
+                      <button onClick={() => { if (confirm(t('docs.deleteTypeConfirm', { label: dt.label }))) deleteMut.mutate(dt.id) }}
                         className="w-6 h-6 rounded flex items-center justify-center text-zinc-600 hover:text-red-400 hover:bg-zinc-700 transition-colors">
                         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12"/></svg>
                       </button>
@@ -241,18 +244,18 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
 
           {/* Add new type */}
           <div className="px-5 py-4 border-t border-zinc-800">
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">Add new type</p>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">{t('docs.addNewType')}</p>
             <div className="flex gap-2">
               <input
                 value={newKey}
                 onChange={e => setNewKey(e.target.value)}
-                placeholder="key (e.g. invoice)"
+                placeholder={t('docs.typeKeyPh')}
                 className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 font-mono"
               />
               <input
                 value={newLabel}
                 onChange={e => setNewLabel(e.target.value)}
-                placeholder="Label (e.g. Invoice)"
+                placeholder={t('docs.typeLabelPh')}
                 className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400"
                 onKeyDown={e => { if (e.key === 'Enter' && newKey && newLabel) createMut.mutate() }}
               />
@@ -260,7 +263,7 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
                 onClick={() => createMut.mutate()}
                 disabled={!newKey.trim() || !newLabel.trim() || createMut.isPending}
                 className="px-3 py-1.5 bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg transition-colors shrink-0"
-              >Add</button>
+              >{t('docs.addTypeBtn')}</button>
             </div>
             {createMut.isError && (
               <p className="text-[10px] text-red-400 mt-1.5">{String(createMut.error)}</p>
@@ -280,6 +283,7 @@ function UploadModal({ persons, types, onClose, onDone }: {
   onClose: () => void
   onDone: () => void
 }) {
+  const t = useT()
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
@@ -329,8 +333,8 @@ function UploadModal({ persons, types, onClose, onDone }: {
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">Documents</p>
-            <h2 className="text-sm font-semibold text-zinc-100">Upload document</h2>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">{t('docs.heading')}</p>
+            <h2 className="text-sm font-semibold text-zinc-100">{t('docs.uploadTitle')}</h2>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
@@ -358,26 +362,26 @@ function UploadModal({ persons, types, onClose, onDone }: {
           </div>
 
           {/* Metadata */}
-          <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Title (optional)"
+          <input value={title} onChange={e => setTitle(e.target.value)} placeholder={t('docs.titlePh')}
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
 
           <div className="flex gap-2">
             <select value={docType} onChange={e => setDocType(e.target.value)}
               className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 outline-none focus:border-brand-400">
-              {types.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-              {types.length === 0 && <option value="other">Document</option>}
+              {types.map(dt => <option key={dt.key} value={dt.key}>{dt.label}</option>)}
+              {types.length === 0 && <option value="other">{t('person.docFallback')}</option>}
             </select>
-            <input type="number" value={year} onChange={e => setYear(e.target.value)} placeholder="Year"
+            <input type="number" value={year} onChange={e => setYear(e.target.value)} placeholder={t('docs.yearPh')}
               className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
           </div>
 
-          <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Description (optional)"
+          <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder={t('docs.descPh')}
             rows={2}
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 resize-none" />
 
           {/* Person selection */}
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2">Linked persons</p>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.linkedPersons')}</p>
             {selectedPersonIds.length > 0 && (
               <div className="flex flex-wrap gap-1 mb-2">
                 {selectedPersonIds.map(pid => {
@@ -391,7 +395,7 @@ function UploadModal({ persons, types, onClose, onDone }: {
                 })}
               </div>
             )}
-            <input value={personSearch} onChange={e => setPersonSearch(e.target.value)} placeholder="Search persons…"
+            <input value={personSearch} onChange={e => setPersonSearch(e.target.value)} placeholder={t('docs.searchPersons')}
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 mb-1" />
             <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-800/40">
               {filteredPersons.slice(0, 50).map(p => {
@@ -410,10 +414,10 @@ function UploadModal({ persons, types, onClose, onDone }: {
                   </button>
                 )
               })}
-              {filteredPersons.length === 0 && <p className="px-3 py-2 text-xs text-zinc-600">No persons found</p>}
+              {filteredPersons.length === 0 && <p className="px-3 py-2 text-xs text-zinc-600">{t('docs.noPersonsFound')}</p>}
             </div>
             {selectedPersonIds.length === 0 && (
-              <p className="text-[10px] text-zinc-600 mt-1">Select at least one person</p>
+              <p className="text-[10px] text-zinc-600 mt-1">{t('docs.selectPerson')}</p>
             )}
           </div>
 
@@ -424,10 +428,10 @@ function UploadModal({ persons, types, onClose, onDone }: {
           <button onClick={submit} disabled={!file || selectedPersonIds.length === 0 || uploading}
             className="flex-1 h-9 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2">
             {uploading ? (
-              <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>Uploading…</>
-            ) : 'Upload'}
+              <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>{t('docs.uploading')}</>
+            ) : t('docs.upload')}
           </button>
-          <button onClick={onClose} className="px-4 h-9 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm transition-colors">Cancel</button>
+          <button onClick={onClose} className="px-4 h-9 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm transition-colors">{t('docs.cancel')}</button>
         </div>
       </div>
     </div>
@@ -442,6 +446,7 @@ function EditDocModal({ doc, types, persons, onClose }: {
   persons: PersonFull[]
   onClose: () => void
 }) {
+  const t = useT()
   const qc = useQueryClient()
   const [title, setTitle]           = useState(doc.title ?? '')
   const [docType, setDocType]       = useState(doc.doc_type ?? 'other')
@@ -548,7 +553,7 @@ function EditDocModal({ doc, types, persons, onClose }: {
         onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
           <div className="min-w-0 flex-1 pr-3">
-            <h2 className="text-sm font-semibold text-zinc-100">Edit document</h2>
+            <h2 className="text-sm font-semibold text-zinc-100">{t('docs.editDocTitle')}</h2>
             <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{doc.title || doc.filename}</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors shrink-0">
@@ -557,25 +562,25 @@ function EditDocModal({ doc, types, persons, onClose }: {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-          <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Title (optional)"
+          <input value={title} onChange={e => setTitle(e.target.value)} placeholder={t('docs.titlePh')}
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
 
           <div className="flex gap-2">
             <select value={docType} onChange={e => setDocType(e.target.value)}
               className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 outline-none focus:border-brand-400">
-              {types.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-              {types.length === 0 && <option value="other">Document</option>}
+              {types.map(dt => <option key={dt.key} value={dt.key}>{dt.label}</option>)}
+              {types.length === 0 && <option value="other">{t('person.docFallback')}</option>}
             </select>
-            <input type="number" value={year} onChange={e => setYear(e.target.value)} placeholder="Year"
+            <input type="number" value={year} onChange={e => setYear(e.target.value)} placeholder={t('docs.yearPh')}
               className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
           </div>
 
-          <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Description (optional)" rows={2}
+          <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder={t('docs.descPh')} rows={2}
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 resize-none" />
 
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2">Linked persons</p>
-            <input value={personSearch} onChange={e => setPersonSearch(e.target.value)} placeholder="Search persons…"
+            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.linkedPersons')}</p>
+            <input value={personSearch} onChange={e => setPersonSearch(e.target.value)} placeholder={t('docs.searchPersons')}
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 mb-1" />
             <div className="max-h-44 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-800/40">
               {filteredPersons.slice(0, 100).map(p => {
@@ -596,7 +601,7 @@ function EditDocModal({ doc, types, persons, onClose }: {
                   </button>
                 )
               })}
-              {filteredPersons.length === 0 && <p className="px-3 py-2 text-xs text-zinc-600">No persons found</p>}
+              {filteredPersons.length === 0 && <p className="px-3 py-2 text-xs text-zinc-600">{t('docs.noPersonsFound')}</p>}
             </div>
           </div>
         </div>
@@ -604,10 +609,10 @@ function EditDocModal({ doc, types, persons, onClose }: {
         <div className="shrink-0 px-5 py-3 border-t border-zinc-800 flex gap-2">
           <button onClick={save} disabled={saving}
             className="flex-1 h-9 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-white text-sm font-medium transition-colors">
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? t('docs.saving') : t('docs.save')}
           </button>
           <button onClick={onClose} className="px-4 h-9 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm transition-colors">
-            Cancel
+            {t('docs.cancel')}
           </button>
         </div>
       </div>
@@ -629,10 +634,11 @@ const DocRow = forwardRef<HTMLTableRowElement, {
   selected?: boolean
   onToggleSelect?: () => void
 }>(function DocRow({ doc, typeMap, persons: _persons, onNavToGenealogy, onEdit, highlighted, selected, onToggleSelect }, ref) {
+  const t = useT()
   const qc = useQueryClient()
   const [previewing, setPreviewing] = useState(false)
   const displayName = doc.title || doc.filename
-  const typeLabel = typeMap.get(doc.doc_type ?? '') ?? doc.doc_type ?? 'Document'
+  const typeLabel = typeMap.get(doc.doc_type ?? '') ?? doc.doc_type ?? t('person.docFallback')
   const canPreview = isImage(doc.mime_type) || isPdf(doc.mime_type) || isAudio(doc.mime_type)
 
   const deleteMut = useMutation({
@@ -708,15 +714,15 @@ const DocRow = forwardRef<HTMLTableRowElement, {
         {/* Actions */}
         <td className="py-2.5 pr-4 w-24" onClick={e => e.stopPropagation()}>
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
-            <button onClick={onEdit} title="Edit"
+            <button onClick={onEdit} title={t('docs.edit')}
               className="w-7 h-7 rounded flex items-center justify-center text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z"/></svg>
             </button>
-            <a href={api.documents.fileUrl(doc.id, true)} title="Download" onClick={e => e.stopPropagation()}
+            <a href={api.documents.fileUrl(doc.id, true)} title={t('docs.download')} onClick={e => e.stopPropagation()}
               className="w-7 h-7 rounded flex items-center justify-center text-zinc-600 hover:text-zinc-300 hover:bg-zinc-700 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
             </a>
-            <button onClick={() => { if (confirm('Delete this document?')) deleteMut.mutate() }} title="Delete"
+            <button onClick={() => { if (confirm(t('docs.deleteConfirm'))) deleteMut.mutate() }} title={t('docs.delete')}
               className="w-7 h-7 rounded flex items-center justify-center text-zinc-600 hover:text-red-400 hover:bg-zinc-700 transition-colors">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
@@ -738,6 +744,7 @@ export default function DocumentsTab({
   navTarget?: { docId: number; editMode?: boolean; key: number } | null
   onNavConsumed?: () => void
 }) {
+  const t = useT()
   const { data: docs = [] }    = useQuery<PersonDocument[]>({ queryKey: ['docs-all'], queryFn: api.documents.listAll })
   const { data: persons = [] } = useQuery<PersonFull[]>({ queryKey: ['persons'],   queryFn: api.persons.list })
   const { data: types = [] }   = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
@@ -838,18 +845,18 @@ export default function DocumentsTab({
 
       {/* Header */}
       <div className="shrink-0 bg-zinc-900 border-b border-zinc-800 px-6 py-3 flex items-center gap-3">
-        <h1 className="text-sm font-semibold text-zinc-100">Documents</h1>
+        <h1 className="text-sm font-semibold text-zinc-100">{t('docs.heading')}</h1>
         <span className="text-xs text-zinc-600 tabular-nums">{docs.length} total</span>
         <div className="ml-auto flex items-center gap-2">
           <button onClick={() => setShowTypeManager(true)}
             className="h-7 px-2.5 rounded-lg border border-zinc-700 bg-zinc-800/60 hover:bg-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5">
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-            Types
+            {t('docs.manageTypes')}
           </button>
           <button onClick={() => setShowUpload(true)}
             className="h-7 px-3 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs font-medium text-white transition-colors flex items-center gap-1.5">
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
-            New
+            {t('docs.newDoc')}
           </button>
         </div>
       </div>
@@ -863,14 +870,14 @@ export default function DocumentsTab({
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search…"
+            placeholder={t('docs.search')}
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
           />
         </div>
 
         <select value={filterType} onChange={e => setFilterType(e.target.value)}
           className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-300 outline-none focus:border-brand-400 max-w-[160px]">
-          <option value="__all__">All types</option>
+          <option value="__all__">{t('docs.allTypes')}</option>
           {types.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
         </select>
 
@@ -883,7 +890,7 @@ export default function DocumentsTab({
         {(search || filterType !== '__all__' || filterPerson != null) && (
           <button onClick={() => { setSearch(''); setFilterType('__all__'); setFilterPerson(null) }}
             className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors shrink-0">
-            Clear
+            {t('docs.clear')}
           </button>
         )}
 
@@ -895,7 +902,7 @@ export default function DocumentsTab({
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 gap-2 text-zinc-600">
             <svg className="w-10 h-10 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
-            <p className="text-sm">{docs.length === 0 ? 'No documents yet' : 'No results'}</p>
+            <p className="text-sm">{docs.length === 0 ? t('docs.noDocuments') : t('docs.noResults')}</p>
           </div>
         ) : (
           <table className="w-full border-collapse">
@@ -917,10 +924,10 @@ export default function DocumentsTab({
                   </div>
                 </th>
                 <th className="pl-1 pr-2 py-2.5 w-11"></th>
-                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Title</th>
-                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider whitespace-nowrap">Type</th>
-                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider w-14">Year</th>
-                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">Persons</th>
+                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">{t('docs.colTitle')}</th>
+                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider whitespace-nowrap">{t('docs.colType')}</th>
+                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider w-14">{t('docs.colYear')}</th>
+                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">{t('docs.colPersons')}</th>
                 <th className="py-2.5 pr-4 w-24"></th>
               </tr>
             </thead>
@@ -954,7 +961,7 @@ export default function DocumentsTab({
             onClick={() => setSelectedIds(new Set())}
             className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
           >
-            Clear
+            {t('docs.clear')}
           </button>
           <div className="ml-auto flex items-center gap-3">
             <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -966,7 +973,7 @@ export default function DocumentsTab({
                   <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 10" stroke="currentColor" strokeWidth={2}><path d="M1 5l3 3 7-7"/></svg>
                 )}
               </div>
-              <span className="text-xs text-zinc-400">Include notes</span>
+              <span className="text-xs text-zinc-400">{t('docs.includeNotes')}</span>
             </label>
             <button
               onClick={handleBulkDownload}
@@ -976,7 +983,7 @@ export default function DocumentsTab({
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
               </svg>
-              {downloading ? 'Building ZIP…' : 'Download ZIP'}
+              {downloading ? t('docs.buildingZip') : t('docs.downloadZip')}
             </button>
           </div>
         </div>
@@ -988,7 +995,7 @@ export default function DocumentsTab({
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
           </svg>
-          Building ZIP…
+          {t('docs.buildingZip')}
         </div>,
         document.body
       )}
