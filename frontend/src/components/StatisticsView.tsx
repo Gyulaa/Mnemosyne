@@ -33,7 +33,7 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-      <h3 className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mb-3">{title}</h3>
+      <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">{title}</h3>
       {children}
     </div>
   )

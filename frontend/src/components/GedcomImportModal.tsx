@@ -16,9 +16,9 @@ function formatLifespan(birth_year: number | null, death_year: number | null, bi
 
 function ConfBadge({ conf }: { conf: 'exact' | 'high' | 'low' }) {
   const t = useT()
-  if (conf === 'exact') return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-900/60 text-emerald-300">{t('gedcom.exact')}</span>
-  if (conf === 'high')  return <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-900/60  text-amber-300" >{t('gedcom.likely')}</span>
-  return                       <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-800       text-zinc-400" >{t('gedcom.weak')}</span>
+  if (conf === 'exact') return <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-900/60 text-emerald-300">{t('gedcom.exact')}</span>
+  if (conf === 'high')  return <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-amber-900/60  text-amber-300" >{t('gedcom.likely')}</span>
+  return                       <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-zinc-800       text-zinc-400" >{t('gedcom.weak')}</span>
 }
 
 // ── RelativeChips: compact inline relatives for the GEDCOM person ─────────────
@@ -32,17 +32,17 @@ function RelativeChips({ relatives }: { relatives: GedcomImportPerson['relatives
   return (
     <div className="mt-1 space-y-0.5">
       {parents.length > 0 && (
-        <p className="text-[10px] text-zinc-500 leading-snug">
+        <p className="text-xs text-zinc-500 leading-snug">
           <span className="text-zinc-600">{t('gedcom.parents')} </span>{parents.map(r => r.name).join(', ')}
         </p>
       )}
       {spouses.length > 0 && (
-        <p className="text-[10px] text-zinc-500 leading-snug">
+        <p className="text-xs text-zinc-500 leading-snug">
           <span className="text-zinc-600">{t('gedcom.spouse')} </span>{spouses.map(r => r.name).join(', ')}
         </p>
       )}
       {children.length > 0 && (
-        <p className="text-[10px] text-zinc-500 leading-snug">
+        <p className="text-xs text-zinc-500 leading-snug">
           <span className="text-zinc-600">{t('gedcom.children')} </span>
           {children.length <= 3
             ? children.map(r => r.name).join(', ')
@@ -134,14 +134,14 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
         const spouses  = spousesOf.get(selectedPerson.id) ?? []
         return (
           <div className="mt-1 px-0.5 space-y-0.5">
-            {lifespan && <p className="text-[10px] text-zinc-500">{lifespan}</p>}
+            {lifespan && <p className="text-xs text-zinc-500">{lifespan}</p>}
             {parents.length > 0 && (
-              <p className="text-[10px] text-zinc-500 leading-snug">
+              <p className="text-xs text-zinc-500 leading-snug">
                 <span className="text-zinc-600">{t('gedcom.parents')} </span>{parents.join(', ')}
               </p>
             )}
             {spouses.length > 0 && (
-              <p className="text-[10px] text-zinc-500 leading-snug">
+              <p className="text-xs text-zinc-500 leading-snug">
                 <span className="text-zinc-600">{t('gedcom.spouse')} </span>{spouses.join(', ')}
               </p>
             )}
@@ -194,16 +194,16 @@ function PersonCombobox({ action, mergeWithId, existingPersons, parentsOf, spous
                     <span className={`text-xs font-medium ${isSelected ? 'text-emerald-300' : 'text-zinc-100'}`}>
                       {displayPersonName(ep, nameOrder)}
                     </span>
-                    {ep.sex && <span className="text-[10px] text-zinc-600">{ep.sex === 'M' ? '♂' : '♀'}</span>}
+                    {ep.sex && <span className="text-xs text-zinc-600">{ep.sex === 'M' ? '♂' : '♀'}</span>}
                   </div>
-                  {lifespan && <p className="text-[10px] text-zinc-500 mt-0.5">{lifespan}</p>}
+                  {lifespan && <p className="text-xs text-zinc-500 mt-0.5">{lifespan}</p>}
                   {parents.length > 0 && (
-                    <p className="text-[10px] text-zinc-600 mt-0.5">
+                    <p className="text-xs text-zinc-600 mt-0.5">
                       <span className="text-zinc-700">{t('gedcom.parents')} </span>{parents.join(', ')}
                     </p>
                   )}
                   {spouses.length > 0 && (
-                    <p className="text-[10px] text-zinc-600 mt-0.5">
+                    <p className="text-xs text-zinc-600 mt-0.5">
                       <span className="text-zinc-700">{t('gedcom.spouse')} </span>{spouses.join(', ')}
                     </p>
                   )}
@@ -247,7 +247,7 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
         {lifespan && <div className="text-xs text-zinc-500 mt-0.5">{lifespan}</div>}
         <RelativeChips relatives={person.relatives} />
         {(person.events_count > 0 || person.notes_count > 0 || person.docs_count > 0) && (
-          <div className="text-[10px] text-zinc-700 mt-1">
+          <div className="text-xs text-zinc-700 mt-1">
             {[
               person.events_count > 0 && `${person.events_count} event${person.events_count !== 1 ? 's' : ''}`,
               person.notes_count  > 0 && `${person.notes_count} note${person.notes_count !== 1 ? 's' : ''}`,
@@ -260,7 +260,7 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
       {/* Confidence badge */}
       <td className="py-3 px-2 text-center">
         {person.suggested_match ? <ConfBadge conf={person.suggested_match.confidence} /> : (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-brand-900/40 text-brand-300">New</span>
+          <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-brand-900/40 text-brand-300">New</span>
         )}
       </td>
 
@@ -275,7 +275,7 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
           onChange={onChange}
         />
         {action === 'merge' && mergeWithId != null && (
-          <div className="text-[10px] text-zinc-600 mt-1 px-0.5">{t('gedcom.fillMissing')}</div>
+          <div className="text-xs text-zinc-600 mt-1 px-0.5">{t('gedcom.fillMissing')}</div>
         )}
       </td>
     </tr>
@@ -569,14 +569,14 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
 
               {/* Info chips (persons + non-toggleable counts) */}
               <div className="flex flex-wrap gap-1.5 mt-2 mb-3">
-                <span className="text-[11px] px-2 py-0.5 bg-zinc-800 text-zinc-400 rounded-full">
+                <span className="text-xs px-2 py-0.5 bg-zinc-800 text-zinc-400 rounded-full">
                   {preview.persons.length} {t(preview.persons.length !== 1 ? 'gedcom.personPlural' : 'gedcom.personSingle')}
                 </span>
               </div>
 
               {/* Toggleable import options */}
               <div className="space-y-1.5">
-                <p className="text-[10px] font-medium uppercase tracking-widest text-zinc-600">{t('gedcom.whatToImport')}</p>
+                <p className="text-xs font-medium uppercase tracking-widest text-zinc-600">{t('gedcom.whatToImport')}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {([
                     { key: 'relations' as const, label: t('gedcom.relations'), count: preview.relations_count },
@@ -594,7 +594,7 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
                           type="button"
                           onClick={() => setOpts(prev => ({ ...prev, [key]: !prev[key] }))}
                           className={[
-                            'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-all border',
+                            'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all border',
                             on
                               ? 'bg-zinc-700/60 border-zinc-600 text-zinc-200 hover:bg-zinc-700'
                               : 'bg-transparent border-zinc-800 text-zinc-600 hover:border-zinc-700 hover:text-zinc-500',
@@ -623,13 +623,13 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
               <div className="flex gap-2 mt-3">
                 <button
                   onClick={() => applyAll('merge')}
-                  className="text-[11px] px-2.5 py-1 bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60 rounded-lg transition-colors"
+                  className="text-xs px-2.5 py-1 bg-emerald-900/40 text-emerald-300 hover:bg-emerald-900/60 rounded-lg transition-colors"
                 >
                   {t('gedcom.mergeAll')}
                 </button>
                 <button
                   onClick={() => applyAll('create')}
-                  className="text-[11px] px-2.5 py-1 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 rounded-lg transition-colors"
+                  className="text-xs px-2.5 py-1 bg-zinc-800 text-zinc-400 hover:bg-zinc-700 rounded-lg transition-colors"
                 >
                   {t('gedcom.createAll')}
                 </button>
@@ -641,9 +641,9 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
               <table className="w-full text-left">
                 <thead className="sticky top-0 bg-zinc-900 border-b border-zinc-800 z-10">
                   <tr>
-                    <th className="py-2 px-3 text-[11px] font-medium text-zinc-500 uppercase tracking-wide">{t('gedcom.colIncoming')}</th>
-                    <th className="py-2 px-2 text-[11px] font-medium text-zinc-500 uppercase tracking-wide text-center w-20">{t('gedcom.colMatch')}</th>
-                    <th className="py-2 px-3 text-[11px] font-medium text-zinc-500 uppercase tracking-wide">{t('gedcom.colAction')}</th>
+                    <th className="py-2 px-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">{t('gedcom.colIncoming')}</th>
+                    <th className="py-2 px-2 text-xs font-medium text-zinc-500 uppercase tracking-wide text-center w-20">{t('gedcom.colMatch')}</th>
+                    <th className="py-2 px-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">{t('gedcom.colAction')}</th>
                   </tr>
                 </thead>
                 <tbody>

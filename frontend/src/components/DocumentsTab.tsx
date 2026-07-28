@@ -127,7 +127,7 @@ function PersonCombobox({ persons, value, onChange }: {
                   className={`w-full px-3 py-1.5 text-xs text-left flex flex-col hover:bg-zinc-800 transition-colors ${value === p.id ? 'text-brand-300' : 'text-zinc-100'}`}
                 >
                   <span>{p.name ?? '(unnamed)'}</span>
-                  {sum && <span className="text-[10px] text-zinc-500 leading-tight">{sum}</span>}
+                  {sum && <span className="text-xs text-zinc-500 leading-tight">{sum}</span>}
                 </button>
               )
             })}
@@ -147,7 +147,7 @@ function PersonChip({ person, onClick }: { person: { id: number; name: string | 
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-zinc-700/60 hover:bg-zinc-700 text-zinc-300 hover:text-zinc-100 text-[10px] transition-colors"
+      className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-zinc-700/60 hover:bg-zinc-700 text-zinc-300 hover:text-zinc-100 text-xs transition-colors"
     >
       {person.name ?? '(unnamed)'}
     </button>
@@ -189,7 +189,7 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">{t('docs.heading')}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">{t('docs.heading')}</p>
             <h2 className="text-sm font-semibold text-zinc-100">{t('docs.manageTypesTitle')}</h2>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
@@ -202,7 +202,7 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
           <ul className="divide-y divide-zinc-800">
             {types.map(dt => (
               <li key={dt.id} className="flex items-center gap-3 px-5 py-2.5 group">
-                <code className="text-[10px] text-zinc-600 font-mono min-w-[100px] shrink-0">{dt.key}</code>
+                <code className="text-xs text-zinc-600 font-mono min-w-[100px] shrink-0">{dt.key}</code>
                 {editingId === dt.id ? (
                   <input
                     autoFocus
@@ -221,9 +221,9 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
                   {editingId === dt.id ? (
                     <>
                       <button onClick={() => updateMut.mutate({ id: dt.id, label: editLabel })}
-                        className="text-[10px] px-2 py-0.5 bg-brand-600 hover:bg-brand-500 text-white rounded transition-colors">{t('docs.save')}</button>
+                        className="text-xs px-2 py-0.5 bg-brand-600 hover:bg-brand-500 text-white rounded transition-colors">{t('docs.save')}</button>
                       <button onClick={() => setEditingId(null)}
-                        className="text-[10px] px-2 py-0.5 bg-zinc-700 text-zinc-400 hover:text-zinc-200 rounded transition-colors">{t('docs.cancel')}</button>
+                        className="text-xs px-2 py-0.5 bg-zinc-700 text-zinc-400 hover:text-zinc-200 rounded transition-colors">{t('docs.cancel')}</button>
                     </>
                   ) : (
                     <>
@@ -244,7 +244,7 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
 
           {/* Add new type */}
           <div className="px-5 py-4 border-t border-zinc-800">
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">{t('docs.addNewType')}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">{t('docs.addNewType')}</p>
             <div className="flex gap-2">
               <input
                 value={newKey}
@@ -266,7 +266,7 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
               >{t('docs.addTypeBtn')}</button>
             </div>
             {createMut.isError && (
-              <p className="text-[10px] text-red-400 mt-1.5">{String(createMut.error)}</p>
+              <p className="text-xs text-red-400 mt-1.5">{String(createMut.error)}</p>
             )}
           </div>
         </div>
@@ -333,7 +333,7 @@ function UploadModal({ persons, types, onClose, onDone }: {
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">{t('docs.heading')}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">{t('docs.heading')}</p>
             <h2 className="text-sm font-semibold text-zinc-100">{t('docs.uploadTitle')}</h2>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
@@ -381,13 +381,13 @@ function UploadModal({ persons, types, onClose, onDone }: {
 
           {/* Person selection */}
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.linkedPersons')}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.linkedPersons')}</p>
             {selectedPersonIds.length > 0 && (
               <div className="flex flex-wrap gap-1 mb-2">
                 {selectedPersonIds.map(pid => {
                   const p = persons.find(x => x.id === pid)
                   return (
-                    <span key={pid} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-800/60 border border-brand-600/50 text-brand-300 text-[10px]">
+                    <span key={pid} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-800/60 border border-brand-600/50 text-brand-300 text-xs">
                       {p?.name ?? '(unnamed)'}
                       <button onClick={() => togglePerson(pid)} className="hover:text-white">×</button>
                     </span>
@@ -409,7 +409,7 @@ function UploadModal({ persons, types, onClose, onDone }: {
                     </span>
                     <span className="flex flex-col min-w-0">
                       <span className="truncate">{p.name ?? '(unnamed)'}</span>
-                      {bio && <span className={`text-[10px] truncate ${selected ? 'text-brand-400/70' : 'text-zinc-500'}`}>{bio}</span>}
+                      {bio && <span className={`text-xs truncate ${selected ? 'text-brand-400/70' : 'text-zinc-500'}`}>{bio}</span>}
                     </span>
                   </button>
                 )
@@ -417,7 +417,7 @@ function UploadModal({ persons, types, onClose, onDone }: {
               {filteredPersons.length === 0 && <p className="px-3 py-2 text-xs text-zinc-600">{t('docs.noPersonsFound')}</p>}
             </div>
             {selectedPersonIds.length === 0 && (
-              <p className="text-[10px] text-zinc-600 mt-1">{t('docs.selectPerson')}</p>
+              <p className="text-xs text-zinc-600 mt-1">{t('docs.selectPerson')}</p>
             )}
           </div>
 
@@ -531,13 +531,13 @@ function EditDocModal({ doc, types, persons, onClose }: {
       <div style={{ position: 'fixed', top, left, zIndex: 800, width: tooltipW }}
         className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-3 pointer-events-none">
         {fam.spouses.length > 0 && (
-          <p className="text-[10px] text-brand-400 truncate mb-0.5">♥ {fam.spouses.join(', ')}</p>
+          <p className="text-xs text-brand-400 truncate mb-0.5">♥ {fam.spouses.join(', ')}</p>
         )}
         {fam.parents.length > 0 && (
-          <p className="text-[10px] text-zinc-500 truncate mb-0.5">↑ {fam.parents.join(', ')}</p>
+          <p className="text-xs text-zinc-500 truncate mb-0.5">↑ {fam.parents.join(', ')}</p>
         )}
         {fam.children.length > 0 && (
-          <p className="text-[10px] text-zinc-500 truncate">
+          <p className="text-xs text-zinc-500 truncate">
             ↓ {fam.children.length <= 3 ? fam.children.join(', ') : `${fam.children[0]}, ${fam.children[1]} +${fam.children.length - 2}`}
           </p>
         )}
@@ -554,7 +554,7 @@ function EditDocModal({ doc, types, persons, onClose }: {
         <div className="flex items-start justify-between px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
           <div className="min-w-0 flex-1 pr-3">
             <h2 className="text-sm font-semibold text-zinc-100">{t('docs.editDocTitle')}</h2>
-            <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{doc.title || doc.filename}</p>
+            <p className="text-xs text-zinc-500 mt-0.5 truncate">{doc.title || doc.filename}</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors shrink-0">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
@@ -579,7 +579,7 @@ function EditDocModal({ doc, types, persons, onClose }: {
             className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 resize-none" />
 
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.linkedPersons')}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.linkedPersons')}</p>
             <input value={personSearch} onChange={e => setPersonSearch(e.target.value)} placeholder={t('docs.searchPersons')}
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 mb-1" />
             <div className="max-h-44 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-800/40">
@@ -596,7 +596,7 @@ function EditDocModal({ doc, types, persons, onClose }: {
                     </span>
                     <span className="flex flex-col min-w-0">
                       <span className="truncate">{p.name ?? '(unnamed)'}</span>
-                      {bio && <span className={`text-[10px] truncate ${linked ? 'text-brand-400/70' : 'text-zinc-500'}`}>{bio}</span>}
+                      {bio && <span className={`text-xs truncate ${linked ? 'text-brand-400/70' : 'text-zinc-500'}`}>{bio}</span>}
                     </span>
                   </button>
                 )
@@ -661,11 +661,14 @@ const DocRow = forwardRef<HTMLTableRowElement, {
       )}
       <tr
         ref={ref}
-        className={`group border-b border-zinc-800/60 hover:bg-zinc-800/30 transition-colors cursor-pointer ${highlighted ? 'ring-2 ring-inset ring-brand-400/50' : ''} ${selected ? 'bg-brand-900/20' : ''}`}
+        className={`group transition-colors cursor-pointer ${highlighted ? 'ring-2 ring-inset ring-brand-400/50' : ''} ${selected ? 'bg-brand-900/20' : ''}`}
+        style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+        onMouseEnter={e => { if (!selected) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)' }}
+        onMouseLeave={e => { if (!selected) (e.currentTarget as HTMLElement).style.background = '' }}
         onClick={() => canPreview ? setPreviewing(true) : undefined}
       >
         {/* Checkbox */}
-        <td className="pl-3 pr-1 py-2.5 w-8 shrink-0" onClick={e => { e.stopPropagation(); onToggleSelect?.() }}>
+        <td className="pl-4 pr-1 py-2.5 w-10 shrink-0" onClick={e => { e.stopPropagation(); onToggleSelect?.() }}>
           <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors cursor-pointer
             ${selected
               ? 'bg-brand-500 border-brand-400'
@@ -689,12 +692,12 @@ const DocRow = forwardRef<HTMLTableRowElement, {
         <td className="py-2.5 pr-4">
           <p className="text-xs font-medium text-zinc-100 truncate max-w-[260px]">{displayName}</p>
           {doc.description && (
-            <p className="text-[10px] text-zinc-600 truncate max-w-[260px]">{doc.description}</p>
+            <p className="text-xs text-zinc-600 truncate max-w-[260px]">{doc.description}</p>
           )}
         </td>
         {/* Type */}
         <td className="py-2.5 pr-4 whitespace-nowrap">
-          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-zinc-800 text-zinc-400 font-medium">{typeLabel}</span>
+          <span className="text-xs px-1.5 py-0.5 rounded-md bg-zinc-800 text-zinc-400 font-medium">{typeLabel}</span>
         </td>
         {/* Year */}
         <td className="py-2.5 pr-4 text-xs text-zinc-500 tabular-nums whitespace-nowrap w-14">
@@ -707,7 +710,7 @@ const DocRow = forwardRef<HTMLTableRowElement, {
               <PersonChip key={p.id} person={p} onClick={() => onNavToGenealogy(p.id)} />
             ))}
             {doc.persons.length > 3 && (
-              <span className="text-[10px] text-zinc-500 self-center">+{doc.persons.length - 3}</span>
+              <span className="text-xs text-zinc-500 self-center">+{doc.persons.length - 3}</span>
             )}
           </div>
         </td>
@@ -844,116 +847,124 @@ export default function DocumentsTab({
       )}
 
       {/* Header */}
-      <div className="shrink-0 bg-zinc-900 border-b border-zinc-800 px-6 py-3 flex items-center gap-3">
-        <h1 className="text-sm font-semibold text-zinc-100">{t('docs.heading')}</h1>
-        <span className="text-xs text-zinc-600 tabular-nums">{docs.length} total</span>
-        <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => setShowTypeManager(true)}
-            className="h-7 px-2.5 rounded-lg border border-zinc-700 bg-zinc-800/60 hover:bg-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5">
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-            {t('docs.manageTypes')}
-          </button>
-          <button onClick={() => setShowUpload(true)}
-            className="h-7 px-3 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs font-medium text-white transition-colors flex items-center gap-1.5">
-            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
-            {t('docs.newDoc')}
-          </button>
+      <div className="shrink-0 border-b" style={{ background: '#111117', borderColor: 'rgba(255,255,255,0.06)' }}>
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-3">
+          <h1 className="text-sm font-semibold text-zinc-100">{t('docs.heading')}</h1>
+          <span className="text-xs text-zinc-600 tabular-nums">{docs.length} total</span>
+          <div className="ml-auto flex items-center gap-2">
+            <button onClick={() => setShowTypeManager(true)}
+              className="h-7 px-2.5 rounded-lg border border-zinc-700 bg-zinc-800/60 hover:bg-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+              {t('docs.manageTypes')}
+            </button>
+            <button onClick={() => setShowUpload(true)}
+              className="h-7 px-3 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs font-medium text-white transition-colors flex items-center gap-1.5">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+              {t('docs.newDoc')}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Filter bar */}
-      <div className="shrink-0 bg-zinc-900/60 border-b border-zinc-800 px-6 py-2.5 flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <svg className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <circle cx="11" cy="11" r="7"/><path strokeLinecap="round" d="M20 20l-3.5-3.5"/>
-          </svg>
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder={t('docs.search')}
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
+      <div className="shrink-0 border-b" style={{ background: 'rgba(17,17,23,0.7)', backdropFilter: 'blur(8px)', borderColor: 'rgba(255,255,255,0.04)' }}>
+        <div className="max-w-6xl mx-auto px-6 py-2.5 flex items-center gap-3">
+          <div className="relative flex-1 max-w-sm">
+            <svg className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <circle cx="11" cy="11" r="7"/><path strokeLinecap="round" d="M20 20l-3.5-3.5"/>
+            </svg>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={t('docs.search')}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
+            />
+          </div>
+
+          <select value={filterType} onChange={e => setFilterType(e.target.value)}
+            className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-300 outline-none focus:border-brand-400 max-w-[160px]">
+            <option value="__all__">{t('docs.allTypes')}</option>
+            {types.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+          </select>
+
+          <PersonCombobox
+            persons={personOptions}
+            value={filterPerson}
+            onChange={setFilterPerson}
           />
+
+          {(search || filterType !== '__all__' || filterPerson != null) && (
+            <button onClick={() => { setSearch(''); setFilterType('__all__'); setFilterPerson(null) }}
+              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors shrink-0">
+              {t('docs.clear')}
+            </button>
+          )}
+
+          <span className="ml-auto text-xs text-zinc-600 tabular-nums shrink-0">{filtered.length} result{filtered.length !== 1 ? 's' : ''}</span>
         </div>
-
-        <select value={filterType} onChange={e => setFilterType(e.target.value)}
-          className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-300 outline-none focus:border-brand-400 max-w-[160px]">
-          <option value="__all__">{t('docs.allTypes')}</option>
-          {types.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-        </select>
-
-        <PersonCombobox
-          persons={personOptions}
-          value={filterPerson}
-          onChange={setFilterPerson}
-        />
-
-        {(search || filterType !== '__all__' || filterPerson != null) && (
-          <button onClick={() => { setSearch(''); setFilterType('__all__'); setFilterPerson(null) }}
-            className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors shrink-0">
-            {t('docs.clear')}
-          </button>
-        )}
-
-        <span className="ml-auto text-[10px] text-zinc-600 tabular-nums shrink-0">{filtered.length} result{filtered.length !== 1 ? 's' : ''}</span>
       </div>
 
       {/* Table */}
       <div className="flex-1 overflow-y-auto">
-        {filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-48 gap-2 text-zinc-600">
-            <svg className="w-10 h-10 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
-            <p className="text-sm">{docs.length === 0 ? t('docs.noDocuments') : t('docs.noResults')}</p>
-          </div>
-        ) : (
-          <table className="w-full border-collapse">
-            <thead className="sticky top-0 bg-zinc-900/95 backdrop-blur-sm z-10">
-              <tr className="border-b border-zinc-800 text-left">
-                {/* Select-all checkbox */}
-                <th className="pl-3 pr-1 py-2.5 w-8" onClick={toggleSelectAll}>
-                  <div className={`w-4 h-4 rounded border flex items-center justify-center cursor-pointer transition-colors
-                    ${allFilteredSelected
-                      ? 'bg-brand-500 border-brand-400'
-                      : someSelected
-                        ? 'bg-brand-500/40 border-brand-400/60'
-                        : 'border-zinc-600 hover:border-zinc-400'}`}>
-                    {allFilteredSelected
-                      ? <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 10" stroke="currentColor" strokeWidth={2}><path d="M1 5l3 3 7-7"/></svg>
-                      : someSelected
-                        ? <span className="w-1.5 h-0.5 bg-brand-300 rounded-full block" />
-                        : null}
-                  </div>
-                </th>
-                <th className="pl-1 pr-2 py-2.5 w-11"></th>
-                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">{t('docs.colTitle')}</th>
-                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider whitespace-nowrap">{t('docs.colType')}</th>
-                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider w-14">{t('docs.colYear')}</th>
-                <th className="py-2.5 pr-4 text-[10px] text-zinc-500 font-semibold uppercase tracking-wider">{t('docs.colPersons')}</th>
-                <th className="py-2.5 pr-4 w-24"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(d => (
-                <DocRow
-                  key={d.id}
-                  ref={el => { if (el) rowRefs.current.set(d.id, el); else rowRefs.current.delete(d.id) }}
-                  doc={d}
-                  typeMap={typeMap}
-                  persons={persons}
-                  onNavToGenealogy={id => onNavToGenealogy(id)}
-                  onEdit={() => setEditingDocId(d.id)}
-                  highlighted={highlightedId === d.id}
-                  selected={selectedIds.has(d.id)}
-                  onToggleSelect={() => toggleSelect(d.id)}
-                />
-              ))}
-            </tbody>
-          </table>
-        )}
+        <div className="max-w-6xl mx-auto px-6 py-5">
+          {filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-48 gap-2 text-zinc-600">
+              <svg className="w-10 h-10 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
+              <p className="text-sm">{docs.length === 0 ? t('docs.noDocuments') : t('docs.noResults')}</p>
+            </div>
+          ) : (
+            <div className="rounded-xl overflow-hidden" style={{ background: '#111117', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="border-b text-left" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                    {/* Select-all checkbox */}
+                    <th className="pl-4 pr-1 py-2.5 w-10" onClick={toggleSelectAll}>
+                      <div className={`w-4 h-4 rounded border flex items-center justify-center cursor-pointer transition-colors
+                        ${allFilteredSelected
+                          ? 'bg-brand-500 border-brand-400'
+                          : someSelected
+                            ? 'bg-brand-500/40 border-brand-400/60'
+                            : 'border-zinc-600 hover:border-zinc-400'}`}>
+                        {allFilteredSelected
+                          ? <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 10" stroke="currentColor" strokeWidth={2}><path d="M1 5l3 3 7-7"/></svg>
+                          : someSelected
+                            ? <span className="w-1.5 h-0.5 bg-brand-300 rounded-full block" />
+                            : null}
+                      </div>
+                    </th>
+                    <th className="pl-1 pr-2 py-2.5 w-11"></th>
+                    <th className="py-2.5 pr-4 text-xs text-zinc-500 font-semibold uppercase tracking-wider">{t('docs.colTitle')}</th>
+                    <th className="py-2.5 pr-4 text-xs text-zinc-500 font-semibold uppercase tracking-wider whitespace-nowrap">{t('docs.colType')}</th>
+                    <th className="py-2.5 pr-4 text-xs text-zinc-500 font-semibold uppercase tracking-wider w-14">{t('docs.colYear')}</th>
+                    <th className="py-2.5 pr-4 text-xs text-zinc-500 font-semibold uppercase tracking-wider">{t('docs.colPersons')}</th>
+                    <th className="py-2.5 pr-4 w-24"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(d => (
+                    <DocRow
+                      key={d.id}
+                      ref={el => { if (el) rowRefs.current.set(d.id, el); else rowRefs.current.delete(d.id) }}
+                      doc={d}
+                      typeMap={typeMap}
+                      persons={persons}
+                      onNavToGenealogy={id => onNavToGenealogy(id)}
+                      onEdit={() => setEditingDocId(d.id)}
+                      highlighted={highlightedId === d.id}
+                      selected={selectedIds.has(d.id)}
+                      onToggleSelect={() => toggleSelect(d.id)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Floating action bar — appears when documents are selected */}
       {someSelected && (
-        <div className="shrink-0 bg-zinc-900 border-t border-zinc-800 px-6 py-3 flex items-center gap-4">
+        <div className="shrink-0 border-t px-6 py-3 flex items-center gap-4" style={{ background: '#111117', borderColor: 'rgba(255,255,255,0.06)' }}>
           <span className="text-xs font-medium text-zinc-300">
             {selectedIds.size} selected
           </span>

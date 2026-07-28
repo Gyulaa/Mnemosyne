@@ -35,6 +35,7 @@ from .schemas import (
     NoteCreate, NoteUpdate, NoteCitationCreate,
     EventCreate, EventUpdate, EventImageAdd, EventPersonAdd,
     BulkDownloadRequest,
+    DuplicateGroup, DuplicateImageInfo,
 )
 from .image_utils import load_image_bgr, crop_thumbnail, IMAGE_EXTENSIONS
 
@@ -485,10 +486,91 @@ def merge_confirm(body: dict):
 def start_scan(req: ScanStartRequest):
     if not Path(req.path).is_dir():
         raise HTTPException(400, f"Directory not found: {req.path}")
-    ok, msg = scanner_mod.start_scan(req.path, project_manager.session_factory)
+    ok, msg = scanner_mod.start_scan(
+        req.path, project_manager.session_factory,
+        skip_duplicates=req.skip_duplicates,
+    )
     if not ok:
         raise HTTPException(409, msg)
     return {"status": "started", "path": req.path}
+
+
+@app.get("/api/images/duplicate-groups", response_model=list[DuplicateGroup])
+def get_duplicate_groups(db: Session = Depends(get_db)):
+    """Return all near/exact duplicate groups for user review."""
+    from . import scanner as _sc
+    dupes = db.query(DBImage).filter(
+        DBImage.scan_status.in_(["exact_duplicate", "near_duplicate"]),
+        DBImage.duplicate_of.isnot(None),
+    ).all()
+
+    groups: dict[int, list[DBImage]] = {}
+    for d in dupes:
+        groups.setdefault(d.duplicate_of, []).append(d)
+
+    result: list[DuplicateGroup] = []
+    for orig_id, dup_list in groups.items():
+        orig = db.get(DBImage, orig_id)
+        if orig is None:
+            continue
+
+        def _info(img: DBImage, similarity: str, hamming: int | None = None) -> DuplicateImageInfo:
+            meta = {}
+            if img.meta_json:
+                try:
+                    import json as _json
+                    meta = _json.loads(img.meta_json)
+                except Exception:
+                    pass
+            return DuplicateImageInfo(
+                id=img.id,
+                path=img.path,
+                scan_status=img.scan_status,
+                similarity=similarity,
+                hamming_distance=hamming,
+                width=meta.get("width"),
+                height=meta.get("height"),
+                exif_date=img.exif_date.isoformat() if img.exif_date else None,
+            )
+
+        orig_info = _info(orig, "original")
+        dup_infos = []
+        for d in dup_list:
+            sim = "exact" if d.scan_status == "exact_duplicate" else "near"
+            h_dist = None
+            if sim == "near" and d.phash is not None and orig.phash is not None:
+                h_dist = bin(d.phash ^ orig.phash).count('1')
+            dup_infos.append(_info(d, sim, h_dist))
+
+        result.append(DuplicateGroup(original=orig_info, duplicates=dup_infos))
+
+    return result
+
+
+@app.post("/api/images/{image_id}/resolve-duplicate")
+def resolve_duplicate(image_id: int, action: str = "dismiss", db: Session = Depends(get_db)):
+    """
+    action='dismiss': keep as duplicate (no change, just acknowledges)
+    action='keep': treat as independent — reset to pending for re-scan
+    action='delete': remove from DB entirely
+    """
+    img = db.get(DBImage, image_id)
+    if img is None:
+        raise HTTPException(404, "Image not found")
+    if img.scan_status not in ("exact_duplicate", "near_duplicate"):
+        raise HTTPException(400, "Image is not marked as a duplicate")
+
+    if action == "keep":
+        img.scan_status = "pending"
+        img.duplicate_of = None
+        db.commit()
+        return {"ok": True, "action": "keep", "message": "Image will be re-scanned independently"}
+    elif action == "delete":
+        db.delete(img)
+        db.commit()
+        return {"ok": True, "action": "delete"}
+    else:  # dismiss — no change needed, just acknowledge
+        return {"ok": True, "action": "dismiss"}
 
 
 @app.post("/api/scan/stop")
@@ -562,6 +644,9 @@ def stats(db: Session = Depends(get_db)):
         "no_face": db.query(DBImage).filter(DBImage.scan_status == "no_face").count(),
         "errors": db.query(DBImage).filter(DBImage.scan_status == "error").count(),
         "pending": db.query(DBImage).filter(DBImage.scan_status == "pending").count(),
+        "duplicates": db.query(DBImage).filter(
+            DBImage.scan_status.in_(["exact_duplicate", "near_duplicate"])
+        ).count(),
         "total_faces": db.query(DBFace).count(),
         "total_clusters": db.query(DBCluster).filter(DBCluster.label != -1).count(),
         "noise_faces": (

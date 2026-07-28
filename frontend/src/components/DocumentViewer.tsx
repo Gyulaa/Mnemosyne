@@ -91,7 +91,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
         {/* Header */}
         <div className="flex items-start justify-between px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
           <div className="min-w-0 flex-1 pr-3">
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">{typeLabel}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-1">{typeLabel}</p>
             <h2 className="text-sm font-semibold text-zinc-100 leading-snug">{displayName}</h2>
             {doc.year && <p className="text-xs text-zinc-500 mt-0.5">{doc.year}</p>}
           </div>
@@ -141,14 +141,14 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
             {/* Description */}
             {doc.description && (
               <div>
-                <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-1">Description</p>
+                <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-1">Description</p>
                 <p className="text-xs text-zinc-300 leading-relaxed">{doc.description}</p>
               </div>
             )}
 
             {/* Linked persons */}
             <div>
-              <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2">
+              <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">
                 Linked persons {linkedPersons.length > 1 ? `(${linkedPersons.length})` : ''}
               </p>
               {linkedPersons.length > 0 ? (
@@ -185,7 +185,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
             {/* Notes */}
             <div>
               <div className="flex items-center justify-between mb-3">
-                <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">
+                <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">
                   Notes {docNotes.length > 0 ? `(${docNotes.length})` : ''}
                 </p>
                 <button onClick={startNewNote} className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
@@ -266,7 +266,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
               Open
             </a>
           )}
-          <span className="ml-auto text-[10px] text-zinc-600 truncate">{doc.filename}</span>
+          <span className="ml-auto text-xs text-zinc-600 truncate">{doc.filename}</span>
         </div>
       </div>
     </div>

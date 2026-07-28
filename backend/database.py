@@ -23,6 +23,8 @@ class Image(Base):
     content_hash = Column(String, nullable=True, index=True)   # SHA-256 hex of file content
     source_path  = Column(String, nullable=True)               # original abs path when first added
     is_private   = Column(Boolean, nullable=False, default=False, server_default="0")
+    phash        = Column(Integer, nullable=True)   # 64-bit dHash for near-duplicate detection
+    duplicate_of = Column(Integer, ForeignKey("images.id"), nullable=True)  # FK to original image
     faces = relationship("Face", back_populates="image", cascade="all, delete-orphan")
 
 
@@ -331,6 +333,9 @@ def init_db_schema(engine):
             "ALTER TABLE relations ADD COLUMN marriage_place TEXT",
             "ALTER TABLE relations ADD COLUMN divorce_year INTEGER",
             "ALTER TABLE relations ADD COLUMN divorce_place TEXT",
+            # Duplicate detection
+            "ALTER TABLE images ADD COLUMN phash INTEGER",
+            "ALTER TABLE images ADD COLUMN duplicate_of INTEGER REFERENCES images(id)",
         ]:
             try:
                 conn.execute(text(stmt))

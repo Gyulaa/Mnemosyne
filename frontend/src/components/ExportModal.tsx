@@ -76,7 +76,7 @@ function Row({
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500 mb-1 mt-4 first:mt-0">
+    <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-1 mt-4 first:mt-0">
       {children}
     </p>
   )

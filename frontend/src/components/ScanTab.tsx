@@ -2,15 +2,18 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import FolderPicker from './FolderPicker'
+import DuplicateReviewModal from './DuplicateReviewModal'
 import { useT } from '../SettingsContext'
 
 const LAST_PATH_KEY = 'organizer_scan_path'
+const SKIP_DUPES_KEY = 'organizer_skip_duplicates'
 
 export default function ScanTab() {
   const t = useT()
   const [path, setPath] = useState(() => localStorage.getItem(LAST_PATH_KEY) ?? '')
+  const [skipDuplicates, setSkipDuplicates] = useState(() => localStorage.getItem(SKIP_DUPES_KEY) === 'true')
   const [eps, setEps] = useState(0.5)
-  const [minSamples, setMinSamples] = useState(2)
+  const [minSamples, setMinSamples] = useState(3)
   const [minDetScore, setMinDetScore] = useState(0.65)
   const [clusterResult, setClusterResult] = useState<{
     clusters: number; noise: number
@@ -19,6 +22,7 @@ export default function ScanTab() {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState<{ count: number; message: string } | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
+  const [showDupeReview, setShowDupeReview] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const qc = useQueryClient()
@@ -38,10 +42,15 @@ export default function ScanTab() {
   const startMut = useMutation({
     mutationFn: () => {
       localStorage.setItem(LAST_PATH_KEY, path)
-      return api.scan.start(path)
+      return api.scan.start(path, skipDuplicates)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scan-status'] }),
   })
+
+  function toggleSkipDuplicates(val: boolean) {
+    setSkipDuplicates(val)
+    localStorage.setItem(SKIP_DUPES_KEY, String(val))
+  }
 
   const stopMut = useMutation({
     mutationFn: api.scan.stop,
@@ -123,6 +132,26 @@ export default function ScanTab() {
             </span>
           )}
         </div>
+
+        {/* Duplicate skip option */}
+        <label className="flex items-center gap-2.5 cursor-pointer select-none w-fit">
+          <button
+            role="switch"
+            aria-checked={skipDuplicates}
+            onClick={() => toggleSkipDuplicates(!skipDuplicates)}
+            disabled={isRunning}
+            className={`inline-flex items-center rounded-full transition-colors shrink-0 disabled:opacity-40 ${skipDuplicates ? 'bg-brand-500' : 'bg-zinc-700'}`}
+            style={{ width: '30px', height: '17px' }}
+          >
+            <span
+              className="inline-block w-3 h-3 rounded-full bg-white shadow transition-transform"
+              style={{ transform: skipDuplicates ? 'translateX(15px)' : 'translateX(2px)' }}
+            />
+          </button>
+          <span className="text-xs text-zinc-400">
+            {skipDuplicates ? t('scan.skipDupes.on') : t('scan.skipDupes.off')}
+          </span>
+        </label>
       </section>
 
       {/* Individual file import */}
@@ -181,7 +210,12 @@ export default function ScanTab() {
             <span className={isRunning ? 'text-brand-400' : 'text-zinc-400'}>
               {isRunning ? t('scan.scanning') : t('scan.complete')}
             </span>
-            <span className="text-zinc-400 tabular-nums">
+            <span className="text-zinc-400 tabular-nums flex items-center gap-3">
+              {status.dupes_skipped > 0 && (
+                <span className="text-amber-400/80 text-xs">
+                  {t('scan.dupesSkipped', { n: status.dupes_skipped })}
+                </span>
+              )}
               {status.processed.toLocaleString()} / {status.total.toLocaleString()}
               {status.errors > 0 && (
                 <span className="text-red-400 ml-2">{t('scan.errors', { n: status.errors })}</span>
@@ -190,8 +224,8 @@ export default function ScanTab() {
           </div>
           <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
             <div
-              className="h-full bg-brand-400 rounded-full transition-all duration-500"
-              style={{ width: `${progress}%` }}
+              className="h-full rounded-full transition-all duration-500"
+              style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #7e22ce, #c084fc)' }}
             />
           </div>
         </section>
@@ -199,21 +233,51 @@ export default function ScanTab() {
 
       {/* Stats */}
       {stats && (
-        <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatCard label={t('scan.totalImages')} value={stats.total_images} />
-          <StatCard
-            label={t('scan.scanned')}
-            value={stats.scanned}
-            sub={stats.no_face > 0 ? t('scan.noFace', { n: stats.no_face }) : undefined}
-          />
-          <StatCard label={t('scan.facesFound')} value={stats.total_faces} accent />
-          <StatCard label={t('scan.pending')} value={stats.pending} />
+        <section className="space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <StatCard label={t('scan.totalImages')} value={stats.total_images} />
+            <StatCard
+              label={t('scan.scanned')}
+              value={stats.scanned}
+              sub={stats.no_face > 0 ? t('scan.noFace', { n: stats.no_face }) : undefined}
+            />
+            <StatCard label={t('scan.facesFound')} value={stats.total_faces} />
+            <StatCard label={t('scan.pending')} value={stats.pending} />
+          </div>
+          {(stats.duplicates ?? 0) > 0 && (
+            <div
+              className="flex items-center gap-4 px-4 py-3 rounded-xl"
+              style={{ background: 'rgba(251,191,36,0.07)', border: '1px solid rgba(251,191,36,0.18)' }}
+            >
+              <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+              </svg>
+              <span className="text-xs text-amber-300 flex-1">
+                <span className="font-semibold">{stats.duplicates}</span>{' '}
+                {t('scan.dupeBanner', { n: stats.duplicates })}
+                {!skipDuplicates && t('scan.dupeBannerStored')}
+              </span>
+              {!skipDuplicates && (
+                <button
+                  onClick={() => setShowDupeReview(true)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-amber-300 transition-colors shrink-0"
+                  style={{ background: 'rgba(251,191,36,0.12)' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(251,191,36,0.22)' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(251,191,36,0.12)' }}
+                >
+                  {t('scan.dupeReview')}
+                </button>
+              )}
+            </div>
+          )}
         </section>
       )}
 
+      {showDupeReview && <DuplicateReviewModal onClose={() => setShowDupeReview(false)} />}
+
       {/* Clustering */}
       {hasFaces && (
-        <section className="space-y-3 pt-2 border-t border-zinc-800">
+        <section className="space-y-3 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
           <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest">
             {t('scan.clustering')}
           </label>
@@ -272,8 +336,15 @@ function StatCard({
   label: string; value: number; sub?: string; accent?: boolean
 }) {
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-      <div className={`text-2xl font-bold tabular-nums ${accent ? 'text-brand-400' : 'text-zinc-100'}`}>
+    <div
+      className={`relative border rounded-xl p-4 overflow-hidden ${accent ? 'ring-1 ring-brand-500/25' : ''}`}
+      style={{
+        borderColor: accent ? 'rgba(147,51,234,0.3)' : 'rgba(255,255,255,0.07)',
+        background: accent ? 'linear-gradient(160deg, #1e1628 0%, #18151e 100%)' : 'linear-gradient(160deg, #171620 0%, #131219 100%)',
+      }}
+    >
+      {accent && <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-brand-600 via-brand-400 to-brand-600" />}
+      <div className={`text-3xl font-bold tabular-nums ${accent ? 'text-brand-400' : 'text-zinc-100'}`}>
         {value.toLocaleString()}
       </div>
       <div className="text-xs text-zinc-500 mt-1">{label}</div>
