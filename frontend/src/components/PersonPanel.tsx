@@ -300,7 +300,7 @@ function PhotoGallery({ images, onOpen }: { images: ImageItem[]; onOpen: (i: num
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
           {img.exif_date && (
             <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-              <p className="text-[9px] text-zinc-300 text-center leading-tight">{fmtDate(img.exif_date)}</p>
+              <p className="text-xs text-zinc-300 text-center leading-tight">{fmtDate(img.exif_date)}</p>
             </div>
           )}
         </button>
@@ -413,7 +413,7 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
   if (mode === 'create') {
     const displayName = deriveDisplayName(newParts)
     const INPUT = 'w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400'
-    const LABEL = 'block text-[10px] text-zinc-500 mb-0.5'
+    const LABEL = 'block text-xs text-zinc-500 mb-0.5'
     return (
       <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
         <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-96 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
@@ -440,7 +440,7 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
                 placeholder="1945" className={INPUT} />
             </div>
             {displayName && (
-              <p className="text-[10px] text-zinc-500">
+              <p className="text-xs text-zinc-500">
                 {t('person.displayedAs')} <span className="text-zinc-300 font-medium">{displayName}</span>
               </p>
             )}
@@ -477,16 +477,16 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm text-zinc-200 truncate">{displayPersonName(p, nameOrder)}</span>
-                    {p.sex && <span className="text-[10px] text-zinc-600 shrink-0">{p.sex === 'M' ? '♂' : '♀'}</span>}
+                    {p.sex && <span className="text-xs text-zinc-600 shrink-0">{p.sex === 'M' ? '♂' : '♀'}</span>}
                   </div>
-                  {lifespan && <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{lifespan}</p>}
+                  {lifespan && <p className="text-xs text-zinc-500 mt-0.5 truncate">{lifespan}</p>}
                   {parents.length > 0 && (
-                    <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                    <p className="text-xs text-zinc-600 mt-0.5 truncate">
                       <span className="text-zinc-700">{t('person.pickerParents')} </span>{parents.join(', ')}
                     </p>
                   )}
                   {spouses.length > 0 && (
-                    <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                    <p className="text-xs text-zinc-600 mt-0.5 truncate">
                       <span className="text-zinc-700">{t('person.pickerSpouse')} </span>{spouses.join(', ')}
                     </p>
                   )}
@@ -540,7 +540,7 @@ function RelRow({
 
   return (
     <div>
-      <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1.5">{label}</p>
+      <p className="text-xs text-zinc-600 uppercase tracking-wider mb-1.5">{label}</p>
       <div className="flex flex-wrap gap-1.5 items-center">
         {persons.map(p => {
           const priv = relPrivacy?.get(p.id)
@@ -573,7 +573,7 @@ function RelRow({
               )}
               {editing && onRemove && (
                 <button onClick={() => onRemove(p)}
-                  className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0"
+                  className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-xs text-zinc-400 hover:text-white transition-colors shrink-0"
                   title={t('person.removeRelation')}>✕</button>
               )}
             </div>
@@ -751,12 +751,12 @@ function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
               className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-zinc-800 transition-colors disabled:opacity-60">
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-medium text-zinc-200 truncate">{doc.title || doc.filename}</p>
-                <p className="text-[10px] text-zinc-500">
+                <p className="text-xs text-zinc-500">
                   {typeMap.get(doc.doc_type ?? '') ?? doc.doc_type ?? t('person.docFallback')}
                   {doc.year ? ` · ${doc.year}` : ''}
                 </p>
                 {doc.persons.length > 0 && (
-                  <p className="text-[10px] text-zinc-600 truncate">{doc.persons.map(p => p.name).join(', ')}</p>
+                  <p className="text-xs text-zinc-600 truncate">{doc.persons.map(p => p.name).join(', ')}</p>
                 )}
               </div>
               {linking === doc.id ? (
@@ -951,11 +951,11 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
             </a>
           )}
           <div className="flex items-center gap-1.5">
-            <p className="text-[10px] text-zinc-600 leading-snug">
+            <p className="text-xs text-zinc-600 leading-snug">
               {[typeLabel, doc.year].filter(Boolean).join(' · ')}
             </p>
             {doc.source_id != null && (
-              <span className="text-[9px] px-1 py-0.5 rounded bg-amber-900/40 text-amber-400 font-medium leading-none">
+              <span className="text-xs px-1 py-0.5 rounded bg-amber-900/40 text-amber-400 font-medium leading-none">
                 Source
               </span>
             )}
@@ -1090,7 +1090,7 @@ function CitationsInline({
       {!expanded && (
         <button
           onClick={() => { setExpanded(true); if (count === 0) setAdding(true) }}
-          className={`inline-flex items-center gap-1 text-[10px] font-medium rounded-full px-2 py-0.5 border transition-colors ${
+          className={`inline-flex items-center gap-1 text-xs font-medium rounded-full px-2 py-0.5 border transition-colors ${
             count > 0
               ? 'border-amber-700/60 text-amber-400 bg-amber-900/20 hover:bg-amber-900/40'
               : 'border-zinc-700 text-zinc-500 bg-transparent hover:border-zinc-500 hover:text-zinc-300'
@@ -1106,7 +1106,7 @@ function CitationsInline({
         <div className="mt-1 rounded-lg border border-zinc-700/60 bg-zinc-900/60 overflow-hidden">
           {/* header */}
           <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{t('person.sources')}</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">{t('person.sources')}</span>
             <button onClick={() => { setExpanded(false); setAdding(false) }}
               className="text-zinc-600 hover:text-zinc-300 transition-colors">
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1118,7 +1118,7 @@ function CitationsInline({
           {/* citation list */}
           <div className="px-3 py-2 space-y-2">
             {citations.length === 0 && !adding && (
-              <p className="text-[10px] text-zinc-600 italic">{t('person.noSources')}</p>
+              <p className="text-xs text-zinc-600 italic">{t('person.noSources')}</p>
             )}
             {citations.map(c => (
               <div key={c.id} className="flex items-start gap-2 group/c">
@@ -1128,28 +1128,28 @@ function CitationsInline({
                     <a
                       href={api.documents.fileUrl(c.source_document_id)}
                       target="_blank" rel="noreferrer"
-                      className="text-[11px] text-amber-300 hover:text-amber-200 font-medium leading-snug underline underline-offset-2 truncate block transition-colors"
+                      className="text-xs text-amber-300 hover:text-amber-200 font-medium leading-snug underline underline-offset-2 truncate block transition-colors"
                     >
                       {c.source_title}
                     </a>
                   ) : (
-                    <p className="text-[11px] text-amber-300 font-medium leading-snug truncate">{c.source_title}</p>
+                    <p className="text-xs text-amber-300 font-medium leading-snug truncate">{c.source_title}</p>
                   )}
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {c.source_type && (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-500 border border-zinc-700">
+                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-500 border border-zinc-700">
                         {SOURCE_TYPE_LABELS[c.source_type] ?? c.source_type}
                       </span>
                     )}
                     {c.source_year && (
-                      <span className="text-[9px] text-zinc-600">{c.source_year}</span>
+                      <span className="text-xs text-zinc-600">{c.source_year}</span>
                     )}
                     {c.source_author && (
-                      <span className="text-[9px] text-zinc-600">{c.source_author}</span>
+                      <span className="text-xs text-zinc-600">{c.source_author}</span>
                     )}
                   </div>
                   {c.detail && (
-                    <p className="text-[10px] text-zinc-500 leading-snug">
+                    <p className="text-xs text-zinc-500 leading-snug">
                       <span className="text-zinc-600">{t('person.sourcePagePrefix')} </span>{c.detail}
                     </p>
                   )}
@@ -1157,7 +1157,7 @@ function CitationsInline({
                     <a
                       href={api.documents.fileUrl(c.source_document_id)}
                       target="_blank" rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[9px] text-zinc-600 hover:text-zinc-300 transition-colors"
+                      className="inline-flex items-center gap-1 text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
                     >
                       <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
@@ -1179,10 +1179,10 @@ function CitationsInline({
             {adding ? (
               <div className="space-y-1.5 pt-1 border-t border-zinc-800">
                 {sources.length === 0 ? (
-                  <p className="text-[10px] text-zinc-500 italic">{t('person.noSourcesLibHint')}</p>
+                  <p className="text-xs text-zinc-500 italic">{t('person.noSourcesLibHint')}</p>
                 ) : (
                   <select value={selectedSourceId} onChange={e => setSelectedSourceId(Number(e.target.value) || '')}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-100 outline-none focus:border-amber-500">
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-amber-500">
                     <option value="">{t('person.selectSource')}</option>
                     {sources.map(s => (
                       <option key={s.id} value={s.id}>
@@ -1193,21 +1193,21 @@ function CitationsInline({
                 )}
                 <input value={detail} onChange={e => setDetail(e.target.value)}
                   placeholder={t('person.citationPh')}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-[11px] text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500" />
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500" />
                 <div className="flex gap-1.5">
                   <button onClick={addCitation} disabled={saving || !selectedSourceId || sources.length === 0}
-                    className="px-2.5 py-1 text-[10px] font-medium bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white rounded transition-colors">
+                    className="px-2.5 py-1 text-xs font-medium bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white rounded transition-colors">
                     {saving ? '…' : t('person.save')}
                   </button>
                   <button onClick={() => { setAdding(false); if (count === 0) setExpanded(false) }}
-                    className="px-2.5 py-1 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors">
+                    className="px-2.5 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
                     {t('person.cancel')}
                   </button>
                 </div>
               </div>
             ) : (
               <button onClick={() => setAdding(true)}
-                className="text-[10px] text-zinc-500 hover:text-amber-400 transition-colors pt-0.5">
+                className="text-xs text-zinc-500 hover:text-amber-400 transition-colors pt-0.5">
                 {t('person.addCitation')}
               </button>
             )}
@@ -1700,7 +1700,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               <p className="text-zinc-400 text-xs mb-1 leading-relaxed">
                 {t('person.mergeConfirmBody', { nameA: displayPersonName(mergePending, nameOrder), nameB: displayPersonName(person, nameOrder) })}
               </p>
-              <p className="text-zinc-600 text-[10px] mb-4 leading-relaxed">
+              <p className="text-zinc-600 text-xs mb-4 leading-relaxed">
                 {t('person.mergeConfirmNote', { name: displayPersonName(person, nameOrder) })}
               </p>
               <div className="flex gap-2 justify-center">
@@ -1775,7 +1775,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`flex-1 py-2 text-[11px] font-medium transition-colors capitalize ${
+              className={`flex-1 py-2 text-xs font-medium transition-colors capitalize ${
                 activeTab === tab
                   ? 'text-zinc-100 border-b-2 border-brand-400 -mb-px'
                   : 'text-zinc-500 hover:text-zinc-300'
@@ -1795,7 +1795,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {/* Details */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-2.5">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('person.details')}</h3>
+              <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">{t('person.details')}</h3>
               {!editingDetails ? (
                 <button onClick={() => { setDetailsData(detailsFromPerson(person)); setEditingDetails(true) }}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
@@ -2024,7 +2024,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {/* Relations */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('person.relations')}</h3>
+              <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">{t('person.relations')}</h3>
               {!editingRelations ? (
                 <button onClick={() => setEditingRelations(true)}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">{t('person.relEdit')}</button>
@@ -2052,7 +2052,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               {/* Spouses — rendered manually for marriage details */}
               {(editingRelations || spouseRelations.length > 0) && (
                 <div>
-                  <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1.5">{t('person.spouses')}</p>
+                  <p className="text-xs text-zinc-600 uppercase tracking-wider mb-1.5">{t('person.spouses')}</p>
                   <div className="space-y-2">
                     {spouseRelations.map(({ rel, p }) => (
                       <div key={rel.id}>
@@ -2080,13 +2080,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                             </button>
                             {editingRelations && (
                               <button onClick={() => handleRemove('spouse', p)}
-                                className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0"
+                                className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-xs text-zinc-400 hover:text-white transition-colors shrink-0"
                                 title={t('person.removeRelation')}>✕</button>
                             )}
                           </div>
                           <button
                             onClick={() => openMarriage(rel)}
-                            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${expandedRelId === rel.id ? 'text-brand-400 bg-brand-500/10' : 'text-zinc-600 hover:text-zinc-300'}`}
+                            className={`text-xs px-1.5 py-0.5 rounded transition-colors ${expandedRelId === rel.id ? 'text-brand-400 bg-brand-500/10' : 'text-zinc-600 hover:text-zinc-300'}`}
                           >
                             {rel.marriage_year || rel.marriage_place
                               ? `${t('person.marriagePrefix')}: ${[rel.marriage_year, rel.marriage_place].filter(Boolean).join(', ')}`
@@ -2162,7 +2162,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {/* Clusters */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-2.5">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('person.clusters')}</h3>
+              <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">{t('person.clusters')}</h3>
               {person.clusters.length === 0 && (
                 <button onClick={() => { setShowClusterPicker(p => !p); setClusterSearch('') }}
                   className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">{t('person.addCluster')}</button>
@@ -2179,7 +2179,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                       <span className="text-xs text-zinc-300">{t('person.clusterN', { n: String(c.label).padStart(3, '0') })}</span>
                       <span className="text-xs text-zinc-600 tabular-nums">{t('person.clusterFaces', { n: c.face_count })}</span>
                       <button onClick={() => handleUnlinkCluster(c.id)} title={t('person.unlinkCluster')}
-                        className="w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-[10px] text-zinc-400 hover:text-white transition-colors shrink-0">✕</button>
+                        className="w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-xs text-zinc-400 hover:text-white transition-colors shrink-0">✕</button>
                     </div>
                   ))}
                 </div>
@@ -2222,7 +2222,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {/* Photos */}
           <section className="px-5 py-4 border-b border-zinc-800/80">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+              <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">
                 {`${t('person.photosSection')}${imagesPage ? ` (${imagesPage.total})` : ''}`}
               </h3>
               {images.length > PHOTOS_CAP && (
@@ -2270,7 +2270,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {activeTab === 'documents' && (
           <section className="px-5 py-4">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+              <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">
                 {`${t('person.docsSection')}${docs.length > 0 ? ` (${docs.length})` : ''}`}
               </h3>
               <div className="flex items-center gap-2">
@@ -2321,7 +2321,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           {activeTab === 'notes' && (
           <section className="px-5 py-4">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('person.notesSection')}</h3>
+              <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">{t('person.notesSection')}</h3>
               <button onClick={startNewNote}
                 className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
                 {t('person.addNote')}

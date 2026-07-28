@@ -890,10 +890,10 @@ function PersonCard({ person, selected, isProband }: {
       'absolute inset-0 rounded-xl flex items-center gap-2.5 px-2.5 transition-all overflow-hidden py-1',
       selected
         ? 'bg-brand-700 border-2 border-brand-400 shadow-lg shadow-brand-900/60'
-        : 'bg-zinc-800/90 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800',
+        : 'bg-zinc-800/90 border border-zinc-700/80 hover:border-brand-500/30 hover:bg-zinc-800 hover:shadow-md hover:shadow-brand-950/40',
     ].join(' ')}>
       {isProband && (
-        <div className="absolute top-1 right-1 text-[10px] text-amber-400 leading-none" title={t('treeView.focusPerson')}>★</div>
+        <div className="absolute top-1 right-1 text-xs text-amber-400 leading-none" title={t('treeView.focusPerson')}>★</div>
       )}
       {person.thumbnail_face_id && !imgErr ? (
         <img src={api.faceThumbnailUrl(person.thumbnail_face_id, 96)} alt=""
@@ -909,11 +909,11 @@ function PersonCard({ person, selected, isProband }: {
           {displayPersonName(person, nameOrder)}
         </div>
         {person.nickname && (
-          <div className={`text-[10px] leading-snug italic ${selected ? 'text-brand-200/80' : 'text-zinc-400'}`}>„{person.nickname}"</div>
+          <div className={`text-xs leading-snug italic ${selected ? 'text-brand-200/80' : 'text-zinc-400'}`}>„{person.nickname}"</div>
         )}
-        {span && <div className={`text-[10px] leading-snug ${selected ? 'text-brand-200' : 'text-zinc-500'}`}>{span}</div>}
+        {span && <div className={`text-xs leading-snug ${selected ? 'text-brand-200' : 'text-zinc-500'}`}>{span}</div>}
         {person.face_count > 0 && (
-          <div className={`text-[9px] leading-snug ${selected ? 'text-brand-300' : 'text-zinc-600'}`}>{person.face_count} photos</div>
+          <div className={`text-xs leading-snug ${selected ? 'text-brand-300' : 'text-zinc-600'}`}>{person.face_count} photos</div>
         )}
       </div>
     </div>
@@ -1094,7 +1094,7 @@ export default function TreeView({
   return (
     <div
       ref={containerRef}
-      className="relative overflow-hidden bg-zinc-950 select-none"
+      className="relative overflow-hidden bg-transparent select-none"
       style={{ height: '100%', cursor: dragOrigin.current ? 'grabbing' : 'grab' }}
       onMouseDown={e => {
         if ((e.target as HTMLElement).closest('[data-node]')) return
@@ -1131,7 +1131,7 @@ export default function TreeView({
             <button onClick={resetView}
               className="h-7 px-2.5 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 text-xs">{t('treeView.reset')}</button>
             <div className="flex items-center gap-1 ml-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7">
-              <span className="text-[10px] text-zinc-500">{t('treeView.anc')}</span>
+              <span className="text-xs text-zinc-500">{t('treeView.anc')}</span>
               <button onClick={() => setAncestorDepth(d => Math.max(1, d - 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
               <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{ancestorDepth}</span>
@@ -1139,7 +1139,7 @@ export default function TreeView({
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">►</button>
             </div>
             <div className="flex items-center gap-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7">
-              <span className="text-[10px] text-zinc-500">{t('treeView.desc')}</span>
+              <span className="text-xs text-zinc-500">{t('treeView.desc')}</span>
               <button onClick={() => setDescendantDepth(d => Math.max(1, d - 1))}
                 className="text-zinc-400 hover:text-zinc-200 text-xs px-0.5">◄</button>
               <span className="text-xs text-zinc-300 tabular-nums w-3 text-center">{descendantDepth}</span>
@@ -1148,13 +1148,13 @@ export default function TreeView({
             </div>
           </div>
           {/* Bottom-left: legend */}
-          <div className="absolute bottom-3 left-3 z-10 flex items-center gap-4 text-[10px] text-zinc-600">
+          <div className="absolute bottom-3 left-3 z-10 flex items-center gap-4 text-xs text-zinc-600">
             <span className="flex items-center gap-1.5">
-              <svg width="22" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#52525b" strokeWidth="1.5"/></svg>
+              <svg width="22" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#a1a1aa" strokeWidth="2.5"/></svg>
               {t('treeView.legendParent')}
             </span>
             <span className="flex items-center gap-1.5">
-              <svg width="22" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#7c3aed" strokeWidth="2" strokeDasharray="5 3"/></svg>
+              <svg width="22" height="8"><line x1="0" y1="4" x2="22" y2="4" stroke="#a855f7" strokeWidth="3" strokeDasharray="6 3"/></svg>
               {t('treeView.legendSpouse')}
             </span>
             <span>{t('treeView.dragHint')}</span>
@@ -1173,18 +1173,18 @@ export default function TreeView({
             switch (e.type) {
               case 'spouse':
                 return <line key={e.key} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
-                  stroke="#7c3aed" strokeWidth={2} strokeDasharray="5 3" opacity={0.65} />
+                  stroke="#a855f7" strokeWidth={3} strokeDasharray="6 3" opacity={0.85} />
               case 'couple-stem':
               case 'couple-bar':
               case 'child-drop':
                 return <line key={e.key} x1={e.x1} y1={e.y1} x2={e.x2} y2={e.y2}
-                  stroke="#52525b" strokeWidth={1.5} />
+                  stroke="#a1a1aa" strokeWidth={2.5} />
               case 'child-single': {
                 const midY = (e.y1 + e.y2) / 2
                 return (
                   <path key={e.key}
                     d={`M ${e.x1} ${e.y1} C ${e.x1} ${midY}, ${e.x2} ${midY}, ${e.x2} ${e.y2}`}
-                    stroke="#52525b" strokeWidth={1.5} fill="none" />
+                    stroke="#a1a1aa" strokeWidth={2.5} fill="none" />
                 )
               }
             }
@@ -1238,7 +1238,7 @@ export default function TreeView({
                     e.stopPropagation()
                     setCollapsedIds(prev => { const s = new Set(prev); s.delete(node.id); return s })
                   }}
-                  className="absolute left-1/2 -translate-x-1/2 h-5 min-w-[20px] px-1.5 flex items-center justify-center rounded-full font-bold text-[9px] bg-brand-800 border border-brand-500 text-brand-300 hover:bg-brand-700 transition-colors cursor-pointer select-none"
+                  className="absolute left-1/2 -translate-x-1/2 h-5 min-w-[20px] px-1.5 flex items-center justify-center rounded-full font-bold text-xs bg-brand-800 border border-brand-500 text-brand-300 hover:bg-brand-700 transition-colors cursor-pointer select-none"
                   style={{ top: NH + 4, zIndex: 20 }}
                   title={t('treeView.expand', { n: hiddenCount })}
                 >▶ +{hiddenCount}</button>
@@ -1269,11 +1269,11 @@ export default function TreeView({
                     className="flex items-center h-6 rounded-full bg-zinc-900 border border-violet-600/70 text-violet-300 shadow-lg whitespace-nowrap select-none"
                   >
                     <button onClick={goPrev} title={t('treeView.prevSpouse')}
-                      className="px-1.5 h-full flex items-center text-[12px] hover:text-white transition-colors cursor-pointer rounded-l-full hover:bg-violet-900/50">←</button>
-                    <span className="text-[10px] font-medium px-0.5">{firstName}</span>
-                    <span className="text-[10px] text-violet-500 pr-0.5">{idx + 1}/{allSpouses.length}</span>
+                      className="px-1.5 h-full flex items-center text-xs hover:text-white transition-colors cursor-pointer rounded-l-full hover:bg-violet-900/50">←</button>
+                    <span className="text-xs font-medium px-0.5">{firstName}</span>
+                    <span className="text-xs text-violet-500 pr-0.5">{idx + 1}/{allSpouses.length}</span>
                     <button onClick={goNext} title={t('treeView.nextSpouse')}
-                      className="px-1.5 h-full flex items-center text-[12px] hover:text-white transition-colors cursor-pointer rounded-r-full hover:bg-violet-900/50">→</button>
+                      className="px-1.5 h-full flex items-center text-xs hover:text-white transition-colors cursor-pointer rounded-r-full hover:bg-violet-900/50">→</button>
                   </div>
                 )
               })()}

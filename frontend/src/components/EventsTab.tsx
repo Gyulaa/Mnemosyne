@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import type { PersonEvent, PersonFull, EventImage, ImageItem, ImagePerson } from '../types'
+import type { PersonEvent, PersonFull, EventImage, ImagePerson } from '../types'
 import { api } from '../api'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
 import { useT } from '../SettingsContext'
+import { ImagePreviewModal } from './ImagePreviewModal'
 
 marked.setOptions({ breaks: true, gfm: true })
 
@@ -26,156 +27,16 @@ function TBtn({ onClick, title, children }: { onClick: () => void; title: string
   )
 }
 
-// ── EventImagePreviewModal ─────────────────────────────────────────────────────
-
-function EventImagePreviewModal({ images, currentIdx, onNavigate, onClose }: {
-  images: EventImage[]
-  currentIdx: number
-  onNavigate: (i: number) => void
-  onClose: () => void
-}) {
-  const t = useT()
-  const imageId = images[currentIdx]?.image_id
-
-  const { data: imgData } = useQuery<ImageItem>({
-    queryKey: ['image-detail', imageId],
-    queryFn: () => api.images.get(imageId),
-    enabled: !!imageId,
-    staleTime: 60_000,
-  })
-
-  const { data: persons = [] } = useQuery<ImagePerson[]>({
-    queryKey: ['image-persons', imageId],
-    queryFn: () => api.images.persons(imageId),
-    enabled: !!imageId,
-    staleTime: 60_000,
-  })
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') { onClose(); return }
-      if (e.key === 'ArrowLeft')  onNavigate(Math.max(0, currentIdx - 1))
-      if (e.key === 'ArrowRight') onNavigate(Math.min(images.length - 1, currentIdx + 1))
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [currentIdx, images.length, onClose, onNavigate])
-
-  const meta: Record<string, unknown> | null = imgData?.meta_json
-    ? (() => { try { return JSON.parse(imgData.meta_json) } catch { return null } })()
-    : null
-
-  function mv(key: string): string | null {
-    const v = meta?.[key]
-    return v != null ? String(v) : null
-  }
-
-  const metaRows = [
-    { label: t('events.metaFile'),     val: imgData?.filename ?? null },
-    { label: t('events.metaDate'),     val: imgData?.exif_date ?? mv('DateTimeOriginal') ?? mv('DateTime') },
-    { label: t('events.metaCamera'),   val: [mv('Make'), mv('Model')].filter(Boolean).join(' ') || null },
-    { label: t('events.metaExposure'), val: mv('ExposureTime') ? `${mv('ExposureTime')} s` : null },
-    { label: t('events.metaAperture'), val: mv('FNumber') ? `f/${mv('FNumber')}` : null },
-    { label: t('events.metaISO'),      val: mv('ISOSpeedRatings') ?? mv('ISO') },
-    { label: t('events.metaFocal'),    val: mv('FocalLength') ? `${mv('FocalLength')} mm` : null },
-  ].filter(r => r.val)
-
-  if (!imageId) return null
-
-  return createPortal(
-    <div className="fixed inset-0 z-[300] bg-black/96 flex" onClick={onClose}>
-      {/* Left — image */}
-      <div className="flex-1 flex items-center justify-center relative min-w-0" onClick={e => e.stopPropagation()}>
-        <button
-          onClick={() => onNavigate(Math.max(0, currentIdx - 1))}
-          disabled={currentIdx === 0}
-          className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-20 flex items-center justify-center text-white text-xl transition-colors z-10">
-          ‹
-        </button>
-        <button
-          onClick={() => onNavigate(Math.min(images.length - 1, currentIdx + 1))}
-          disabled={currentIdx === images.length - 1}
-          className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 disabled:opacity-20 flex items-center justify-center text-white text-xl transition-colors z-10">
-          ›
-        </button>
-        <img
-          key={imageId}
-          src={api.imageViewUrl(imageId, 1600)}
-          alt=""
-          className="max-w-full max-h-full object-contain select-none"
-          style={{ maxHeight: '100vh', maxWidth: 'calc(100% - 64px)' }}
-        />
-        {images.length > 1 && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 rounded-full px-3 py-1 text-xs text-zinc-400 tabular-nums z-10">
-            {currentIdx + 1} / {images.length}
-          </div>
-        )}
-      </div>
-
-      {/* Right — metadata + people sidebar */}
-      <div
-        className="w-72 shrink-0 bg-zinc-900 border-l border-zinc-800 flex flex-col overflow-y-auto"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 shrink-0">
-          <span className="text-xs font-semibold text-zinc-400">{t('events.imageDetails')}</span>
-          <button onClick={onClose}
-            className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-
-        {metaRows.length > 0 && (
-          <div className="px-4 py-3 border-b border-zinc-800/60">
-            <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2.5">{t('events.metadata')}</h4>
-            <div className="space-y-1.5">
-              {metaRows.map(r => (
-                <div key={r.label} className="flex gap-2">
-                  <span className="text-[10px] text-zinc-500 shrink-0 w-16">{r.label}</span>
-                  <span className="text-[11px] text-zinc-300 break-all">{r.val}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {persons.length > 0 && (
-          <div className="px-4 py-3">
-            <h4 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2.5">{t('events.people')}</h4>
-            <div className="flex flex-wrap gap-2">
-              {persons.map(p => (
-                <div key={p.person_id} className="flex items-center gap-1.5 bg-zinc-800 rounded-full px-2.5 py-1">
-                  <img
-                    src={api.faceThumbnailUrl(p.face_id, 32)}
-                    alt=""
-                    className="w-5 h-5 rounded-full object-cover shrink-0"
-                  />
-                  <span className="text-[11px] text-zinc-200">{p.person_name ?? '?'}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {metaRows.length === 0 && persons.length === 0 && (
-          <p className="px-4 py-4 text-xs text-zinc-600 italic">{t('events.noMetadata')}</p>
-        )}
-      </div>
-    </div>,
-    document.body,
-  )
-}
 
 // ── EventDetailView ────────────────────────────────────────────────────────────
 
-function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExportStart, onExportEnd }: {
+function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToCluster, onExportStart, onExportEnd }: {
   ev: PersonEvent
   persons: PersonFull[]
   onBack: () => void
   onEdit: () => void
   onEventUpdated: (updated: PersonEvent) => void
+  onNavToCluster?: (clusterId: number) => void
   onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
@@ -183,6 +44,24 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
   const qc = useQueryClient()
   const [previewIdx, setPreviewIdx] = useState<number | null>(null)
   const [exportingZip, setExportingZip] = useState(false)
+
+  // Load persons-per-image for event photos to get event-specific face crops
+  const imagePersonQueries = useQueries({
+    queries: ev.images.map(ei => ({
+      queryKey: ['image-persons', ei.image_id],
+      queryFn: (): Promise<ImagePerson[]> => api.images.persons(ei.image_id),
+      staleTime: 120_000,
+    })),
+  })
+  const eventFaceMap = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const q of imagePersonQueries) {
+      for (const p of (q.data ?? [])) {
+        if (!map.has(p.person_id) && p.face_id) map.set(p.person_id, p.face_id)
+      }
+    }
+    return map
+  }, [imagePersonQueries])
 
   async function handleExportZip() {
     if (exportingZip || ev.images.length === 0) return
@@ -299,7 +178,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
       </div>
 
       {/* Header card */}
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden mb-6">
+      <div className="rounded-2xl overflow-hidden mb-6" style={{ background: '#111117', border: '1px solid rgba(255,255,255,0.07)' }}>
         {/* Cover photo strip */}
         {ev.images.length > 0 && (
           <div
@@ -399,9 +278,9 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
         <div className="col-span-2 space-y-6">
 
           {/* Description */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800/60">
-              <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('events.description')}</h2>
+          <div className="rounded-xl overflow-hidden" style={{ background: '#13121a', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              <h2 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">{t('events.description')}</h2>
               {!editingDesc && (
                 <button
                   onClick={startEditDesc}
@@ -415,7 +294,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
             {editingDesc ? (
               <div>
                 {/* Markdown toolbar */}
-                <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-zinc-800 bg-zinc-900/40">
+                <div className="flex items-center gap-0.5 px-3 py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.02)' }}>
                   <TBtn onClick={() => wrapDesc('**', '**')} title="Bold"><strong>B</strong></TBtn>
                   <TBtn onClick={() => wrapDesc('*', '*')} title="Italic"><em>I</em></TBtn>
                   <TBtn onClick={() => wrapDesc('~~', '~~')} title="Strikethrough"><span className="line-through">S</span></TBtn>
@@ -432,7 +311,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
                   rows={6}
                   className="w-full bg-transparent px-5 py-3 text-sm text-zinc-200 placeholder-zinc-600 outline-none resize-y leading-relaxed font-mono"
                 />
-                <div className="flex items-center gap-2 px-5 py-3 border-t border-zinc-800 bg-zinc-900/30">
+                <div className="flex items-center gap-2 px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
                   <button
                     onClick={saveDesc}
                     disabled={savingDesc}
@@ -462,16 +341,16 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
 
           {/* Full photo grid */}
           {ev.images.length > 0 && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800/60">
-                <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+            <div className="rounded-xl overflow-hidden" style={{ background: '#13121a', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <h2 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">
                   {t('events.photos', { n: ev.images.length })}
                 </h2>
                 <button
                   onClick={handleExportZip}
                   disabled={exportingZip}
                   title={t('events.exportZipTitle')}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-100 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-zinc-400 hover:text-zinc-100 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
                 >
                   {exportingZip ? (
                     <>
@@ -513,16 +392,18 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
         {/* Right — people + no-photo note */}
         <div className="space-y-4">
           {ev.persons.length > 0 && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-zinc-800/60">
-                <h2 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t('events.people')}</h2>
+            <div className="rounded-xl overflow-hidden" style={{ background: '#13121a', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="px-4 py-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <h2 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">{t('events.people')}</h2>
               </div>
               <div className="p-4 space-y-3">
-                {ev.persons.map(ep => (
+                {ev.persons.map(ep => {
+                  const eventFaceId = eventFaceMap.get(ep.person_id) ?? ep.thumbnail_face_id
+                  return (
                   <div key={ep.id} className="flex items-center gap-3">
                     <div className="relative shrink-0">
-                      {ep.thumbnail_face_id ? (
-                        <img src={api.faceThumbnailUrl(ep.thumbnail_face_id, 64)} alt=""
+                      {eventFaceId ? (
+                        <img src={api.faceThumbnailUrl(eventFaceId, 64)} alt=""
                           className={`w-10 h-10 rounded-full object-cover border ${ep.featured ? 'border-amber-500/70' : 'border-zinc-700'}`} />
                       ) : (
                         <div className={`w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center text-sm text-zinc-400 font-medium border ${ep.featured ? 'border-amber-500/70' : 'border-transparent'}`}>
@@ -531,7 +412,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
                       )}
                       {ep.featured && (
                         <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-zinc-900 flex items-center justify-center">
-                          <span className="text-[9px] text-amber-400">★</span>
+                          <span className="text-xs text-amber-400">★</span>
                         </span>
                       )}
                     </div>
@@ -540,16 +421,16 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
                         {ep.featured && <span className="mr-1 text-amber-400 text-xs">★</span>}
                         {ep.person_name ?? t('images.unnamed')}
                       </p>
-                      <p className="text-[10px] text-zinc-600 capitalize">{ep.role}</p>
+                      <p className="text-xs text-zinc-600 capitalize">{ep.role}</p>
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
             </div>
           )}
 
           {ev.images.length === 0 && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-center">
+            <div className="rounded-xl p-4 text-center" style={{ background: '#13121a', border: '1px solid rgba(255,255,255,0.06)' }}>
               <p className="text-sm text-zinc-600 italic">{t('events.noPhotos')}</p>
               <button onClick={onEdit}
                 className="mt-2 text-xs text-brand-500 hover:text-brand-400 transition-colors">
@@ -562,11 +443,11 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onExport
 
       {/* Image preview modal */}
       {previewIdx !== null && (
-        <EventImagePreviewModal
-          images={ev.images}
-          currentIdx={previewIdx}
-          onNavigate={setPreviewIdx}
+        <ImagePreviewModal
+          imageIds={ev.images.map(i => i.image_id)}
+          startIdx={previewIdx}
           onClose={() => setPreviewIdx(null)}
+          onNavToCluster={onNavToCluster}
         />
       )}
     </div>
@@ -591,7 +472,10 @@ function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
   return (
     <div
       onClick={onClick}
-      className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden hover:border-zinc-600 transition-all cursor-pointer group"
+      className="rounded-xl overflow-hidden transition-all cursor-pointer group"
+      style={{ background: '#111117', border: '1px solid rgba(255,255,255,0.07)' }}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.14)' }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = 'rgba(255,255,255,0.07)' }}
     >
       {ev.images.length > 0 ? (
         <div className="relative overflow-hidden" style={{ height: ev.images.length === 1 ? 160 : 120 }}>
@@ -626,9 +510,9 @@ function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
               <EventIcon type={ev.event_type} />
               <p className="text-xs font-semibold text-zinc-100 truncate">{ev.title || typeLabel}</p>
             </div>
-            {ev.title && <p className="text-[10px] text-zinc-500 mt-0.5 ml-5">{typeLabel}</p>}
-            {dateStr && <p className="text-[10px] text-zinc-500 mt-0.5 ml-5">{dateStr}</p>}
-            {ev.place && <p className="text-[10px] text-zinc-500 truncate mt-0.5 ml-5">{ev.place}</p>}
+            {ev.title && <p className="text-xs text-zinc-500 mt-0.5 ml-5">{typeLabel}</p>}
+            {dateStr && <p className="text-xs text-zinc-500 mt-0.5 ml-5">{dateStr}</p>}
+            {ev.place && <p className="text-xs text-zinc-500 truncate mt-0.5 ml-5">{ev.place}</p>}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
             <button
@@ -670,7 +554,7 @@ function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
                 )
               ))}
             </div>
-            <span className="text-[10px] text-zinc-600 ml-1 truncate">
+            <span className="text-xs text-zinc-600 ml-1 truncate">
               {ev.persons[0]?.person_name}
               {ev.persons.length > 1 ? ` +${ev.persons.length - 1}` : ''}
             </span>
@@ -683,9 +567,10 @@ function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
 
 // ── EventsTab ─────────────────────────────────────────────────────────────────
 
-export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onExportEnd }: {
+export default function EventsTab({ navTarget, onNavConsumed, onNavToCluster, onExportStart, onExportEnd }: {
   navTarget?: { eventId: number; key: number } | null
   onNavConsumed?: () => void
+  onNavToCluster?: (clusterId: number) => void
   onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
@@ -808,6 +693,7 @@ export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onE
         onBack={() => setViewingEvent(null)}
         onEdit={() => openEdit(viewingEvent)}
         onEventUpdated={updated => setViewingEvent(updated)}
+        onNavToCluster={onNavToCluster}
         onExportStart={onExportStart}
         onExportEnd={onExportEnd}
       />
@@ -826,15 +712,16 @@ export default function EventsTab({ navTarget, onNavConsumed, onExportStart, onE
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex gap-0.5 bg-zinc-800 rounded-lg p-0.5">
+          <div className="flex gap-0.5 rounded-lg p-0.5" style={{ background: 'rgba(255,255,255,0.05)' }}>
             {([
               { value: 'with_photos' as const, label: t('events.filterWithPhotos') },
               { value: 'all' as const,         label: t('events.filterAll') },
             ]).map(opt => (
               <button key={opt.value} onClick={() => setFilter(opt.value)}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  filter === opt.value ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
-                }`}>
+                  filter === opt.value ? 'text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+                style={filter === opt.value ? { background: 'rgba(255,255,255,0.09)' } : undefined}>
                 {opt.label}
               </button>
             ))}

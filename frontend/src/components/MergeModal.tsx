@@ -88,20 +88,20 @@ function ActionPill({ current, hasSuggestion, onChange }: {
       {hasSuggestion && (
         <button
           onClick={() => onChange('merge')}
-          className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${current === 'merge' ? 'bg-brand-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+          className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${current === 'merge' ? 'bg-brand-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
         >
           {t('merge.actionMerge')}
         </button>
       )}
       <button
         onClick={() => onChange('create')}
-        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${current === 'create' ? 'bg-zinc-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+        className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${current === 'create' ? 'bg-zinc-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
       >
         {t('merge.actionNew')}
       </button>
       <button
         onClick={() => onChange('skip')}
-        className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${current === 'skip' ? 'bg-red-900/70 text-red-300' : 'text-zinc-500 hover:text-zinc-300'}`}
+        className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${current === 'skip' ? 'bg-red-900/70 text-red-300' : 'text-zinc-500 hover:text-zinc-300'}`}
       >
         {t('merge.actionSkip')}
       </button>
@@ -140,37 +140,37 @@ function MatchedPersonRow({ person: p, decision, onActionChange }: {
           <span className="text-zinc-500 text-xs">{yearsStr(p.birth_year, p.death_year)}</span>
           {p.suggested_match && (
             <>
-              <span className="text-zinc-600 text-[10px]">→</span>
+              <span className="text-zinc-600 text-xs">→</span>
               <span className="text-zinc-400 text-xs">
                 {p.suggested_match.name ?? incomingName(p.suggested_match, t('merge.unnamed'))}
                 {p.suggested_match.birth_year ? ` *${p.suggested_match.birth_year}` : ''}
               </span>
               {p.suggested_match.match_source === 'family' && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-400 font-medium">{t('merge.viaFamily')}</span>
+                <span className="text-xs px-1.5 py-0.5 rounded bg-brand-500/15 text-brand-400 font-medium">{t('merge.viaFamily')}</span>
               )}
             </>
           )}
           {isConfirmed && (
-            <span className="text-[9px] text-emerald-500 font-medium">{t('merge.confirmed')}</span>
+            <span className="text-xs text-emerald-500 font-medium">{t('merge.confirmed')}</span>
           )}
           {isConflict && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 font-medium">{t('merge.checkMatch')}</span>
+            <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-400 font-medium">{t('merge.checkMatch')}</span>
           )}
         </div>
         {familyLine && (
-          <p className="text-[10px] text-zinc-600 mt-0.5">{familyLine}</p>
+          <p className="text-xs text-zinc-600 mt-0.5">{familyLine}</p>
         )}
         {decision.action === 'merge' && newFieldCount > 0 && (
-          <p className="text-[10px] text-zinc-500 mt-0.5">{t('merge.willFill', { fields: newFieldNames })}</p>
+          <p className="text-xs text-zinc-500 mt-0.5">{t('merge.willFill', { fields: newFieldNames })}</p>
         )}
         {decision.action === 'merge' && newFieldCount === 0 && (
-          <p className="text-[10px] text-zinc-600 mt-0.5">{t('merge.alreadyComplete')}</p>
+          <p className="text-xs text-zinc-600 mt-0.5">{t('merge.alreadyComplete')}</p>
         )}
         {decision.action === 'create' && isConflict && (
-          <p className="text-[10px] text-amber-600 mt-0.5">{t('merge.conflictDefaultNew')}</p>
+          <p className="text-xs text-amber-600 mt-0.5">{t('merge.conflictDefaultNew')}</p>
         )}
         {decision.action === 'create' && !isConflict && (
-          <p className="text-[10px] text-zinc-500 mt-0.5">{t('merge.addAsNew')}</p>
+          <p className="text-xs text-zinc-500 mt-0.5">{t('merge.addAsNew')}</p>
         )}
       </div>
       <ActionPill current={decision.action} hasSuggestion={!!p.suggested_match} onChange={onActionChange} />
@@ -196,8 +196,8 @@ function NewPersonRow({ person: p, decision, onToggle }: {
       <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
         <span className="text-sm font-medium text-zinc-100">{incomingName(p, t('merge.unnamed'))}</span>
         <span className="text-zinc-500 text-xs">{yearsStr(p.birth_year, p.death_year)}</span>
-        {p.occupation && <span className="text-zinc-600 text-[10px]">{p.occupation}</span>}
-        {p.birth_place && <span className="text-zinc-600 text-[10px]">{p.birth_place}</span>}
+        {p.occupation && <span className="text-zinc-600 text-xs">{p.occupation}</span>}
+        {p.birth_place && <span className="text-zinc-600 text-xs">{p.birth_place}</span>}
       </div>
     </label>
   )
@@ -364,7 +364,7 @@ export default function MergeModal({ onClose, onDone }: Props) {
         {/* Header */}
         <div className="shrink-0 flex items-center justify-between px-6 pt-5 pb-4 border-b border-zinc-800">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">{t('merge.importLabel')}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">{t('merge.importLabel')}</p>
             <h2 className="text-sm font-semibold text-zinc-100">{t('merge.heading')}</h2>
           </div>
           <div className="flex items-center gap-4">

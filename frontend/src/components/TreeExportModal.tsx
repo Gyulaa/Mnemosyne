@@ -49,17 +49,47 @@ async function toDataUri(url: string): Promise<string | null> {
   } catch { return null }
 }
 
+// Cache so we only fetch once per session
+let _fontStyleCache: string | null = null
+
+async function loadFontsForExport(): Promise<string> {
+  if (_fontStyleCache !== null) return _fontStyleCache
+  try {
+    const css = await fetch(
+      'https://fonts.googleapis.com/css2?family=Geist:wght@400;600&display=swap'
+    ).then(r => r.text())
+
+    // Replace every url(...) in the CSS with an embedded base64 data URI
+    const urlRegex = /url\(['"]?([^'")\s]+)['"]?\)/g
+    const matches = [...css.matchAll(urlRegex)]
+    const pairs = await Promise.all(
+      matches.map(async m => ({ orig: m[0], uri: await toDataUri(m[1]) }))
+    )
+    let embedded = css
+    for (const { orig, uri } of pairs) {
+      if (uri) embedded = embedded.split(orig).join(`url(${uri})`)
+    }
+    _fontStyleCache = embedded
+    return embedded
+  } catch {
+    _fontStyleCache = ''
+    return ''
+  }
+}
+
 function buildSvg(
   nodes: ExportNode[], edges: ExportEdge[],
   minX: number, minY: number, canvasW: number, canvasH: number,
   probandId: number | null, theme: Theme, uris: Map<number, string>,
   nameOrder: NameOrder,
+  fontStyle: string,
 ): string {
   const C = theme === 'dark' ? DARK : LIGHT
   const out: string[] = []
 
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${canvasW}" height="${canvasH}" viewBox="0 0 ${canvasW} ${canvasH}">`)
   out.push('<defs>')
+  if (fontStyle) out.push(`<style>${fontStyle}</style>`)
   for (const n of nodes) {
     const cx = n.x - minX, cy = n.y - minY
     const avx = cx - NW / 2 + 30
@@ -98,7 +128,7 @@ function buildSvg(
       out.push(`<image href="${uri}" x="${avx - 20}" y="${cy - 20}" width="40" height="40" clip-path="url(#av${n.id})" preserveAspectRatio="xMidYMid slice"/>`)
     } else {
       out.push(`<circle cx="${avx}" cy="${cy}" r="20" fill="${C.avatarFill}"/>`)
-      out.push(`<text x="${avx}" y="${cy + 5}" text-anchor="middle" fill="${C.avatarText}" font-size="12" font-weight="700" font-family="system-ui,-apple-system,sans-serif">${xe(initials)}</text>`)
+      out.push(`<text x="${avx}" y="${cy + 5}" text-anchor="middle" fill="${C.avatarText}" font-size="12" font-weight="700" font-family="Geist,system-ui,sans-serif">${xe(initials)}</text>`)
     }
 
     // Split display name into 2 lines if it has multiple words
@@ -123,15 +153,15 @@ function buildSvg(
     else                                   { ny1 = cy+4;  ny2 = null;  nickY = null;  dy = null  }
 
     out.push(`<g clip-path="url(#tx${n.id})">`)
-    out.push(`<text x="${tx}" y="${ny1}" fill="${C.nameFill}" font-size="${nfs}" font-weight="600" font-family="system-ui,-apple-system,sans-serif">${xe(line1)}</text>`)
+    out.push(`<text x="${tx}" y="${ny1}" fill="${C.nameFill}" font-size="${nfs}" font-weight="600" font-family="Geist,system-ui,sans-serif">${xe(line1)}</text>`)
     if (twoLines && ny2 !== null) {
-      out.push(`<text x="${tx}" y="${ny2}" fill="${C.nameFill}" font-size="${nfs}" font-weight="600" font-family="system-ui,-apple-system,sans-serif">${xe(line2!)}</text>`)
+      out.push(`<text x="${tx}" y="${ny2}" fill="${C.nameFill}" font-size="${nfs}" font-weight="600" font-family="Geist,system-ui,sans-serif">${xe(line2!)}</text>`)
     }
     if (nickY !== null && p.nickname) {
-      out.push(`<text x="${tx}" y="${nickY}" fill="${C.dateFill}" font-size="9" font-style="italic" font-family="system-ui,-apple-system,sans-serif">„${xe(p.nickname)}"</text>`)
+      out.push(`<text x="${tx}" y="${nickY}" fill="${C.dateFill}" font-size="9" font-style="italic" font-family="Geist,system-ui,sans-serif">„${xe(p.nickname)}"</text>`)
     }
     if (dy !== null) {
-      out.push(`<text x="${tx}" y="${dy}" fill="${C.dateFill}" font-size="9.5" font-family="system-ui,-apple-system,sans-serif">${xe(span!)}</text>`)
+      out.push(`<text x="${tx}" y="${dy}" fill="${C.dateFill}" font-size="9.5" font-family="Geist,system-ui,sans-serif">${xe(span!)}</text>`)
     }
     out.push('</g>')
 
@@ -191,15 +221,21 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
   const run = useCallback(async () => {
     setBusy(true); setErr(null)
     try {
-      const uris = new Map<number, string>()
-      if (photos) {
-        await Promise.all(nodes.map(async n => {
-          if (!n.person.thumbnail_face_id) return
-          const uri = await toDataUri(api.faceThumbnailUrl(n.person.thumbnail_face_id, 96))
-          if (uri) uris.set(n.id, uri)
-        }))
-      }
-      const svg = buildSvg(nodes, edges, minX, minY, canvasW, canvasH, probandId, theme, uris, nameOrder)
+      const [fontStyle, uris] = await Promise.all([
+        loadFontsForExport(),
+        (async () => {
+          const m = new Map<number, string>()
+          if (photos) {
+            await Promise.all(nodes.map(async n => {
+              if (!n.person.thumbnail_face_id) return
+              const uri = await toDataUri(api.faceThumbnailUrl(n.person.thumbnail_face_id, 96))
+              if (uri) m.set(n.id, uri)
+            }))
+          }
+          return m
+        })(),
+      ])
+      const svg = buildSvg(nodes, edges, minX, minY, canvasW, canvasH, probandId, theme, uris, nameOrder, fontStyle)
       const png = await svgToPng(svg, canvasW, canvasH, scale)
       const url = URL.createObjectURL(png)
       const a = document.createElement('a')
@@ -225,7 +261,7 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">{t('treeExport.family')}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-1">{t('treeExport.family')}</p>
             <h2 className="text-sm font-semibold text-zinc-100">{t('treeExport.heading')}</h2>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors shrink-0">
@@ -238,7 +274,7 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
         <div className="px-5 py-5 space-y-5">
           {/* Resolution */}
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">{t('treeExport.resolution')}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">{t('treeExport.resolution')}</p>
             <div className="flex gap-2">
               {([1, 2] as Scale[]).map(s => (
                 <button key={s} onClick={() => setScale(s)}
@@ -252,12 +288,12 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
                 </button>
               ))}
             </div>
-            <p className="mt-1.5 text-[10px] text-zinc-600 tabular-nums">{outW.toLocaleString()} × {outH.toLocaleString()} px</p>
+            <p className="mt-1.5 text-xs text-zinc-600 tabular-nums">{outW.toLocaleString()} × {outH.toLocaleString()} px</p>
           </div>
 
           {/* Background */}
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">{t('treeExport.background')}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2.5">{t('treeExport.background')}</p>
             <div className="flex gap-2">
               {(['dark', 'light'] as Theme[]).map(thm => (
                 <button key={thm} onClick={() => setTheme(thm)}
@@ -278,7 +314,7 @@ export default function TreeExportModal({ nodes, edges, minX, minY, canvasW, can
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-medium text-zinc-300">{t('treeExport.includeFaces')}</p>
-              <p className="text-[10px] text-zinc-600 mt-0.5">{t('treeExport.includeFacesDesc')}</p>
+              <p className="text-xs text-zinc-600 mt-0.5">{t('treeExport.includeFacesDesc')}</p>
             </div>
             <button onClick={() => setPhotos(v => !v)}
               className={['relative w-9 h-5 rounded-full transition-colors shrink-0', photos ? 'bg-violet-600' : 'bg-zinc-700'].join(' ')}>

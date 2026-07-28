@@ -123,29 +123,35 @@ function AppInner() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden">
-        <header className="shrink-0 bg-zinc-900 border-b border-zinc-800 px-6 py-3 z-40 relative">
-          <div className="max-w-6xl mx-auto flex items-center gap-6">
-            <div className="flex items-center gap-2">
+      <div className="h-screen flex flex-col text-zinc-100 overflow-hidden" style={{ background: '#09090b' }}>
+        <header className="shrink-0 border-b px-6 py-4 z-40 relative" style={{ background: '#111117', borderColor: 'rgba(255,255,255,0.06)' }}>
+          <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-500/50 to-transparent" />
+          <div className="max-w-6xl mx-auto flex items-center gap-3">
+            <div className="flex items-center gap-2.5 shrink-0">
               <img
                 src="/favicon.png"
                 alt=""
                 className="w-6 h-6 object-contain"
                 onError={e => { e.currentTarget.style.display = 'none' }}
               />
-              <span className="text-sm font-semibold text-zinc-100 tracking-tight">Mnemosyne</span>
+              <span className="text-base font-bold tracking-tight font-display" style={{ background: 'linear-gradient(135deg, #c084fc 0%, #a855f7 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Mnemosyne</span>
             </div>
-            <nav className="flex gap-1">
+            <div className="w-px h-5 shrink-0" style={{ background: 'rgba(255,255,255,0.1)' }} />
+            <nav className="flex gap-0.5">
               {(Object.keys(TAB_KEYS) as Tab[]).map(tabKey => (
                 <button
                   key={tabKey}
                   onClick={() => setTab(tabKey)}
                   className={[
-                    'px-3 py-1.5 rounded-md text-sm font-medium transition-colors',
+                    'px-3.5 py-1.5 rounded-lg text-sm font-medium font-display transition-all duration-150',
                     tab === tabKey
-                      ? 'bg-zinc-700 text-white'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800',
+                      ? 'text-white'
+                      : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.05]',
                   ].join(' ')}
+                  style={tab === tabKey ? {
+                    background: 'linear-gradient(135deg, #9333ea 0%, #7e22ce 100%)',
+                    boxShadow: '0 0 0 1px rgba(147,51,234,0.5), 0 2px 12px rgba(147,51,234,0.3)',
+                  } : undefined}
                 >
                   {t(TAB_KEYS[tabKey])}
                 </button>
@@ -177,7 +183,7 @@ function AppInner() {
                   </svg>
                 </button>
                 {settingsOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-64 bg-zinc-900 border border-zinc-700/80 rounded-xl shadow-2xl p-4 z-50">
+                  <div className="absolute right-0 top-full mt-2 w-64 border border-zinc-700/60 rounded-xl shadow-2xl p-4 z-50" style={{ background: 'linear-gradient(160deg, #21202e 0%, #18181b 100%)', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.8), 0 0 0 1px rgba(88,28,135,0.15)' }}>
                     <p className="text-xs font-semibold text-zinc-300 mb-3">{t('app.settings')}</p>
                     {/* Language */}
                     <div>
@@ -258,7 +264,7 @@ function AppInner() {
                   </svg>
                 </button>
                 {aboutOpen && (
-                  <div className="absolute right-0 top-full mt-2 w-52 bg-zinc-900 border border-zinc-700/80 rounded-xl shadow-2xl p-4 z-50">
+                  <div className="absolute right-0 top-full mt-2 w-52 border border-zinc-700/60 rounded-xl shadow-2xl p-4 z-50" style={{ background: 'linear-gradient(160deg, #21202e 0%, #18181b 100%)', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.8), 0 0 0 1px rgba(88,28,135,0.15)' }}>
                     <p className="text-sm font-semibold text-zinc-100 mb-0.5">Mnemosyne</p>
                     <p className="text-[11px] text-zinc-500 leading-relaxed">{t('app.about.desc')}</p>
                     <div className="my-3 border-t border-zinc-800" />
@@ -281,14 +287,14 @@ function AppInner() {
           {tab === 'genealogy' ? (
             <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} onNavToEvent={navToEvent} onNavToDocument={navToDocument} />
           ) : tab === 'events' ? (
-            <EventsTab navTarget={eventNavTarget} onNavConsumed={() => setEventNavTarget(null)} onExportStart={onExportStart} onExportEnd={onExportEnd} />
+            <EventsTab navTarget={eventNavTarget} onNavConsumed={() => setEventNavTarget(null)} onNavToCluster={navToCluster} onExportStart={onExportStart} onExportEnd={onExportEnd} />
           ) : tab === 'documents' ? (
             <DocumentsTab onNavToGenealogy={navToGenealogy} navTarget={documentsNavTarget} onNavConsumed={() => setDocumentsNavTarget(null)} />
           ) : (
             <div className={tab === 'connections' ? 'px-4 py-4' : 'max-w-6xl mx-auto px-6 py-8'}>
               {tab === 'scan'        ? <ScanTab /> :
                tab === 'clusters'   ? <ClustersTab navTarget={clusterNavTarget} onNavToCluster={navToCluster} onNavToImage={navToImage} onNavConsumed={() => setClusterNavTarget(null)} onNavToGenealogy={navToGenealogy} onExportStart={onExportStart} onExportEnd={onExportEnd} /> :
-               tab === 'images'     ? <ImagesTab navFilter={imageNavFilter} openImageTarget={imageOpenTarget} onImageTargetConsumed={() => setImageOpenTarget(null)} onNavToCluster={navToCluster} onExportStart={onExportStart} onExportEnd={onExportEnd} /> :
+               tab === 'images'     ? <ImagesTab navFilter={imageNavFilter} openImageTarget={imageOpenTarget} onImageTargetConsumed={() => setImageOpenTarget(null)} onNavToCluster={navToCluster} onNavToEvent={navToEvent} onExportStart={onExportStart} onExportEnd={onExportEnd} /> :
                <ConnectionsTab onEdgeClick={navToImages} onNodeClick={navToCluster} />}
             </div>
           )}

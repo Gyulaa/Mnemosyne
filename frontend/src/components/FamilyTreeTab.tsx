@@ -53,7 +53,8 @@ function GedcomExportModal({ onExport, onClose }: { onExport: (opts: GedcomOpts)
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <form
         onSubmit={submit}
-        className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl"
+        className="rounded-2xl p-6 w-full max-w-sm shadow-2xl"
+        style={{ background: '#111117', border: '1px solid rgba(255,255,255,0.08)' }}
         onClick={e => e.stopPropagation()}
       >
         <h2 className="text-sm font-semibold text-zinc-100 mb-1">{t('gedcomExport.heading')}</h2>
@@ -84,7 +85,7 @@ function GedcomExportModal({ onExport, onClose }: { onExport: (opts: GedcomOpts)
           </div>
 
           {/* Content toggles */}
-          <div className="border-t border-zinc-800 pt-4 space-y-3">
+          <div className="pt-4 space-y-3" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
             <p className="text-xs text-zinc-400">{t('gedcomExport.include')}</p>
             {includeOpts.map(({ id, label, checked, setter }) => (
               <label key={id} className={optionLabel}>
@@ -341,7 +342,7 @@ function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl w-[420px] max-w-[92vw] p-5" onClick={e => e.stopPropagation()}>
+      <div className="rounded-2xl shadow-2xl w-[420px] max-w-[92vw] p-5" style={{ background: '#111117', border: '1px solid rgba(255,255,255,0.08)' }} onClick={e => e.stopPropagation()}>
         <h3 className="text-sm font-semibold text-zinc-100 mb-4">{t('newPerson.heading')}</h3>
 
         {/* Name fields */}
@@ -371,7 +372,7 @@ function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
           {/* Preview */}
           {displayName && (
-            <p className="text-[11px] text-zinc-500">
+            <p className="text-xs text-zinc-500">
               {t('newPerson.displayedAs')} <span className="text-zinc-300 font-medium">{displayName}</span>
             </p>
           )}
@@ -590,7 +591,7 @@ export default function FamilyTreeTab({
   }
 
   return (
-    <div className="h-full flex flex-col bg-zinc-950">
+    <div className="h-full flex flex-col">
 
       {/* ── Rollback banner ── */}
       {gedcomRollbackExpiry && gedcomRollbackExpiry > Date.now() && (
@@ -615,7 +616,7 @@ export default function FamilyTreeTab({
       )}
 
       {/* ── Toolbar ── */}
-      <div className="shrink-0 h-11 flex items-center gap-2 px-3 bg-zinc-900 border-b border-zinc-800">
+      <div className="shrink-0 h-11 flex items-center gap-2 px-3" style={{ background: '#111117', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
 
         {/* Sidebar toggle */}
         <button
@@ -686,14 +687,14 @@ export default function FamilyTreeTab({
         {persons.length > 0 && (
           <>
             <div className="w-px h-5 bg-zinc-700 shrink-0" />
-            <div className="flex rounded-lg border border-zinc-700 overflow-hidden shrink-0">
+            <div className="flex rounded-lg border border-zinc-700/80 overflow-hidden shrink-0">
               <button
                 onClick={() => setActiveView('tree')}
-                className={`h-7 px-3 text-xs font-medium transition-colors ${activeView === 'tree' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                className={`h-7 px-3 text-xs font-medium transition-all ${activeView === 'tree' ? 'bg-brand-500/10 text-brand-300 ring-inset ring-1 ring-brand-500/20' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
               >{t('tree.viewTree')}</button>
               <button
                 onClick={() => setActiveView('stats')}
-                className={`h-7 px-3 text-xs font-medium transition-colors ${activeView === 'stats' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
+                className={`h-7 px-3 text-xs font-medium transition-all ${activeView === 'stats' ? 'bg-brand-500/10 text-brand-300 ring-inset ring-1 ring-brand-500/20' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800'}`}
               >{t('tree.viewStats')}</button>
             </div>
           </>
@@ -709,8 +710,8 @@ export default function FamilyTreeTab({
       <div className="flex flex-1 min-h-0">
 
         {/* Sidebar */}
-        <div className={`bg-zinc-900 border-r border-zinc-800 flex flex-col overflow-hidden transition-all duration-300 shrink-0 ${sidebarOpen && activeView === 'tree' ? 'w-56' : 'w-0'}`}>
-          <div className="p-2 border-b border-zinc-800 space-y-1.5">
+        <div className={`flex flex-col overflow-hidden transition-all duration-300 shrink-0 ${sidebarOpen && activeView === 'tree' ? 'w-56' : 'w-0'}`} style={{ background: '#0f0e15', borderRight: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="p-2 space-y-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -739,7 +740,7 @@ export default function FamilyTreeTab({
               <button
                 key={p.id}
                 onClick={() => setSelectedId(p.id)}
-                className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${selectedId === p.id ? 'bg-zinc-700' : 'hover:bg-zinc-800'}`}
+                className={`w-full flex items-center gap-2.5 py-2 text-left transition-all ${selectedId === p.id ? 'bg-brand-500/10 border-l-2 border-brand-400 pl-[10px] pr-3' : 'border-l-2 border-transparent pl-[10px] pr-3 hover:bg-zinc-800/70'}`}
               >
                 <PersonAvatar person={p} size={32} />
                 <div className="min-w-0 flex-1">

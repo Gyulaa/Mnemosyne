@@ -162,18 +162,18 @@ function MiniCard({ person, highlightType, onClick }: {
       >
         {person.thumbnail_face_id && !err
           ? <img src={api.faceThumbnailUrl(person.thumbnail_face_id, 80)} className="w-full h-full object-cover" onError={() => setErr(true)} />
-          : <span className="text-[10px] font-semibold text-zinc-400">{initials}</span>
+          : <span className="text-xs font-semibold text-zinc-400">{initials}</span>
         }
       </button>
       <div className="text-center w-full px-1">
         <button
           onClick={onClick}
           disabled={!clickable}
-          className={`text-[10px] font-semibold leading-tight line-clamp-2 w-full transition-colors ${highlightType === 'lca' ? 'text-rose-300' : 'text-zinc-100'} ${clickable ? 'hover:underline cursor-pointer' : 'cursor-default'}`}
+          className={`text-xs font-semibold leading-tight line-clamp-2 w-full transition-colors ${highlightType === 'lca' ? 'text-rose-300' : 'text-zinc-100'} ${clickable ? 'hover:underline cursor-pointer' : 'cursor-default'}`}
         >
           {displayPersonName(person, nameOrder)}
         </button>
-        {years && <p className="text-[9px] text-zinc-500 mt-0.5 tabular-nums">{years}</p>}
+        {years && <p className="text-xs text-zinc-500 mt-0.5 tabular-nums">{years}</p>}
         {highlightType === 'lca' && (
           <p className="text-[8px] text-rose-500/80 font-medium tracking-wide uppercase mt-0.5">LCA</p>
         )}
@@ -634,7 +634,7 @@ export default function RelationPathModal({ personA, personB, persons, relations
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">Relationship</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-1">Relationship</p>
             <h2 className="text-sm font-semibold text-zinc-100">
               {displayPersonName(personA, nameOrder)}
               <span className="text-zinc-500 font-normal mx-2">and</span>
@@ -714,7 +714,7 @@ export default function RelationPathModal({ personA, personB, persons, relations
             {steps > 0 && (
               <>
                 <div className={[
-                  'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium',
+                  'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium',
                   isBloodOnly
                     ? 'bg-rose-950/60 text-rose-300 border border-rose-900/50'
                     : 'bg-blue-950/60 text-blue-300 border border-blue-900/50',
@@ -738,7 +738,7 @@ export default function RelationPathModal({ personA, personB, persons, relations
 
                 {lcaId && (
                   <div className="relative group/lca">
-                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-rose-950/60 text-rose-300 border border-rose-900/50 cursor-default select-none">
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-950/60 text-rose-300 border border-rose-900/50 cursor-default select-none">
                       <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m8-9h1M3 12H2m15.07-6.07l.707.707M5.636 18.364l-.707.707M18.364 18.364l.707-.707M5.636 5.636l-.707-.707" />
                       </svg>
@@ -751,12 +751,12 @@ export default function RelationPathModal({ personA, personB, persons, relations
                     {/* Tooltip */}
                     <div className="pointer-events-none absolute bottom-full left-0 mb-2 w-64 opacity-0 group-hover/lca:opacity-100 transition-opacity duration-150 z-10">
                       <div className="bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl p-3">
-                        <p className="text-[11px] font-semibold text-zinc-100 mb-1">Lowest Common Ancestor</p>
-                        <p className="text-[10px] text-zinc-400 leading-relaxed">
+                        <p className="text-xs font-semibold text-zinc-100 mb-1">Lowest Common Ancestor</p>
+                        <p className="text-xs text-zinc-400 leading-relaxed">
                           The nearest ancestor from whom both persons directly descend. Among equidistant candidates, a male ancestor is preferred.
                         </p>
                         {!lcaInChain && (
-                          <p className="text-[10px] text-rose-400/80 mt-1.5 leading-relaxed">
+                          <p className="text-xs text-rose-400/80 mt-1.5 leading-relaxed">
                             This ancestor is not shown in the path above because the connection was found via a sibling relation.
                           </p>
                         )}
@@ -766,7 +766,7 @@ export default function RelationPathModal({ personA, personB, persons, relations
                   </div>
                 )}
 
-                <span className="text-[11px] text-zinc-600">
+                <span className="text-xs text-zinc-600">
                   {steps} {steps === 1 ? 'step' : 'steps'}
                 </span>
               </>
@@ -782,7 +782,7 @@ export default function RelationPathModal({ personA, personB, persons, relations
                 }
               }}
               disabled={exporting}
-              className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {exporting ? (
                 <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">

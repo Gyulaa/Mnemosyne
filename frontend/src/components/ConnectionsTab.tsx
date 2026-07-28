@@ -438,7 +438,7 @@ function ForceGraph({
             </span>
           </div>
           {onEdgeClick && (
-            <div className="text-zinc-600 text-[10px]">{t('conn.clickToSee')}</div>
+            <div className="text-zinc-600 text-xs">{t('conn.clickToSee')}</div>
           )}
         </div>
       )}
@@ -527,7 +527,7 @@ function ConnectionRankList({
                 <span className="text-sm font-semibold text-zinc-200 tabular-nums leading-tight">
                   {scoring === 'weighted' ? edge.intimacy_score.toFixed(2) : edge.weight}
                 </span>
-                <span className="text-[10px] text-zinc-600 leading-tight whitespace-nowrap">
+                <span className="text-xs text-zinc-600 leading-tight whitespace-nowrap">
                   {scoring === 'weighted' ? `${edge.weight} photos · weighted` : 'shared'}
                 </span>
               </button>
@@ -681,7 +681,7 @@ export default function ConnectionsTab({
                 <button
                   onMouseEnter={() => setShowTooltip(true)}
                   onMouseLeave={() => setShowTooltip(false)}
-                  className="w-5 h-5 rounded-full bg-zinc-700 hover:bg-zinc-600 text-zinc-400 hover:text-zinc-200 text-[11px] font-bold flex items-center justify-center transition-colors"
+                  className="w-5 h-5 rounded-full bg-zinc-700 hover:bg-zinc-600 text-zinc-400 hover:text-zinc-200 text-xs font-bold flex items-center justify-center transition-colors"
                 >ℹ</button>
                 {showTooltip && (
                   <div className="absolute right-0 top-7 w-64 bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl p-3 z-50 text-xs text-zinc-300 leading-relaxed">
@@ -796,7 +796,7 @@ export default function ConnectionsTab({
       {/* Graph container — fills remaining height */}
       <div
         ref={containerRef}
-        className="flex-1 w-full bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden"
+        className="flex-1 w-full bg-transparent border border-zinc-800/60 rounded-2xl overflow-hidden"
       >
         {isLoading && (
           <div className="flex items-center justify-center h-full">

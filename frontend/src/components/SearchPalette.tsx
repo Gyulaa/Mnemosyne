@@ -43,7 +43,7 @@ function Avatar({ p }: { p: PersonFull }) {
     )
   }
   return (
-    <span className="text-[10px] font-semibold text-zinc-400 leading-none select-none">
+    <span className="text-xs font-semibold text-zinc-400 leading-none select-none">
       {displayInitials(p)}
     </span>
   )
@@ -142,11 +142,12 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
       onClick={onClose}
     >
       <div
-        className="w-[580px] bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden"
+        className="w-[580px] rounded-2xl shadow-2xl overflow-hidden"
+        style={{ background: '#111117', border: '1px solid rgba(255,255,255,0.1)' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Input row */}
-        <div className="flex items-center gap-3 px-4 h-14 border-b border-zinc-800">
+        <div className="flex items-center gap-3 px-4 h-14" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
           <svg className="w-4 h-4 text-zinc-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
             <circle cx="11" cy="11" r="7" />
             <path strokeLinecap="round" d="M20 20l-3.5-3.5" />
@@ -166,7 +167,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
               </svg>
             </button>
           )}
-          <kbd className="shrink-0 text-[10px] text-zinc-600 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">Esc</kbd>
+          <kbd className="shrink-0 text-xs text-zinc-600 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">Esc</kbd>
         </div>
 
         {/* Results */}
@@ -179,7 +180,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
             {/* Person results */}
             {results.some(r => r.kind === 'person') && (
               <div>
-                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">{t('search.persons')}</p>
+                <p className="px-4 pb-1 pt-0.5 text-xs text-zinc-600 uppercase tracking-widest font-semibold">{t('search.persons')}</p>
                 {results.filter(r => r.kind === 'person').map((item, i) => {
                   const p = (item as Extract<ResultItem, { kind: 'person' }>).person
                   const idx = results.indexOf(item)
@@ -202,7 +203,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
                         {personSub(p) && <p className="text-xs text-zinc-500 truncate">{personSub(p)}</p>}
                       </div>
                       {active && (
-                        <kbd className="shrink-0 text-[10px] text-zinc-600 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">↵</kbd>
+                        <kbd className="shrink-0 text-xs text-zinc-600 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">↵</kbd>
                       )}
                     </button>
                   )
@@ -213,7 +214,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
             {/* Event results */}
             {results.some(r => r.kind === 'event') && (
               <div className={results.some(r => r.kind === 'person') ? 'mt-1' : ''}>
-                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">{t('search.events')}</p>
+                <p className="px-4 pb-1 pt-0.5 text-xs text-zinc-600 uppercase tracking-widest font-semibold">{t('search.events')}</p>
                 {results.filter(r => r.kind === 'event').map(item => {
                   const e = (item as Extract<ResultItem, { kind: 'event' }>).event
                   const idx = results.indexOf(item)
@@ -243,7 +244,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
                         )}
                       </div>
                       {active && (
-                        <kbd className="shrink-0 text-[10px] text-zinc-600 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">↵</kbd>
+                        <kbd className="shrink-0 text-xs text-zinc-600 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">↵</kbd>
                       )}
                     </button>
                   )
@@ -254,7 +255,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
             {/* Document results */}
             {results.some(r => r.kind === 'document') && (
               <div className={results.some(r => r.kind !== 'document') ? 'mt-1' : ''}>
-                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">{t('search.documents')}</p>
+                <p className="px-4 pb-1 pt-0.5 text-xs text-zinc-600 uppercase tracking-widest font-semibold">{t('search.documents')}</p>
                 {results.filter(r => r.kind === 'document').map(item => {
                   const d = (item as Extract<ResultItem, { kind: 'document' }>).doc
                   const idx = results.indexOf(item)
@@ -281,7 +282,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
                         </p>
                       </div>
                       {active && (
-                        <kbd className="shrink-0 text-[10px] text-zinc-600 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">↵</kbd>
+                        <kbd className="shrink-0 text-xs text-zinc-600 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">↵</kbd>
                       )}
                     </button>
                   )
@@ -292,7 +293,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
             {/* Note results */}
             {results.some(r => r.kind === 'note') && (
               <div className={results.some(r => r.kind !== 'note') ? 'mt-1' : ''}>
-                <p className="px-4 pb-1 pt-0.5 text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">{t('search.notes')}</p>
+                <p className="px-4 pb-1 pt-0.5 text-xs text-zinc-600 uppercase tracking-widest font-semibold">{t('search.notes')}</p>
                 {results.filter(r => r.kind === 'note').map(item => {
                   const n = (item as Extract<ResultItem, { kind: 'note' }>).note
                   const owner = (item as Extract<ResultItem, { kind: 'note' }>).person
@@ -321,7 +322,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
                         </p>
                       </div>
                       {active && (
-                        <kbd className="shrink-0 text-[10px] text-zinc-600 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">↵</kbd>
+                        <kbd className="shrink-0 text-xs text-zinc-600 border border-zinc-700 rounded px-1.5 py-0.5 font-mono">↵</kbd>
                       )}
                     </button>
                   )

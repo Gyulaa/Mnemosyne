@@ -5,6 +5,7 @@ import { api } from '../api'
 import type { Cluster, ImageItem, ImagePerson, PersonEvent } from '../types'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
 import { useT } from '../SettingsContext'
+import { ImagePreviewModal } from './ImagePreviewModal'
 
 type FilterType = 'all' | 'done' | 'no_face' | 'error' | 'pending' | 'private'
 type SortOrder = 'id_desc' | 'exif_date_desc' | 'exif_date_asc' | 'filename_asc'
@@ -38,6 +39,7 @@ export default function ImagesTab({
   openImageTarget,
   onImageTargetConsumed,
   onNavToCluster,
+  onNavToEvent,
   onExportStart,
   onExportEnd,
 }: {
@@ -45,6 +47,7 @@ export default function ImagesTab({
   openImageTarget?: { imageId: number; personIds: number[]; key: number } | null
   onImageTargetConsumed?: () => void
   onNavToCluster?: (clusterId: number) => void
+  onNavToEvent?: (eventId: number) => void
   onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
@@ -741,11 +744,11 @@ export default function ImagesTab({
 
       {previewIdx !== null && (
         <ImagePreviewModal
-          images={pageItems}
-          idx={previewIdx}
-          onChange={setPreviewIdx}
+          imageIds={pageItems.map(img => img.id)}
+          startIdx={previewIdx}
           onClose={() => setPreviewIdx(null)}
           onNavToCluster={onNavToCluster}
+          onNavToEvent={onNavToEvent}
           onTogglePrivacy={togglePrivacySingle}
         />
       )}
@@ -837,7 +840,7 @@ function ImageCard({
           onClick={e => { e.stopPropagation(); onTogglePrivacy(img.id, false) }}
           onMouseDown={e => e.stopPropagation()}
           title={t('images.privacyOn')}
-          className="absolute bottom-8 right-2 flex items-center gap-1 px-1.5 py-0.5 bg-amber-900/80 hover:bg-amber-800/90 text-amber-300 rounded-md text-[10px] font-medium transition-colors"
+          className="absolute bottom-8 right-2 flex items-center gap-1 px-1.5 py-0.5 bg-amber-900/80 hover:bg-amber-800/90 text-amber-300 rounded-md text-xs font-medium transition-colors"
         >
           <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
@@ -876,184 +879,6 @@ function ImageCard({
   )
 }
 
-// ── ImagePreviewModal ─────────────────────────────────────────────────────────
-
-function ImagePreviewModal({ images, idx, onChange, onClose, onNavToCluster, onTogglePrivacy }: {
-  images: ImageItem[]
-  idx: number
-  onChange: (i: number) => void
-  onClose: () => void
-  onNavToCluster?: (clusterId: number) => void
-  onTogglePrivacy: (id: number, isPrivate: boolean) => void
-}) {
-  const img = images[idx]
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-      if (e.key === 'ArrowLeft')  onChange(Math.max(0, idx - 1))
-      if (e.key === 'ArrowRight') onChange(Math.min(images.length - 1, idx + 1))
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [idx, images.length, onClose, onChange])
-
-  const { data: persons = [] } = useQuery<ImagePerson[]>({
-    queryKey: ['image-persons', img.id],
-    queryFn: () => api.images.persons(img.id),
-    staleTime: 120_000,
-    enabled: img.face_count > 0,
-  })
-
-  const { data: linkedEvents = [] } = useQuery<PersonEvent[]>({
-    queryKey: ['image-events', img.id],
-    queryFn: () => api.events.listForImage(img.id),
-    staleTime: 30_000,
-  })
-
-  const t = useT()
-  const statusCls = STATUS_CLS[img.scan_status] ?? 'bg-zinc-800 text-zinc-400 border-zinc-700'
-  const exifMeta = parseMeta(img.meta_json)
-
-  return (
-    <div
-      className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
-      onClick={onClose}
-    >
-      {/* Nav arrows */}
-      <button onClick={e => { e.stopPropagation(); onChange(idx - 1) }} disabled={idx === 0}
-        className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-zinc-800/80 hover:bg-zinc-700 disabled:opacity-20 flex items-center justify-center text-zinc-200 text-2xl transition-colors z-10">‹</button>
-      <button onClick={e => { e.stopPropagation(); onChange(idx + 1) }} disabled={idx === images.length - 1}
-        className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-zinc-800/80 hover:bg-zinc-700 disabled:opacity-20 flex items-center justify-center text-zinc-200 text-2xl transition-colors z-10">›</button>
-
-      <div
-        className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col mx-16"
-        style={{ maxHeight: '92vh', width: 'min(860px, calc(100vw - 120px))' }}
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Image */}
-        <div className="bg-zinc-950 flex items-center justify-center overflow-hidden relative" style={{ maxHeight: '68vh', minHeight: 200 }}>
-          <img
-            key={img.id}
-            src={api.imageViewUrl(img.id, 1400)}
-            alt={img.filename}
-            className="max-w-full max-h-full object-contain"
-            style={{ maxHeight: '68vh' }}
-          />
-          {/* Counter */}
-          <div className="absolute bottom-2 right-2 bg-black/60 rounded-lg px-2 py-0.5 text-xs text-zinc-400 tabular-nums">
-            {idx + 1} / {images.length}
-          </div>
-        </div>
-
-        {/* Metadata */}
-        <div className="px-5 py-4 flex items-start justify-between gap-4 overflow-y-auto">
-          <div className="min-w-0 flex-1 space-y-2">
-            <div>
-              <p className="font-semibold text-zinc-100 truncate" title={img.filename}>{img.filename}</p>
-              <p className="text-xs text-zinc-500 truncate mt-0.5" title={img.path}>{img.path}</p>
-              {img.error_msg && <p className="text-xs text-red-400 mt-1">{img.error_msg}</p>}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
-              {img.exif_date && (
-                <span className="flex items-center gap-1 text-zinc-300 font-medium">
-                  <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                  {new Date(img.exif_date).toLocaleString('hu-HU')}
-                </span>
-              )}
-              {(exifMeta.make || exifMeta.model) && (
-                <span>{[exifMeta.make, exifMeta.model].filter(Boolean).join(' ')}</span>
-              )}
-              {exifMeta.width && exifMeta.height && (
-                <span>{exifMeta.width} × {exifMeta.height}</span>
-              )}
-            </div>
-
-            {/* Linked events */}
-            {linkedEvents.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-zinc-600">{t('images.events')}</span>
-                {linkedEvents.map(ev => (
-                  <span key={ev.id}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-brand-900/40 border border-brand-700/50 rounded-full text-xs text-brand-300">
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    {ev.title ?? ev.event_type}
-                    {ev.year ? ` (${ev.year})` : ''}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Persons in image */}
-            {persons.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-zinc-600">{t('images.persons')}</span>
-                {persons.map(p => {
-                  const canNav = onNavToCluster && p.cluster_id != null
-                  return canNav ? (
-                    <button key={p.person_id}
-                      onClick={() => { onNavToCluster!(p.cluster_id!); onClose() }}
-                      className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 hover:bg-zinc-700 rounded-full text-xs text-zinc-300 transition-colors cursor-pointer">
-                      <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
-                        className="w-4 h-4 rounded-full object-cover shrink-0" />
-                      {p.person_name ?? t('images.unnamed')}
-                    </button>
-                  ) : (
-                    <span key={p.person_id}
-                      className="inline-flex items-center gap-1 pl-0.5 pr-2 py-0.5 bg-zinc-800 border border-zinc-700 rounded-full text-xs text-zinc-300">
-                      <img src={api.faceThumbnailUrl(p.face_id, 32)} alt=""
-                        className="w-4 h-4 rounded-full object-cover shrink-0" />
-                      {p.person_name ?? t('images.unnamed')}
-                    </span>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="flex items-start gap-2 shrink-0">
-            {STATUS_KEY[img.scan_status] && (
-              <span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-medium border ${statusCls}`}>
-                {t(STATUS_KEY[img.scan_status])}
-              </span>
-            )}
-            <button
-              onClick={() => onTogglePrivacy(img.id, !img.is_private)}
-              title={img.is_private ? t('images.privacyOn') : t('images.privacyOff')}
-              className={`flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-lg transition-colors whitespace-nowrap ${
-                img.is_private
-                  ? 'text-amber-300 bg-amber-900/40 hover:bg-amber-900/60'
-                  : 'text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700'
-              }`}
-            >
-              {img.is_private ? (
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
-                </svg>
-              ) : (
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
-                </svg>
-              )}
-              {img.is_private ? t('images.private') : t('images.makePrivate')}
-            </button>
-            <button onClick={onClose}
-              className="p-1.5 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ── ImageRow (list view) ──────────────────────────────────────────────────────
 
@@ -1119,7 +944,7 @@ function ImageRow({
             {img.filename}
           </p>
           {hasEvent && (
-            <span className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-brand-900/60 text-brand-400 border border-brand-700/50" title={t('images.linkedToEvent')}>
+            <span className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-medium bg-brand-900/60 text-brand-400 border border-brand-700/50" title={t('images.linkedToEvent')}>
               <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
@@ -1131,7 +956,7 @@ function ImageRow({
               onClick={e => { e.stopPropagation(); onTogglePrivacy(img.id, false) }}
               onMouseDown={e => e.stopPropagation()}
               title={t('images.privacyOn')}
-              className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-900/60 text-amber-300 border border-amber-700/50 hover:bg-amber-800/80 transition-colors"
+              className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-medium bg-amber-900/60 text-amber-300 border border-amber-700/50 hover:bg-amber-800/80 transition-colors"
             >
               <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
@@ -1299,7 +1124,7 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
             <p className="text-sm font-semibold text-zinc-100">
               {step === 'persons' ? 'Who else was there?' : 'Add to event'}
             </p>
-            <p className="text-[10px] text-zinc-500 mt-0.5">
+            <p className="text-xs text-zinc-500 mt-0.5">
               {step === 'persons'
                 ? `${attachedCount} photo${attachedCount !== 1 ? 's' : ''} attached — add participants?`
                 : `${imageIds.length} photo${imageIds.length !== 1 ? 's' : ''} selected`}
@@ -1401,7 +1226,7 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
 
               {showCreate && (
                 <div className="border border-zinc-700/60 rounded-xl p-3 bg-zinc-800/30">
-                  <p className="text-[10px] text-zinc-500 mb-2">Create and select a new event</p>
+                  <p className="text-xs text-zinc-500 mb-2">Create and select a new event</p>
                   <EventEditor
                     event={null}
                     persons={[]}
@@ -1434,13 +1259,13 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
                     <div className="shrink-0"><EventIcon type={ev.event_type} /></div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-zinc-100 truncate">{ev.title || typeLabel}</p>
-                      {ev.title && <p className="text-[10px] text-zinc-500">{typeLabel}</p>}
+                      {ev.title && <p className="text-xs text-zinc-500">{typeLabel}</p>}
                       {(dateStr || ev.place) && (
-                        <p className="text-[10px] text-zinc-500 truncate">{[dateStr, ev.place].filter(Boolean).join(' · ')}</p>
+                        <p className="text-xs text-zinc-500 truncate">{[dateStr, ev.place].filter(Boolean).join(' · ')}</p>
                       )}
                     </div>
                     {ev.images.length > 0 && (
-                      <span className="text-[10px] text-zinc-600 shrink-0 tabular-nums">
+                      <span className="text-xs text-zinc-600 shrink-0 tabular-nums">
                         {ev.images.length} photo{ev.images.length !== 1 ? 's' : ''}
                       </span>
                     )}

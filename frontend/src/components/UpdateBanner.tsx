@@ -77,7 +77,7 @@ function Modal({
         {/* Header */}
         <div className="flex items-start justify-between px-6 pt-6 pb-4">
           <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-semibold mb-1">{t('update.header')}</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-1">{t('update.header')}</p>
             <h2 className="text-base font-semibold text-zinc-100">
               {status.status === 'idle'             && t('update.idle')}
               {status.status === 'up_to_date'       && t('update.upToDate')}
@@ -106,7 +106,7 @@ function Modal({
           {status.current_version && (
             <div className="flex items-center gap-3 text-sm">
               <div className="text-center">
-                <p className="text-[10px] text-zinc-500 mb-0.5">{t('update.currentVersion')}</p>
+                <p className="text-xs text-zinc-500 mb-0.5">{t('update.currentVersion')}</p>
                 <p className="font-mono text-xs text-zinc-300 bg-zinc-800 px-2 py-1 rounded-md">
                   {status.current_version}
                 </p>
@@ -117,7 +117,7 @@ function Modal({
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
                   <div className="text-center">
-                    <p className="text-[10px] text-zinc-500 mb-0.5">{t('update.latestVersion')}</p>
+                    <p className="text-xs text-zinc-500 mb-0.5">{t('update.latestVersion')}</p>
                     <p className="font-mono text-xs text-green-300 bg-green-950/50 border border-green-800/40 px-2 py-1 rounded-md">
                       {status.latest_version}
                     </p>
@@ -156,7 +156,7 @@ function Modal({
                 <svg className="w-4 h-4 text-green-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                 </svg>
-                <p className="text-[12px] text-zinc-400 leading-relaxed">{t('update.safeNote')}</p>
+                <p className="text-xs text-zinc-400 leading-relaxed">{t('update.safeNote')}</p>
               </div>
             </div>
           )}
@@ -185,9 +185,9 @@ function Modal({
                 <svg className="w-4 h-4 text-green-400 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                 </svg>
-                <p className="text-[12px] text-green-300 leading-relaxed">{t('update.readyBody')}</p>
+                <p className="text-xs text-green-300 leading-relaxed">{t('update.readyBody')}</p>
               </div>
-              <p className="text-[11px] text-zinc-500">{t('update.readyNote')}</p>
+              <p className="text-xs text-zinc-500">{t('update.readyNote')}</p>
             </div>
           )}
 
@@ -208,7 +208,7 @@ function Modal({
           {/* Error */}
           {status.status === 'error' && (
             <div className="p-3 bg-red-950/40 border border-red-800/40 rounded-xl">
-              <p className="text-[12px] text-red-300 leading-relaxed">{status.error}</p>
+              <p className="text-xs text-red-300 leading-relaxed">{status.error}</p>
             </div>
           )}
 

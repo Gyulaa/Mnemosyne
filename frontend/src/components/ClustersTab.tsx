@@ -175,18 +175,18 @@ export default function ClustersTab({
       })()}
 
       {/* Summary + filter + search + selection export */}
-      <div className="sticky top-0 z-10 bg-zinc-950 pb-3 space-y-2">
+      <div className="sticky top-0 z-10 pb-3 space-y-2 backdrop-blur-sm" style={{ background: 'rgba(9,9,11,0.88)' }}>
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-sm text-zinc-500 whitespace-nowrap">
             {filteredNamed.length}{filteredNamed.length !== named.length ? ` / ${named.length}` : ''} {t('clusters.clustersLabel')}
           </span>
-          <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
+          <div className="flex rounded-lg p-0.5 gap-0.5" style={{ background: 'rgba(255,255,255,0.05)' }}>
             {(['all', 'named', 'unnamed', 'unlinked'] as const).map(f => (
               <button
                 key={f}
                 onClick={() => setNameFilter(f)}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                  nameFilter === f ? 'bg-zinc-600 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  nameFilter === f ? 'bg-brand-500/15 text-brand-300 ring-1 ring-inset ring-brand-500/20' : 'text-zinc-500 hover:text-zinc-300'
                 }`}
               >
                 {f === 'all' ? t('clusters.filterAll') : f === 'named' ? t('clusters.filterNamed') : f === 'unnamed' ? t('clusters.filterUnnamed') : t('clusters.filterNotLinked')}
@@ -198,7 +198,7 @@ export default function ClustersTab({
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder={t('clusters.search')}
-            className="flex-1 max-w-xs bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 transition-colors"
+            className="flex-1 max-w-xs bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-brand-400/60 transition-colors"
           />
           {checkedClusters.size > 0 && (() => {
             const selectedClusters = filteredNamed.filter(c => checkedClusters.has(c.id))
@@ -357,9 +357,13 @@ function ClusterCard({
       onMouseLeave={cancelPress}
       onDragStart={e => e.preventDefault()}
       onClick={handleClick}
-      className={`relative bg-zinc-900 border rounded-xl overflow-hidden hover:border-zinc-600 hover:shadow-lg transition-all text-left group cursor-pointer select-none ${
-        checked ? 'border-brand-400 ring-1 ring-brand-400/40' : 'border-zinc-800'
+      className={`relative border rounded-xl overflow-hidden hover:shadow-lg hover:shadow-brand-950/60 transition-all text-left group cursor-pointer select-none ${
+        checked ? 'ring-1 ring-brand-400/40' : ''
       }`}
+      style={{
+        borderColor: checked ? 'rgba(168,85,247,0.6)' : 'rgba(255,255,255,0.07)',
+        background: 'linear-gradient(180deg, #1b1a24 0%, #131219 100%)',
+      }}
     >
       {/* Selection checkbox */}
       <div
@@ -377,9 +381,9 @@ function ClusterCard({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-px bg-zinc-800">
+      <div className="grid grid-cols-2 gap-px" style={{ background: 'rgba(255,255,255,0.05)' }}>
         {([0, 1, 2, 3] as const).map(i => (
-          <div key={i} className="aspect-square bg-zinc-900 overflow-hidden">
+          <div key={i} className="aspect-square overflow-hidden" style={{ background: '#131219' }}>
             {previews[i] != null ? (
               <img
                 src={api.faceThumbnailUrl(previews[i])}
@@ -595,12 +599,12 @@ function ClusterModal({
       onClick={onClose}
     >
       <div
-        className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-5xl flex flex-col shadow-2xl"
-        style={{ maxHeight: '90vh' }}
+        className="rounded-2xl w-full max-w-5xl flex flex-col shadow-2xl"
+        style={{ background: '#111117', border: '1px solid rgba(255,255,255,0.08)', maxHeight: '90vh' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-zinc-800 space-y-3">
+        <div className="px-6 py-4 space-y-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
           <div className="flex items-start gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-xs text-zinc-500 mb-1.5 uppercase tracking-wider">
@@ -929,7 +933,7 @@ function ConnectionsPanel({ connections, onNavigate }: {
       <div className="flex items-center gap-2 px-2 pb-3">
         <span className="text-xs text-zinc-600">{connections.length} kapcsolat</span>
         <div className="ml-auto flex items-center gap-1.5">
-          <div className="flex bg-zinc-800 rounded-lg p-0.5 gap-0.5">
+          <div className="flex rounded-lg p-0.5 gap-0.5" style={{ background: 'rgba(255,255,255,0.05)' }}>
             {(['count', 'weighted'] as ScoringMode[]).map(mode => (
               <button
                 key={mode}
@@ -949,7 +953,7 @@ function ConnectionsPanel({ connections, onNavigate }: {
             <button
               onMouseEnter={() => setShowTooltip(true)}
               onMouseLeave={() => setShowTooltip(false)}
-              className="w-5 h-5 rounded-full bg-zinc-700 hover:bg-zinc-600 text-zinc-400 hover:text-zinc-200 text-[11px] font-bold flex items-center justify-center transition-colors"
+              className="w-5 h-5 rounded-full bg-zinc-700 hover:bg-zinc-600 text-zinc-400 hover:text-zinc-200 text-xs font-bold flex items-center justify-center transition-colors"
             >ℹ</button>
             {showTooltip && (
               <div className="absolute right-0 top-7 w-64 bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl p-3 z-50 text-xs text-zinc-300 leading-relaxed">
@@ -1003,14 +1007,14 @@ function ConnectionsPanel({ connections, onNavigate }: {
                 {scoring === 'count' ? (
                   <>
                     <span className="tabular-nums text-sm text-zinc-200 font-semibold leading-none">{c.shared_photos}</span>
-                    <span className="text-[10px] text-zinc-600 leading-none mt-0.5">
+                    <span className="text-xs text-zinc-600 leading-none mt-0.5">
                       shared · {c.intimacy_score.toFixed(2)} weighted
                     </span>
                   </>
                 ) : (
                   <>
                     <span className="tabular-nums text-sm text-zinc-200 font-semibold leading-none">{c.intimacy_score.toFixed(2)}</span>
-                    <span className="text-[10px] text-zinc-600 leading-none mt-0.5">
+                    <span className="text-xs text-zinc-600 leading-none mt-0.5">
                       weighted · {c.shared_photos} shared
                     </span>
                   </>
@@ -1241,7 +1245,7 @@ function GenealogyTab({
             if (!persons.length) return null
             return (
               <div key={label}>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 px-3 pb-1">
+                <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500 px-3 pb-1">
                   {label}
                 </p>
                 <div>
@@ -2046,11 +2050,11 @@ function ClusterPersonPickerModal({ persons, relations, nameOrder, linking, onSe
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm text-zinc-200 truncate">{displayPersonName(p, nameOrder)}</span>
-                    {p.sex && <span className="text-[10px] text-zinc-600 shrink-0">{p.sex === 'M' ? '♂' : '♀'}</span>}
+                    {p.sex && <span className="text-xs text-zinc-600 shrink-0">{p.sex === 'M' ? '♂' : '♀'}</span>}
                   </div>
-                  {lifespan  && <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{lifespan}</p>}
-                  {parents.length > 0 && <p className="text-[10px] text-zinc-600 mt-0.5 truncate"><span className="text-zinc-700">Parents: </span>{parents.join(', ')}</p>}
-                  {spouses.length > 0 && <p className="text-[10px] text-zinc-600 mt-0.5 truncate"><span className="text-zinc-700">Spouse: </span>{spouses.join(', ')}</p>}
+                  {lifespan  && <p className="text-xs text-zinc-500 mt-0.5 truncate">{lifespan}</p>}
+                  {parents.length > 0 && <p className="text-xs text-zinc-600 mt-0.5 truncate"><span className="text-zinc-700">Parents: </span>{parents.join(', ')}</p>}
+                  {spouses.length > 0 && <p className="text-xs text-zinc-600 mt-0.5 truncate"><span className="text-zinc-700">Spouse: </span>{spouses.join(', ')}</p>}
                 </div>
               </button>
             )
@@ -2410,23 +2414,23 @@ function AssignFacesOverlay({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-sm font-medium text-zinc-200 truncate">{displayPersonName(p, nameOrder)}</span>
-                          {p.sex && <span className="text-[10px] text-zinc-600 shrink-0">{p.sex === 'M' ? '♂' : '♀'}</span>}
+                          {p.sex && <span className="text-xs text-zinc-600 shrink-0">{p.sex === 'M' ? '♂' : '♀'}</span>}
                         </div>
                         {lifespan && (
-                          <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{lifespan}</p>
+                          <p className="text-xs text-zinc-500 mt-0.5 truncate">{lifespan}</p>
                         )}
                         {parents.length > 0 && (
-                          <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                          <p className="text-xs text-zinc-600 mt-0.5 truncate">
                             <span className="text-zinc-700">↑ </span>{parents.join(', ')}
                           </p>
                         )}
                         {spouses.length > 0 && (
-                          <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                          <p className="text-xs text-zinc-600 mt-0.5 truncate">
                             <span className="text-zinc-700">♥ </span>{spouses.join(', ')}
                           </p>
                         )}
                         {children.length > 0 && (
-                          <p className="text-[10px] text-zinc-600 mt-0.5 truncate">
+                          <p className="text-xs text-zinc-600 mt-0.5 truncate">
                             <span className="text-zinc-700">↓ </span>
                             {children.slice(0, 3).join(', ')}{children.length > 3 ? ` +${children.length - 3}` : ''}
                           </p>
@@ -2436,14 +2440,14 @@ function AssignFacesOverlay({
                       {/* Cluster status badge */}
                       <div className="shrink-0 ml-1">
                         {hasClusters ? (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-brand-950/60 text-brand-400 border border-brand-800/50 rounded-full px-2 py-0.5">
+                          <span className="inline-flex items-center gap-1 text-xs font-medium bg-brand-950/60 text-brand-400 border border-brand-800/50 rounded-full px-2 py-0.5">
                             <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20">
                               <circle cx="10" cy="10" r="4" />
                             </svg>
                             Has cluster
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-zinc-800 text-zinc-500 border border-zinc-700/50 rounded-full px-2 py-0.5">
+                          <span className="inline-flex items-center gap-1 text-xs font-medium bg-zinc-800 text-zinc-500 border border-zinc-700/50 rounded-full px-2 py-0.5">
                             <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 20 20" stroke="currentColor" strokeWidth={2}>
                               <circle cx="10" cy="10" r="4" />
                               <path strokeLinecap="round" d="M10 6v8M6 10h8" />

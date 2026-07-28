@@ -34,7 +34,7 @@ const TITLE_SUGGESTIONS = ['Dr.', 'Prof.', 'Sr.', 'Jr.', 'Rev.', 'PhD', 'MD', 'E
 const SIZES = {
   sm: {
     input: 'w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400',
-    label: 'text-[10px] text-zinc-500 block mb-0.5',
+    label: 'text-xs text-zinc-500 block mb-0.5',
     gap: 'space-y-1.5',
     grid: 'grid grid-cols-2 gap-1.5',
   },

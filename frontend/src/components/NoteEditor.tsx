@@ -404,7 +404,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
                         <button key={s.id} type="button" onClick={() => insertCiteAtCursor(s)}
                           className="w-full text-left px-3 py-2 hover:bg-zinc-800 transition-colors">
                           <p className="text-xs text-zinc-100 truncate">{s.title}</p>
-                          <p className="text-[10px] text-zinc-500">
+                          <p className="text-xs text-zinc-500">
                             {[s.source_type, s.year, s.author].filter(Boolean).join(' · ')}
                           </p>
                         </button>
@@ -414,7 +414,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
                 </>
               ) : (
                 <div className="p-3 space-y-2">
-                  <p className="text-[10px] text-zinc-500">Type any reference text — a URL, book title, oral source, etc.</p>
+                  <p className="text-xs text-zinc-500">Type any reference text — a URL, book title, oral source, etc.</p>
                   <input
                     autoFocus
                     value={customCiteText}
@@ -466,7 +466,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
           }}
           className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl overflow-hidden"
         >
-          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold text-zinc-600 uppercase tracking-wider">Mention person</p>
+          <p className="px-3 pt-2 pb-1 text-xs font-semibold text-zinc-600 uppercase tracking-wider">Mention person</p>
           <div className="max-h-56 overflow-y-auto">
             {mentionMatches.map((p, i) => {
               const active = i === mentionCursor
@@ -487,29 +487,29 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
                     {displayPersonName(p, nameOrder)}
                   </p>
                   {bio && (
-                    <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{bio}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5 truncate">{bio}</p>
                   )}
                   {active && fam && (
                     <div className="mt-1 space-y-0.5">
                       {fam.spouses.length > 0 && (
-                        <p className="text-[10px] text-brand-400 truncate">
+                        <p className="text-xs text-brand-400 truncate">
                           ♥ {fam.spouses.join(', ')}
                         </p>
                       )}
                       {fam.parents.length > 0 && (
-                        <p className="text-[10px] text-zinc-500 truncate">
+                        <p className="text-xs text-zinc-500 truncate">
                           ↑ {fam.parents.join(', ')}
                         </p>
                       )}
                       {fam.children.length > 0 && (
-                        <p className="text-[10px] text-zinc-500 truncate">
+                        <p className="text-xs text-zinc-500 truncate">
                           ↓ {fam.children.length <= 3
                             ? fam.children.join(', ')
                             : `${fam.children[0]}, ${fam.children[1]} +${fam.children.length - 2}`}
                         </p>
                       )}
                       {fam.spouses.length === 0 && fam.parents.length === 0 && fam.children.length > 0 && fam.siblings.length > 0 && (
-                        <p className="text-[10px] text-zinc-600 truncate">
+                        <p className="text-xs text-zinc-600 truncate">
                           ~ {fam.siblings.slice(0, 2).join(', ')}{fam.siblings.length > 2 ? ` +${fam.siblings.length - 2}` : ''}
                         </p>
                       )}
@@ -526,15 +526,15 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
       {/* References panel */}
       {citations.length > 0 && (
         <div className="border-t border-zinc-800 px-4 py-2.5 space-y-1.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600">References</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-600">References</p>
           {[...citations].sort((a, b) => a.marker - b.marker).map(c => (
             <div key={c.id} className="flex items-start gap-2 group/ref">
-              <span className="text-[10px] text-zinc-600 font-mono shrink-0 mt-0.5 w-5 text-right">[{c.marker}]</span>
+              <span className="text-xs text-zinc-600 font-mono shrink-0 mt-0.5 w-5 text-right">[{c.marker}]</span>
               <div className="flex-1 min-w-0">
-                <p className="text-[11px] text-amber-300 leading-snug truncate">
+                <p className="text-xs text-amber-300 leading-snug truncate">
                   {c.custom_label ?? c.source_title ?? '—'}
                 </p>
-                {c.detail && <p className="text-[10px] text-zinc-500">{c.detail}</p>}
+                {c.detail && <p className="text-xs text-zinc-500">{c.detail}</p>}
               </div>
               <button
                 type="button"
@@ -565,19 +565,19 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
         </div>
         {confirmDelete ? (
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-zinc-500">Delete this note?</span>
+            <span className="text-xs text-zinc-500">Delete this note?</span>
             <button onClick={doDelete} disabled={deleting}
-              className="text-[10px] text-red-400 hover:text-red-300 font-medium transition-colors">
+              className="text-xs text-red-400 hover:text-red-300 font-medium transition-colors">
               {deleting ? '…' : 'Yes, delete'}
             </button>
             <button onClick={() => setConfirmDelete(false)}
-              className="text-[10px] text-zinc-600 hover:text-zinc-400 transition-colors">
+              className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
               Cancel
             </button>
           </div>
         ) : (
           <button onClick={() => setConfirmDelete(true)}
-            className="text-[10px] text-zinc-600 hover:text-red-400 transition-colors">
+            className="text-xs text-zinc-600 hover:text-red-400 transition-colors">
             Delete
           </button>
         )}
@@ -705,7 +705,7 @@ function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, 
               <h2 className="text-sm text-zinc-500 italic">Untitled note</h2>
             )}
             {editedAt && (
-              <p className="text-[11px] text-zinc-600 mt-0.5">{editedAt}</p>
+              <p className="text-xs text-zinc-600 mt-0.5">{editedAt}</p>
             )}
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
@@ -748,7 +748,7 @@ function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, 
           {/* Citations / references */}
           {sortedCitations.length > 0 && (
             <div className="border-t border-zinc-800 bg-zinc-950/40 px-3 py-3">
-              <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-zinc-600">
+              <p className="px-3 pb-1.5 text-xs font-semibold uppercase tracking-widest text-zinc-600">
                 References
               </p>
               <div className="space-y-0.5">
@@ -926,7 +926,7 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
             <svg className="w-3 h-3 text-amber-700 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
             </svg>
-            <span className="text-[10px] text-zinc-600">
+            <span className="text-xs text-zinc-600">
               {note.citations.length} reference{note.citations.length !== 1 ? 's' : ''} — click to view
             </span>
           </div>

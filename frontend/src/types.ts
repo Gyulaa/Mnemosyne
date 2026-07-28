@@ -3,7 +3,24 @@ export interface ScanStatus {
   processed: number
   total: number
   errors: number
+  dupes_skipped: number
   current_path: string | null
+}
+
+export interface DuplicateImageInfo {
+  id: number
+  path: string
+  scan_status: string
+  similarity: string
+  hamming_distance: number | null
+  width: number | null
+  height: number | null
+  exif_date: string | null
+}
+
+export interface DuplicateGroup {
+  original: DuplicateImageInfo
+  duplicates: DuplicateImageInfo[]
 }
 
 export interface Stats {
@@ -12,6 +29,7 @@ export interface Stats {
   no_face: number
   errors: number
   pending: number
+  duplicates: number
   total_faces: number
   total_clusters: number
   noise_faces: number

@@ -4,6 +4,7 @@ from typing import Optional
 
 class ScanStartRequest(BaseModel):
     path: str
+    skip_duplicates: bool = False
 
 
 class ScanStatusResponse(BaseModel):
@@ -11,7 +12,24 @@ class ScanStatusResponse(BaseModel):
     processed: int
     total: int
     errors: int
+    dupes_skipped: int = 0
     current_path: Optional[str] = None
+
+
+class DuplicateImageInfo(BaseModel):
+    id: int
+    path: str
+    scan_status: str
+    similarity: str  # 'exact' | 'near'
+    hamming_distance: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    exif_date: Optional[str] = None
+
+
+class DuplicateGroup(BaseModel):
+    original: DuplicateImageInfo
+    duplicates: list[DuplicateImageInfo]
 
 
 class ClusterRunRequest(BaseModel):
