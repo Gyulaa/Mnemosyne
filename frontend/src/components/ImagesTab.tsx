@@ -1,7 +1,7 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
-import { api } from '../api'
+import { api, downloadViaBrowser } from '../api'
 import type { Cluster, ImageItem, ImagePerson, PersonEvent } from '../types'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
 import { useT } from '../SettingsContext'
@@ -214,22 +214,8 @@ export default function ImagesTab({
 
   async function exportZip() {
     if (exportingZip || total === 0) return
-    setExportingZip(true)
-    const controller = new AbortController()
-    onExportStart?.(() => controller.abort())
-    try {
-      const blob = await api.images.exportZip(filter, search, sort, incArr, excArr, includeMode, controller.signal)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = 'images_export.zip'; a.click()
-      URL.revokeObjectURL(url)
-      onExportEnd?.()
-    } catch (e) {
-      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
-      else onExportEnd?.(String(e))
-    } finally {
-      setExportingZip(false)
-    }
+    // Native download — the browser streams to disk and owns the progress UI.
+    downloadViaBrowser(api.images.exportUrl(filter, search, sort, incArr, excArr, includeMode))
   }
 
   async function exportSelected() {

@@ -2,6 +2,21 @@ import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, Co
 
 const BASE = '/api'
 
+/**
+ * Hand a URL to the browser's native download manager.
+ * The server sends Content-Disposition: attachment, so this streams to disk
+ * instead of navigating away — no memory ceiling, and the browser owns the
+ * progress bar and cancel button.
+ */
+export function downloadViaBrowser(url: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init)
   if (!res.ok) {
@@ -152,6 +167,38 @@ export const api = {
       if (!res.ok) throw new Error(await res.text())
       return res.blob()
     },
+    /**
+     * Build the export URL for a native browser download.
+     * Multi-GB archives must NOT go through fetch()+blob(): the whole body would
+     * be buffered in browser memory and blow past Chrome's blob quota
+     * ("TypeError: Failed to fetch"). Navigating instead lets the browser stream
+     * straight to disk with its own progress UI and cancel button.
+     */
+    exportUrl: (
+      clusterIds?: number[],
+      name?: string,
+      includeGenealogy = true,
+      personIds?: number[],
+      includeFaceless = true,
+      includeNotes = true,
+      includeSources = true,
+      includeEvents = true,
+      includeDocuments = true,
+      includeImages = true,
+    ): string => {
+      const p = new URLSearchParams()
+      if (clusterIds?.length) p.set('cluster_ids', clusterIds.join(','))
+      if (personIds?.length) p.set('person_ids', personIds.join(','))
+      if (name) p.set('name', name)
+      if (!includeGenealogy) p.set('include_genealogy', 'false')
+      if (!includeFaceless) p.set('include_faceless', 'false')
+      if (!includeNotes) p.set('include_notes', 'false')
+      if (!includeSources) p.set('include_sources', 'false')
+      if (!includeEvents) p.set('include_events', 'false')
+      if (!includeDocuments) p.set('include_documents', 'false')
+      if (!includeImages) p.set('include_images', 'false')
+      return `${BASE}/projects/export?${p}`
+    },
     exportGedcom: async (opts?: {
       photoMode?: 'none' | 'primary' | 'all'
       includeDocuments?: boolean
@@ -248,6 +295,13 @@ export const api = {
       const res = await fetch(`${BASE}/images/export-zip?${p}`, { signal })
       if (!res.ok) throw new Error(await res.text())
       return res.blob()
+    },
+    /** Export URL for a native browser download — see project.exportUrl. */
+    exportUrl: (filter: string, search: string, sort: string, includePersonIds: number[], excludePersonIds: number[], includeMode: string): string => {
+      const p = new URLSearchParams({ filter, search, sort, include_mode: includeMode })
+      if (includePersonIds.length) p.set('include_person_ids', includePersonIds.join(','))
+      if (excludePersonIds.length) p.set('exclude_person_ids', excludePersonIds.join(','))
+      return `${BASE}/images/export-zip?${p}`
     },
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/images/${id}`, { method: 'DELETE' }),

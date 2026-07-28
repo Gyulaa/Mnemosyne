@@ -4,8 +4,10 @@ import mimetypes
 import os
 import re
 import string
+import threading
 import unicodedata
 import uuid
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -156,19 +158,18 @@ def export_project(
     if person_ids.strip():
         parsed_person_ids = [int(x) for x in person_ids.split(",") if x.strip().isdigit()]
 
-    buf = export_utils.create_project_zip(
-        source_db, project_info, parsed_cluster_ids,
-        include_genealogy, parsed_person_ids, include_faceless,
-        include_notes, include_sources, include_events,
-        include_documents, include_images,
-    )
     raw_name = project_info.get('name', 'project')
     ascii_name = unicodedata.normalize("NFD", raw_name).encode("ascii", "ignore").decode("ascii")
     filename = f"{ascii_name.replace(' ', '_') or 'project'}_export.zip"
     filename_utf8 = quote(f"{raw_name.replace(' ', '_')}_export.zip")
 
     return StreamingResponse(
-        buf,
+        export_utils.stream_project_zip(
+            source_db, project_info, parsed_cluster_ids,
+            include_genealogy, parsed_person_ids, include_faceless,
+            include_notes, include_sources, include_events,
+            include_documents, include_images,
+        ),
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{filename_utf8}"},
     )
@@ -176,7 +177,7 @@ def export_project(
 
 @app.get("/api/export/gedcom")
 def export_gedcom(
-    photo_mode: str = Query("primary", regex="^(none|primary|all)$"),
+    photo_mode: str = Query("primary", pattern="^(none|primary|all)$"),
     include_documents: bool = Query(True),
     include_events: bool = Query(True),
     include_sources: bool = Query(True),
@@ -808,6 +809,37 @@ def get_images_with_events(db: Session = Depends(get_db)):
     return [r[0] for r in rows]
 
 
+def _stream_zip(images):
+    """Yield ZIP bytes progressively via OS pipe — avoids buffering all files in RAM."""
+    read_fd, write_fd = os.pipe()
+    exc: list = []
+
+    def producer():
+        try:
+            with os.fdopen(write_fd, 'wb') as wf:
+                with zipfile.ZipFile(export_utils.NonSeekableWriter(wf), 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                    for img in images:
+                        p = Path(img.path)
+                        if p.exists():
+                            zf.write(str(p), f"{img.id}_{p.name}")
+        except Exception as e:
+            exc.append(e)
+
+    t = threading.Thread(target=producer, daemon=True)
+    t.start()
+    try:
+        with os.fdopen(read_fd, 'rb') as rf:
+            while True:
+                chunk = rf.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+    finally:
+        t.join()
+    if exc:
+        raise exc[0]
+
+
 @app.get("/api/images/export-zip")
 def export_images_zip(
     filter: str = Query(default="all"),
@@ -848,16 +880,8 @@ def export_images_zip(
     if not images:
         raise HTTPException(404, "No images match the current filter")
 
-    buf = io.BytesIO()
-    with __import__("zipfile").ZipFile(buf, "w", __import__("zipfile").ZIP_DEFLATED, allowZip64=True) as zf:
-        for img in images:
-            p = Path(img.path)
-            if p.exists():
-                zf.write(str(p), f"{img.id}_{p.name}")
-    buf.seek(0)
-
     return StreamingResponse(
-        buf,
+        _stream_zip(images),
         media_type="application/zip",
         headers={"Content-Disposition": "attachment; filename=images_export.zip"},
     )
@@ -2922,22 +2946,12 @@ def export_event_images_zip(event_id: int, db: Session = Depends(get_db)):
     if not ev.event_images:
         raise HTTPException(404, "Event has no images")
 
-    buf = io.BytesIO()
-    with __import__("zipfile").ZipFile(buf, "w", __import__("zipfile").ZIP_DEFLATED, allowZip64=True) as zf:
-        for ei in ev.event_images:
-            img = ei.image
-            if not img:
-                continue
-            p = Path(img.path)
-            if p.exists():
-                zf.write(str(p), f"{img.id}_{p.name}")
-    buf.seek(0)
-
+    event_imgs = [ei.image for ei in ev.event_images if ei.image]
     safe_title = re.sub(r'[^\w\s-]', '', ev.title or 'event').strip().replace(' ', '_') or 'event'
     filename = f"event_{event_id}_{safe_title}.zip"
 
     return StreamingResponse(
-        buf,
+        _stream_zip(event_imgs),
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=\"{filename}\""},
     )

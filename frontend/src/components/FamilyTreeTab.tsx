@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api'
+import { api, downloadViaBrowser } from '../api'
 import type { PersonFull, Relation } from '../types'
 import TreeView from './TreeView'
 import PersonPanel from './PersonPanel'
@@ -510,30 +510,16 @@ export default function FamilyTreeTab({
   async function handleTreeExport({ name, excludeLiving, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, includeFaceless }: { name: string; includeGenealogy: boolean; excludeLiving: boolean; includeNotes: boolean; includeSources: boolean; includeEvents: boolean; includeDocuments: boolean; includeImages: boolean; includeFaceless: boolean }) {
     if (!activeGroup || exporting) return
     setShowExportModal(false)
-    setExporting(true)
-    const controller = new AbortController()
-    onExportStart?.(() => controller.abort())
-    try {
-      let personIds = activeGroup.persons.map(p => p.id)
-      if (excludeLiving) {
-        personIds = activeGroup.persons
-          .filter(p => p.death_year != null || p.death_date != null)
-          .map(p => p.id)
-      }
-      const blob = await api.project.exportZip(undefined, name, true, personIds, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, controller.signal)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${name || 'family'}_export.zip`
-      a.click()
-      URL.revokeObjectURL(url)
-      onExportEnd?.()
-    } catch (e) {
-      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
-      else onExportEnd?.(String(e))
-    } finally {
-      setExporting(false)
+    let personIds = activeGroup.persons.map(p => p.id)
+    if (excludeLiving) {
+      personIds = activeGroup.persons
+        .filter(p => p.death_year != null || p.death_date != null)
+        .map(p => p.id)
     }
+    // Native download — the browser streams to disk and owns the progress UI.
+    downloadViaBrowser(
+      api.project.exportUrl(undefined, name, true, personIds, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages),
+    )
   }
 
   function setRollbackExpiry(expiresAt: number | null) {
