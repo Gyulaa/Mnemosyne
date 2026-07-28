@@ -1,6 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api'
+import { api, downloadViaBrowser } from '../api'
 import type { Cluster, ClusterConnection, FaceInfo, ImageItem, ImagePerson, PersonEvent, PersonFull, Relation, SimilarFaceInfo } from '../types'
 import ExportModal from './ExportModal'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
@@ -104,22 +104,10 @@ export default function ClustersTab({
   async function doExport({ name, includeGenealogy, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, includeFaceless }: { name: string; includeGenealogy: boolean; includeNotes: boolean; includeSources: boolean; includeEvents: boolean; includeDocuments: boolean; includeImages: boolean; includeFaceless: boolean }) {
     if (exportingClusters) return
     setShowExportModal(false)
-    setExportingClusters(true)
-    const controller = new AbortController()
-    onExportStart?.(() => controller.abort())
-    try {
-      const blob = await api.project.exportZip([...checkedClusters], name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, controller.signal)
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url; a.download = `${name.replace(/\s+/g, '_') || 'clusters'}_export.zip`; a.click()
-      URL.revokeObjectURL(url)
-      onExportEnd?.()
-    } catch (e) {
-      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
-      else onExportEnd?.(String(e))
-    } finally {
-      setExportingClusters(false)
-    }
+    // Native download — the browser streams to disk and owns the progress UI.
+    downloadViaBrowser(
+      api.project.exportUrl([...checkedClusters], name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages),
+    )
   }
 
   if (isLoading) {

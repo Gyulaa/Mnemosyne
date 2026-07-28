@@ -1,16 +1,9 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api'
+import { api, downloadViaBrowser } from '../api'
 import { useT } from '../SettingsContext'
 import ExportModal from './ExportModal'
 import MergeModal from './MergeModal'
-
-function triggerDownload(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = filename; a.click()
-  URL.revokeObjectURL(url)
-}
 
 export default function ProjectSwitcher({
   onExportStart,
@@ -98,20 +91,11 @@ export default function ProjectSwitcher({
   async function handleExport({ name, includeGenealogy, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages }: { name: string; includeGenealogy: boolean; includeFaceless: boolean; includeNotes: boolean; includeSources: boolean; includeEvents: boolean; includeDocuments: boolean; includeImages: boolean }) {
     if (exporting) return
     setShowExportModal(false)
-    setExporting(true)
-    const controller = new AbortController()
-    onExportStart?.(() => controller.abort())
-    try {
-      const blob = await api.project.exportZip(undefined, name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, controller.signal)
-      const safeName = name.replace(/\s+/g, '_') || 'project'
-      triggerDownload(blob, `${safeName}_export.zip`)
-      onExportEnd?.()
-    } catch (e) {
-      if ((e as DOMException).name === 'AbortError') onExportEnd?.()
-      else onExportEnd?.(String(e))
-    } finally {
-      setExporting(false)
-    }
+    // Native download: the browser streams the archive to disk and shows its own
+    // progress/cancel UI, so there is nothing here to await or abort.
+    downloadViaBrowser(
+      api.project.exportUrl(undefined, name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages),
+    )
   }
 
   async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {

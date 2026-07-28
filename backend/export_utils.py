@@ -2,8 +2,10 @@ import gc
 import hashlib
 import io
 import json
+import os
 import re
 import sqlite3
+import threading
 import unicodedata
 import uuid
 import zipfile
@@ -407,6 +409,128 @@ def create_project_zip(
 
     buf.seek(0)
     return buf
+
+
+class NonSeekableWriter:
+    """Hide seek()/tell() from zipfile so it uses its streaming code path.
+
+    On Windows, os.fdopen(pipe_fd, 'wb') returns a BufferedWriter that reports
+    seekable() == True and whose tell() only tracks the buffer, not the total
+    bytes written. zipfile trusts that, records bogus local-header offsets and
+    emits a central directory pointing into the middle of the archive — the
+    result opens as a handful of garbage entries and fails its CRC check.
+    Exposing only write()/flush() makes zipfile wrap this in its own _Tellable
+    byte counter and emit data descriptors, producing a valid streamed ZIP.
+    """
+
+    def __init__(self, fp):
+        self._fp = fp
+
+    def write(self, data):
+        return self._fp.write(data)
+
+    def flush(self):
+        return self._fp.flush()
+
+
+def stream_project_zip(
+    source_db_path: Path,
+    project_info: dict,
+    cluster_ids: list[int] | None,
+    include_genealogy: bool = True,
+    person_ids: list[int] | None = None,
+    include_faceless: bool = True,
+    include_notes: bool = True,
+    include_sources: bool = True,
+    include_events: bool = True,
+    include_documents: bool = True,
+    include_images: bool = True,
+):
+    """Generator that yields ZIP bytes progressively via OS pipe.
+
+    All heavy work (build_export_db, file I/O) runs inside _producer() so HTTP
+    headers are sent before any blocking occurs and exceptions surface in logs.
+    """
+    import tempfile, traceback, time
+
+    docs_dir = source_db_path.parent / "documents"
+    read_fd, write_fd = os.pipe()
+    exc: list = []
+
+    def _producer():
+        t0 = time.monotonic()
+        print(f"[export] producer thread started", flush=True)
+        try:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+                with os.fdopen(write_fd, 'wb') as wf:
+                    with zipfile.ZipFile(NonSeekableWriter(wf), 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+                        # project.json written first → first ZIP bytes flow immediately
+                        zf.writestr(
+                            "project.json",
+                            json.dumps(project_info, ensure_ascii=False, indent=2),
+                        )
+                        print(f"[export] project.json written ({time.monotonic()-t0:.2f}s)", flush=True)
+
+                        tmp_db = Path(tmpdir) / "project.db"
+                        print(f"[export] starting build_export_db", flush=True)
+                        path_map = build_export_db(
+                            source_db_path, tmp_db, cluster_ids,
+                            include_genealogy, person_ids, include_faceless,
+                            include_notes, include_sources, include_events,
+                            include_documents, include_images,
+                        )
+                        print(f"[export] build_export_db done ({time.monotonic()-t0:.2f}s), {len(path_map)} images", flush=True)
+
+                        doc_stored_names: list[str] = []
+                        if docs_dir.exists():
+                            doc_conn = sqlite3.connect(str(tmp_db))
+                            try:
+                                doc_stored_names = [
+                                    r[0] for r in doc_conn.execute("SELECT stored_name FROM documents").fetchall()
+                                ]
+                            finally:
+                                doc_conn.close()
+                                gc.collect()
+
+                        print(f"[export] writing project.db ({time.monotonic()-t0:.2f}s)", flush=True)
+                        zf.write(str(tmp_db), "project.db")
+                        print(f"[export] project.db written ({time.monotonic()-t0:.2f}s)", flush=True)
+
+                        for _img_id, (orig_path, new_rel) in path_map.items():
+                            p = Path(orig_path)
+                            if p.exists():
+                                zf.write(str(p), new_rel)
+                        print(f"[export] images written ({time.monotonic()-t0:.2f}s)", flush=True)
+
+                        for stored_name in doc_stored_names:
+                            doc_file = docs_dir / stored_name
+                            if doc_file.exists():
+                                zf.write(str(doc_file), f"documents/{stored_name}")
+                        print(f"[export] documents written, closing ZIP ({time.monotonic()-t0:.2f}s)", flush=True)
+        except Exception as e:
+            print(f"[export] PRODUCER ERROR at {time.monotonic()-t0:.2f}s: {e!r}", flush=True)
+            traceback.print_exc()
+            exc.append(e)
+            # Ensure write end closes so reader sees EOF (already closed by context manager
+            # if we got past os.fdopen, but guard for errors before that point)
+            try:
+                os.close(write_fd)
+            except OSError:
+                pass
+
+    t = threading.Thread(target=_producer, daemon=True)
+    t.start()
+    try:
+        with os.fdopen(read_fd, 'rb') as rf:
+            while True:
+                chunk = rf.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+    finally:
+        t.join()
+    if exc:
+        raise exc[0]
 
 
 def import_project_zip(zip_data: bytes, projects_dir: Path) -> dict:
