@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import type { PersonEvent, PersonFull, EventImage, ImagePerson } from '../types'
+import type { PersonEvent, PersonFull, EventImage } from '../types'
 import { api } from '../api'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
 import { useT } from '../SettingsContext'
@@ -45,23 +45,8 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
   const [previewIdx, setPreviewIdx] = useState<number | null>(null)
   const [exportingZip, setExportingZip] = useState(false)
 
-  // Load persons-per-image for event photos to get event-specific face crops
-  const imagePersonQueries = useQueries({
-    queries: ev.images.map(ei => ({
-      queryKey: ['image-persons', ei.image_id],
-      queryFn: (): Promise<ImagePerson[]> => api.images.persons(ei.image_id),
-      staleTime: 120_000,
-    })),
-  })
-  const eventFaceMap = useMemo(() => {
-    const map = new Map<number, number>()
-    for (const q of imagePersonQueries) {
-      for (const p of (q.data ?? [])) {
-        if (!map.has(p.person_id) && p.face_id) map.set(p.person_id, p.face_id)
-      }
-    }
-    return map
-  }, [imagePersonQueries])
+  // Event-specific face crops now arrive on EventPerson.event_face_id, so the
+  // per-image person lookups this view used to fire are no longer needed.
 
   async function handleExportZip() {
     if (exportingZip || ev.images.length === 0) return
@@ -398,7 +383,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
               </div>
               <div className="p-4 space-y-3">
                 {ev.persons.map(ep => {
-                  const eventFaceId = eventFaceMap.get(ep.person_id) ?? ep.thumbnail_face_id
+                  const eventFaceId = ep.event_face_id ?? ep.thumbnail_face_id
                   return (
                   <div key={ep.id} className="flex items-center gap-3">
                     <div className="relative shrink-0">
@@ -421,7 +406,9 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
                         {ep.featured && <span className="mr-1 text-amber-400 text-xs">★</span>}
                         {ep.person_name ?? t('images.unnamed')}
                       </p>
-                      <p className="text-xs text-zinc-600 capitalize">{ep.role}</p>
+                      <p className="text-xs text-zinc-600">
+                        {ep.role === 'primary' ? t('events.rolePrimary') : t('events.roleParticipant')}
+                      </p>
                     </div>
                   </div>
                 )})}
@@ -544,8 +531,8 @@ function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
           <div className="flex items-center gap-1 mt-2">
             <div className="flex -space-x-1.5">
               {ev.persons.slice(0, 4).map(ep => (
-                ep.thumbnail_face_id ? (
-                  <img key={ep.id} src={api.faceThumbnailUrl(ep.thumbnail_face_id, 32)} alt=""
+                (ep.event_face_id ?? ep.thumbnail_face_id) ? (
+                  <img key={ep.id} src={api.faceThumbnailUrl((ep.event_face_id ?? ep.thumbnail_face_id)!, 32)} alt=""
                     className={`w-5 h-5 rounded-full object-cover border ${ep.featured ? 'border-amber-500/80' : 'border-zinc-900'}`} />
                 ) : (
                   <div key={ep.id} className={`w-5 h-5 rounded-full bg-zinc-700 border flex items-center justify-center text-[8px] text-zinc-400 ${ep.featured ? 'border-amber-500/80' : 'border-zinc-900'}`}>

@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import type { PersonFull, Relation } from '../types'
 import { api } from '../api'
 import TreeExportModal from './TreeExportModal'
@@ -913,7 +914,7 @@ function PersonCard({ person, selected, isProband }: {
         )}
         {span && <div className={`text-xs leading-snug ${selected ? 'text-brand-200' : 'text-zinc-500'}`}>{span}</div>}
         {person.face_count > 0 && (
-          <div className={`text-xs leading-snug ${selected ? 'text-brand-300' : 'text-zinc-600'}`}>{person.face_count} photos</div>
+          <div className={`text-xs leading-snug ${selected ? 'text-brand-300' : 'text-zinc-600'}`}>{t('treeView.photos', { n: person.face_count })}</div>
         )}
       </div>
     </div>
@@ -949,6 +950,27 @@ export default function TreeView({
   const [collapsedIds,    setCollapsedIds]    = useState<Set<number>>(new Set())
   const [exportOpen,      setExportOpen]      = useState(false)
   const [activeSpouseOf,  setActiveSpouseOf]  = useState<Map<number, number>>(new Map())
+
+  // ── Pinned proband ──────────────────────────────────────────────────────────
+  // The person the tree opens on. Stored per project, because person ids are
+  // database ids that would otherwise collide across projects.
+  // Same query key as ProjectSwitcher, which is mounted in the header for the
+  // whole session — the id is already cached, so the pin applies on the first
+  // render instead of snapping the tree over after a round-trip.
+  const { data: projects = [] } = useQuery({
+    queryKey: ['projects'],
+    queryFn: api.project.list,
+    staleTime: 10_000,
+  })
+  const activeProject = projects.find(p => p.is_active)
+  const pinKey = activeProject ? `mnemosyne_default_proband_${activeProject.id}` : null
+  const [pinnedProbandId, setPinnedProbandId] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!pinKey) return
+    const raw = localStorage.getItem(pinKey)
+    setPinnedProbandId(raw ? Number(raw) : null)
+  }, [pinKey])
 
   // Auto-set proband when selection changes
   useEffect(() => {
@@ -1011,7 +1033,25 @@ export default function TreeView({
     return true
   }), [relations, fullSpousesOf, effectiveActiveSpouseOf])
 
-  const effectiveProbandId = probandId ?? persons[0]?.id ?? null
+  // Pinned choice wins over the arbitrary "first in the list" fallback, but an
+  // explicit in-session selection still wins over both. Validate against the
+  // loaded set so a pin left over from a deleted person degrades gracefully.
+  const pinnedIsPresent = pinnedProbandId != null && persons.some(p => p.id === pinnedProbandId)
+  const effectiveProbandId =
+    probandId ?? (pinnedIsPresent ? pinnedProbandId : null) ?? persons[0]?.id ?? null
+
+  const probandIsPinned = effectiveProbandId != null && effectiveProbandId === pinnedProbandId
+
+  function toggleProbandPin() {
+    if (!pinKey || effectiveProbandId == null) return
+    if (probandIsPinned) {
+      localStorage.removeItem(pinKey)
+      setPinnedProbandId(null)
+    } else {
+      localStorage.setItem(pinKey, String(effectiveProbandId))
+      setPinnedProbandId(effectiveProbandId)
+    }
+  }
 
   // Direct ancestor set — collapse is forbidden on these to prevent tree collapse
   const directAncestorIds = useMemo(() => {
@@ -1130,6 +1170,21 @@ export default function TreeView({
               className="w-7 h-7 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-300 hover:bg-zinc-700 flex items-center justify-center text-sm font-bold">−</button>
             <button onClick={resetView}
               className="h-7 px-2.5 rounded-lg bg-zinc-800/90 border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 text-xs">{t('treeView.reset')}</button>
+            <button
+              onClick={toggleProbandPin}
+              disabled={effectiveProbandId == null}
+              title={probandIsPinned ? t('treeView.unpinProbandTitle') : t('treeView.pinProbandTitle')}
+              className={`w-7 h-7 rounded-lg border flex items-center justify-center transition-colors disabled:opacity-40 ${
+                probandIsPinned
+                  ? 'bg-amber-500/15 border-amber-600/50 text-amber-400 hover:bg-amber-500/25'
+                  : 'bg-zinc-800/90 border-zinc-700 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-700'
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill={probandIsPinned ? 'currentColor' : 'none'} viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 4h6l-1 6 4 3v2H6v-2l4-3-1-6z" />
+                <path strokeLinecap="round" d="M12 15v5" />
+              </svg>
+            </button>
             <div className="flex items-center gap-1 ml-1 bg-zinc-800/90 border border-zinc-700 rounded-lg px-2 h-7">
               <span className="text-xs text-zinc-500">{t('treeView.anc')}</span>
               <button onClick={() => setAncestorDepth(d => Math.max(1, d - 1))}

@@ -1,4 +1,5 @@
 ﻿import { useState, useRef, useCallback, DragEvent } from 'react'
+import type { ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import FolderPicker from './FolderPicker'
@@ -101,12 +102,9 @@ export default function ScanTab() {
   const hasFaces = (stats?.total_faces ?? 0) > 0
 
   return (
-    <div className="space-y-8 max-w-2xl">
+    <div className="max-w-3xl mx-auto space-y-5">
       {/* Folder picker */}
-      <section className="space-y-3">
-        <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest">
-          {t('scan.sourceFolder')}
-        </label>
+      <Panel title={t('scan.sourceFolder')}>
         <FolderPicker value={path} onChange={setPath} />
 
         <div className="flex items-center gap-3 pt-1">
@@ -152,13 +150,10 @@ export default function ScanTab() {
             {skipDuplicates ? t('scan.skipDupes.on') : t('scan.skipDupes.off')}
           </span>
         </label>
-      </section>
+      </Panel>
 
       {/* Individual file import */}
-      <section className="space-y-2">
-        <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest">
-          {t('scan.importFiles')}
-        </label>
+      <Panel title={t('scan.importFiles')}>
         <div
           onDragOver={e => { e.preventDefault(); setDragOver(true) }}
           onDragLeave={() => setDragOver(false)}
@@ -201,11 +196,11 @@ export default function ScanTab() {
         {importError && (
           <p className="text-sm text-red-400">{importError}</p>
         )}
-      </section>
+      </Panel>
 
       {/* Progress bar */}
       {status && status.total > 0 && (
-        <section className="space-y-2">
+        <Panel>
           <div className="flex justify-between text-sm">
             <span className={isRunning ? 'text-brand-400' : 'text-zinc-400'}>
               {isRunning ? t('scan.scanning') : t('scan.complete')}
@@ -228,13 +223,13 @@ export default function ScanTab() {
               style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #7e22ce, #c084fc)' }}
             />
           </div>
-        </section>
+        </Panel>
       )}
 
       {/* Stats */}
       {stats && (
         <section className="space-y-3">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-stretch">
             <StatCard label={t('scan.totalImages')} value={stats.total_images} />
             <StatCard
               label={t('scan.scanned')}
@@ -277,10 +272,7 @@ export default function ScanTab() {
 
       {/* Clustering */}
       {hasFaces && (
-        <section className="space-y-3 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-          <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-widest">
-            {t('scan.clustering')}
-          </label>
+        <Panel title={t('scan.clustering')}>
           <div className="flex flex-wrap items-end gap-4">
             <NumberInput
               label={t('scan.eps')}
@@ -324,9 +316,28 @@ export default function ScanTab() {
               </span>
             )}
           </div>
-        </section>
+        </Panel>
       )}
     </div>
+  )
+}
+
+// Shared surface for every scan section, so the page reads as one system
+// instead of a stack of loose blocks.
+function Panel({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <section
+      className="rounded-2xl border p-5 space-y-3"
+      style={{
+        borderColor: 'rgba(255,255,255,0.07)',
+        background: 'linear-gradient(160deg, #171620 0%, #131219 100%)',
+      }}
+    >
+      {title && (
+        <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-widest">{title}</h2>
+      )}
+      {children}
+    </section>
   )
 }
 

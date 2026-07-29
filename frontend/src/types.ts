@@ -291,6 +291,9 @@ export interface EventPerson {
   featured: boolean
   person_name: string | null
   thumbnail_face_id: number | null
+  /** Face cropped from this event's own photos; null if the person isn't
+   *  recognised in any of them. Prefer this over thumbnail_face_id on chips. */
+  event_face_id: number | null
 }
 
 export interface EventImage {

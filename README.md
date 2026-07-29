@@ -135,6 +135,7 @@ Only you can restore a private item to public — there is no "auto-export priva
 - The interface is available in **English** and **Hungarian**
 - Switch anytime from **Settings** (gear icon, top right) → **Language**
 - The choice is saved locally and persists across sessions
+- The built-in document type names are translated too. If you rename a type yourself in **Manage types**, your own wording is kept in both languages
 
 ### Search
 - Press **Ctrl+K** (Windows) or **Cmd+K** (Mac) to search everything at once — names, documents, notes — from anywhere in the app
@@ -142,6 +143,7 @@ Only you can restore a private item to public — there is no "auto-export priva
 ### Relationship finder
 - Select any two people and find the shortest path between them in the family tree
 - Shows the chain of relationships step by step
+- Line style encodes the relationship: an arrow always points at the **child** in a parent/child link, spouses are joined by a **double line**, siblings by a plain line
 - Export the chain as a PNG image
 
 ---
@@ -207,6 +209,7 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 - Ancestor depth and cousin-degree (lateral depth) controls
 - Collapse/expand subtrees; collapsed nodes show a hidden-person count
 - Shift+click any node to refocus the tree on that person
+- **Pin a default proband** with the pin button in the bottom-right controls: the tree opens on that person instead of the first in the list. Stored per project in `localStorage` under `mnemosyne_default_proband_<projectId>` (person ids are per-project database ids). Precedence: in-session selection > pin > first person; a pin naming a deleted person falls back silently
 - Export as PNG: 1× or 2× DPI, dark or light background, with or without face photos
 
 **Person profile**
@@ -260,9 +263,11 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 - Types: birth, death, marriage, emigration, military, education, occupation, religious, travel, award, and custom
 - Any number of persons per event; date, place, description fields
 - Chronological timeline view
+- `EventPerson.event_face_id` carries a face cropped from the event's **own** photos, so chips show the person at the right age rather than their default portrait. Resolved in `_event_face_map()` (Face -> Cluster -> Person over the event's images, one query per event, earliest image wins) and attached in `_event_dict()`, which every event-returning endpoint funnels through. `null` when the person isn't recognised in any event photo - clients fall back to `thumbnail_face_id`
 
 ### Documents
 - Types: birth/death/marriage certificates, passports, military records, land records, wills, letters, photographs, audio
+- Type labels live in the `document_types` table, seeded in English by the v2→v3 migration, so they cannot be localised at the source. `frontend/src/docTypes.ts` translates them by their stable `key` via `docType.<key>` translation keys — but only while the stored label still equals the original seed, otherwise a user rename in the type manager would be silently ignored. User-created types are never remapped
 - Image preview and PDF link in the document viewer modal
 - Notes with citations and @ mentions attachable to documents
 - Bulk selection and ZIP download; see [Document bulk download](#document-bulk-download)
@@ -274,6 +279,7 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 ### Relationship Path Finder
 - BFS shortest path between any two persons
 - Snake-layout chain display (up to 5 persons per row)
+- Edge rendering encodes direction: `parent` edges point forward, `child` edges point backward, so the arrowhead always lands on the child. Odd rows render `flex-row-reverse`, so the visual direction is XOR-ed against the row's RTL flag. Spouse edges draw as a double rule instead of an arrow. The PNG exporter mirrors this logic - change both or they drift apart
 - Blood vs. marriage-relative badge, Lowest Common Ancestor annotation
 - **Export as PNG** — see [Relationship path export](#relationship-path-export)
 
@@ -285,6 +291,7 @@ The updater module lives in `backend/updater.py`. It runs as a state machine:
 
 ```
 idle → checking → up_to_date
+                → dev_build          (version unknown, cannot compare)
                 → update_available → downloading → ready → applying
 any  → error
 ```
@@ -300,11 +307,18 @@ State is held in a module-level dict (`_state`) protected by a `threading.Lock`.
 | Windows | Files at ZIP root (CI: `Compress-Archive -Path dist\Mnemosyne\*`) | `%TEMP%\mnemosyne_updater.bat` — `robocopy /E /IS /IT` | `start "" "%APP%\Mnemosyne.exe"` |
 | macOS | `Mnemosyne.app/` at ZIP root | `/tmp/mnemosyne_updater.sh` — `mv`; falls back to `osascript` admin prompt if in `/Applications` | `open "$OLD"` + `xattr -cr` to clear quarantine |
 
-`MNEMOSYNE_APP_DIR` env var (set by `launcher.py`): on Windows = directory containing `Mnemosyne.exe`; on macOS = `Mnemosyne.app/Contents/MacOS/`.
+**Two different directories — do not confuse them.** `launcher.py` exports both:
+
+| Env var | Frozen value | Holds |
+|---|---|---|
+| `MNEMOSYNE_APP_DIR` | Windows: dir containing `Mnemosyne.exe` · macOS: `Mnemosyne.app/Contents/MacOS/` | User data (`projects/`, `config.json`) and the update target |
+| `MNEMOSYNE_BUNDLE_DIR` | `sys._MEIPASS` — under PyInstaller 6 onedir this is `<exe dir>/_internal/` | Everything from the spec's `datas`, including `version.txt` |
+
+`get_current_version()` must therefore read `version.txt` from the **bundle** dir first, not the app dir. Spec `datas` with target `'.'` land in `_internal/`, one level *below* `MNEMOSYNE_APP_DIR`. Reading only the app dir silently yields `'dev'` in every packaged build — which, combined with the `dev` guard below, made released apps report themselves as permanently up to date. The file is read with `utf-8-sig` so a BOM from a PowerShell 5.1 `Out-File -Encoding utf8` step cannot corrupt the tag.
 
 The app exits via `os._exit(0)` (not `sys.exit`) one second after launching the updater script, to guarantee the process terminates even if FastAPI shutdown hooks are slow.
 
-The update UI is suppressed in dev mode: `has_update` is false when `current_version == 'dev'`, and `apply_update()` raises `RuntimeError` when `IS_FROZEN` is false.
+**Unversioned builds**: when `current_version == 'dev'` the tag cannot be compared, so `_do_check()` reports status `dev_build` rather than `up_to_date` — claiming "up to date" here hides real updates. The UI surfaces it as its own state with a link to the release page. `apply_update()` still raises `RuntimeError` when `IS_FROZEN` is false.
 
 ---
 
@@ -388,6 +402,7 @@ Image-Organizer/
 │       ├── api.ts                     # Typed API client
 │       ├── types.ts                   # TypeScript interfaces
 │       ├── SettingsContext.tsx        # Global settings (name order, language, auto-update toggle)
+│       ├── docTypes.ts                # Built-in document type keys + translated labels
 │       ├── i18n/
 │       │   └── translations.ts        # EN/HU translation strings (flat dot-notation keys)
 │       └── components/
@@ -474,7 +489,9 @@ A ZIP archive packages the database and all referenced media into a portable, se
 3. **Content toggles**: notes, sources, events, documents, images, faceless images — each independently removable
 4. **Privacy filter** (always applied, cannot be disabled): removes all rows where `is_private=1` across images, clusters, relations, documents, notes, and events; private cluster faces are moved to the noise cluster before the cluster is deleted
 5. **Path rewrite**: image paths updated to `images/<id>_<filename>` (absolute → relative)
-6. Pack with DEFLATE compression
+6. Pack with DEFLATE compression, streamed to the response
+
+**Streaming gotcha (Windows)**: the archive is written into a pipe, and `os.fdopen(pipe_fd, 'wb')` on Windows returns a file object whose `seekable()` answers `True` while `tell()` only reports the buffer offset. `zipfile` trusts that and writes central-directory offsets computed from the wrong position, producing an archive whose EOCD points near the start of the file — it downloads at full size but no tool can open it. `export_utils.py` wraps the pipe in `NonSeekableWriter`, which hides `seek`/`tell` so `zipfile` takes its streaming path with data descriptors. Any new streaming ZIP endpoint must use the same wrapper.
 
 **Import pipeline**
 
@@ -534,6 +551,10 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 - **New content toggle (ZIP)** → add row to *ZIP export* content table; update `build_export_db` in `export_utils.py`, endpoint in `main.py`, `api.ts`, `ExportModal.tsx`, and all three callers
 - **New content toggle (GEDCOM)** → update *GEDCOM export*; update `build_gedcom_zip` in `gedcom_export.py` and endpoint in `main.py`
 - **New note syntax** → update *Note serialisation* table; add entry to `_MD_PATTERNS` in `gedcom_export.py`
+- **New user-visible string** → add the key to **both** dictionaries in `i18n/translations.ts`. The EN and HU key sets must match exactly; a missing HU key silently falls back to English and is easy to miss
+- **New built-in document type** → add it to the migration seed in `database.py`, to `SEED_LABELS` in `docTypes.ts` (with the exact seeded English label), and add a `docType.<key>` entry to both dictionaries
+- **New file bundled into the build** → add it to `datas` in `mnemosyne.spec` **and** read it via `MNEMOSYNE_BUNDLE_DIR`, not `MNEMOSYNE_APP_DIR` — see *Auto-update* for why the two are not interchangeable
+- **New streaming ZIP endpoint** → wrap the pipe in `NonSeekableWriter` (see *ZIP export*), otherwise the archive is silently corrupt on Windows
 - **New data table with `person_id` FK** → update `_delete_persons` in `export_utils.py` with an explicit `DELETE FROM <table> WHERE person_id IN (...)` line before the `DELETE FROM persons` line. If the table has `ON DELETE CASCADE` (like `person_subclusters`) the cascade would handle it automatically, but being explicit is the established pattern here
 - **Schema change to `note_citations`** → add idempotent migration in `database.py` using the `PRAGMA table_info` + table-recreate pattern
 - **New `is_private` on a table** → (1) add `ALTER TABLE … ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0` to the v4→v5 migration block in `database.py`; (2) include `is_private` in the relevant `_xxx_dict` serialiser in `main.py`; (3) add the privacy-filter DELETE block for that table inside `build_export_db` in `export_utils.py`; (4) add `WHERE COALESCE(is_private,0)=0` to the relevant query in `build_gedcom_zip` in `gedcom_export.py` if applicable; (5) add `togglePrivacy` call to `api.ts`; (6) update the TypeScript interface in `types.ts`; (7) add the padlock button to the relevant component

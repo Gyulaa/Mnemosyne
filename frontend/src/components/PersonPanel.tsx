@@ -9,6 +9,7 @@ import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
 import EventTimeline from './EventTimeline'
 import RelationPathModal from './RelationPathModal'
+import { docTypeLabel, builtinDocTypeOptions } from '../docTypes'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -16,22 +17,6 @@ const PHOTOS_CAP = 6
 
 const MONTHS_EN = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
-const DOC_TYPE_LABELS: Record<string, string> = {
-  birth_cert:    'Birth certificate',
-  death_cert:    'Death certificate',
-  marriage_cert: 'Marriage certificate',
-  baptism:       'Baptism record',
-  burial_record: 'Burial record',
-  passport:      'Passport',
-  military:      'Military record',
-  land_record:   'Land record',
-  will:          'Will / Testament',
-  letter:        'Letter',
-  photo:         'Photograph',
-  other:         'Other',
-}
-
-const DOC_TYPES = Object.entries(DOC_TYPE_LABELS)
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -660,7 +645,7 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
           className="flex-1 bg-zinc-700 border border-zinc-600 rounded-lg px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-brand-400"
         >
           {docTypes.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-          {docTypes.length === 0 && DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          {docTypes.length === 0 && builtinDocTypeOptions(t).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
         <input
           type="number"
@@ -874,7 +859,7 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
 
   const displayName = doc.title || doc.filename
   const typeMap = new Map(docTypes.map(dt => [dt.key, dt.label]))
-  const typeLabel = typeMap.get(doc.doc_type ?? '') ?? DOC_TYPE_LABELS[doc.doc_type ?? ''] ?? doc.doc_type
+  const typeLabel = docTypeLabel(t, doc.doc_type, typeMap.get(doc.doc_type ?? ''))
 
   if (editing) {
     return (
@@ -893,7 +878,7 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
             className="flex-1 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-brand-400"
           >
             {docTypes.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-            {docTypes.length === 0 && DOC_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            {docTypes.length === 0 && builtinDocTypeOptions(t).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
           <input
             type="number"
@@ -1613,6 +1598,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
   const span = lifespan(person)
   const ageInfo = calcAge(person)
+
+  // Header action strip: relate + merge + [delete] + close, w-8 each with gap-1.5,
+  // offset right-3. The title block pads against this so long names wrap instead
+  // of sliding underneath the icons.
+  const canDeletePerson = person.clusters.length === 0
+  const headerBtnCount  = canDeletePerson ? 4 : 3
+  const HEADER_ACTIONS_W = headerBtnCount * 32 + (headerBtnCount - 1) * 6 + 12 + 8
   const images = imagesPage?.items ?? []
   const visibleImages = showAllPhotos ? images : images.slice(0, PHOTOS_CAP)
 
@@ -1643,36 +1635,43 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
         style={{ width: 440, borderLeft: '1px solid rgba(63,63,70,0.6)', transform: visible ? 'translateX(0)' : 'translateX(100%)' }}
         onClick={e => e.stopPropagation()}
       >
-        <button onClick={onClose}
-          className="absolute top-3 right-3 z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-300 hover:text-white transition-colors text-sm">✕</button>
-
-        {/* Find relation button */}
-        <button onClick={() => setRelatePickerOpen(true)} title={t('person.findPath')}
-          className="absolute top-3 right-[7.5rem] z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <circle cx="5" cy="12" r="2" />
-            <circle cx="19" cy="5" r="2" />
-            <circle cx="19" cy="19" r="2" />
-            <path strokeLinecap="round" d="M7 12h4l3-5m-3 5l3 5" />
-          </svg>
-        </button>
-
-        {/* Merge button — always visible (useful even with clusters) */}
-        <button onClick={() => setMergePickerOpen(true)} title={t('person.mergeWith')}
-          className="absolute top-3 right-[5.25rem] z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-          </svg>
-        </button>
-
-        {person.clusters.length === 0 && (
-          <button onClick={() => setConfirmDelete(true)} title={t('person.deletePerson')}
-            className="absolute top-3 right-12 z-20 w-8 h-8 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+        {/*
+          One flex strip instead of four independently positioned buttons: keeps the
+          row gapless when the conditional delete button is absent, and gives the
+          header a single known width to pad against (see HEADER_ACTIONS_W).
+        */}
+        <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5">
+          {/* Find relation */}
+          <button onClick={() => setRelatePickerOpen(true)} title={t('person.findPath')}
+            className="w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors shrink-0">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              <circle cx="5" cy="12" r="2" />
+              <circle cx="19" cy="5" r="2" />
+              <circle cx="19" cy="19" r="2" />
+              <path strokeLinecap="round" d="M7 12h4l3-5m-3 5l3 5" />
             </svg>
           </button>
-        )}
+
+          {/* Merge — always visible (useful even with clusters) */}
+          <button onClick={() => setMergePickerOpen(true)} title={t('person.mergeWith')}
+            className="w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors shrink-0">
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+            </svg>
+          </button>
+
+          {canDeletePerson && (
+            <button onClick={() => setConfirmDelete(true)} title={t('person.deletePerson')}
+              className="w-8 h-8 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors shrink-0">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          )}
+
+          <button onClick={onClose} title={t('person.close')}
+            className="w-8 h-8 rounded-full bg-zinc-700 hover:bg-zinc-600 flex items-center justify-center text-zinc-300 hover:text-white transition-colors text-sm shrink-0">✕</button>
+        </div>
 
         {confirmDelete && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 rounded-none">
@@ -1719,7 +1718,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
 
         {/* ── Header ── */}
         <div className="shrink-0 px-5 pt-5 pb-4 border-b border-zinc-800">
-          <div className="flex gap-4 items-start pr-10">
+          <div className="flex gap-4 items-start">
             <Avatar person={person} size={72} />
             <div className="flex-1 min-w-0 pt-0.5">
               {editingHeader ? (
@@ -1731,7 +1730,16 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   />
                 </div>
               ) : (
-                <h2 className="text-lg font-bold text-zinc-100 leading-snug">
+                <h2
+                  className="text-lg font-bold text-zinc-100 leading-snug break-words"
+                  title={displayPersonName(person, nameOrder)}
+                >
+                  {/*
+                    Floated spacer reserves only the band the action strip actually
+                    covers (its lower edge sits ~24px into the h2), so a long name
+                    wraps under the icons and keeps full width from line 2 on.
+                  */}
+                  <span aria-hidden className="float-right" style={{ width: HEADER_ACTIONS_W - 20, height: 26 }} />
                   {displayPersonName(person, nameOrder)}
                   {person.sex && <span className="ml-1.5 text-sm font-normal text-zinc-500">{person.sex === 'M' ? '♂' : '♀'}</span>}
                 </h2>

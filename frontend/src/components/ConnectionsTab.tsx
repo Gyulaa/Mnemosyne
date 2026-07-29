@@ -616,7 +616,10 @@ export default function ConnectionsTab({
   }
 
   return (
-    <div className="flex flex-col gap-3" style={{ height: 'calc(100vh - 80px)' }}>
+    // h-full instead of a viewport calc: the old `calc(100vh - 80px)` didn't
+    // account for the header plus the wrapper's padding, so the pane always
+    // overflowed by ~17px and forced a scrollbar to reach the hint line.
+    <div className="flex flex-col gap-3 h-full">
       {/* Toolbar */}
       <div className="flex items-center gap-3 flex-wrap shrink-0">
         <h2 className="text-sm font-semibold text-zinc-300">{t('conn.heading')}</h2>
@@ -808,8 +811,7 @@ export default function ConnectionsTab({
           <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-8">
             <p className="text-zinc-500 text-sm">{t('conn.noConnections')}</p>
             <p className="text-zinc-600 text-xs max-w-sm">
-              Either no persons share {minPhotos}+ photos, or no clusters have been named yet.
-              Try lowering the slider.
+              {t('conn.noConnectionsHint', { n: minPhotos })}
             </p>
           </div>
         )}
@@ -846,7 +848,7 @@ export default function ConnectionsTab({
 
       {viewMode === 'graph' && (
         <p className="text-xs text-zinc-700 text-center shrink-0">
-          Scroll to zoom · Drag background to pan · Drag nodes to rearrange · Hover to highlight
+          {t('conn.graphHint')}
         </p>
       )}
     </div>

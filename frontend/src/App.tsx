@@ -12,7 +12,12 @@ import SearchPalette from './components/SearchPalette'
 import DocumentViewer from './components/DocumentViewer'
 import UpdateBanner from './components/UpdateBanner'
 import type { PersonDocument } from './types'
-import { SettingsProvider, useSettings, useT } from './SettingsContext'
+import { SettingsProvider, useSettings, useT, displayPersonName } from './SettingsContext'
+
+// Author credit in the About popover. Stored structured rather than as one
+// string so it follows the name-order setting like every other person name:
+// "Miklós Gyula" in Hungarian order, "Gyula Miklós" in western order.
+const AUTHOR = { first_name: 'Gyula', last_name: 'Miklós' }
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 5_000 } },
@@ -131,10 +136,10 @@ function AppInner() {
               <img
                 src="/favicon.png"
                 alt=""
-                className="w-6 h-6 object-contain"
+                className="w-8 h-8 object-contain"
                 onError={e => { e.currentTarget.style.display = 'none' }}
               />
-              <span className="text-base font-bold tracking-tight font-display" style={{ background: 'linear-gradient(135deg, #c084fc 0%, #a855f7 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Mnemosyne</span>
+              <span className="text-lg font-bold tracking-tight font-display" style={{ background: 'linear-gradient(135deg, #c084fc 0%, #a855f7 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Mnemosyne</span>
             </div>
             <div className="w-px h-5 shrink-0" style={{ background: 'rgba(255,255,255,0.1)' }} />
             <nav className="flex gap-0.5">
@@ -268,7 +273,7 @@ function AppInner() {
                     <p className="text-sm font-semibold text-zinc-100 mb-0.5">Mnemosyne</p>
                     <p className="text-[11px] text-zinc-500 leading-relaxed">{t('app.about.desc')}</p>
                     <div className="my-3 border-t border-zinc-800" />
-                    <p className="text-xs text-zinc-400">{t('app.about.by')} <span className="text-zinc-200 font-medium">Miklós Gyula</span></p>
+                    <p className="text-xs text-zinc-400">{t('app.about.by')} <span className="text-zinc-200 font-medium">{displayPersonName(AUTHOR, nameOrder)}</span></p>
                     <p className="text-[11px] text-zinc-600 mt-0.5">© 2026 · MIT License</p>
                   </div>
                 )}
@@ -279,10 +284,13 @@ function AppInner() {
           </div>
         </header>
 
+        {/* Tabs that manage their own scrolling must not also scroll the main
+            area, otherwise their full-height panes overflow it. */}
         <main className={[
           'flex-1 min-h-0',
-          tab === 'genealogy' ? 'overflow-hidden' : 'overflow-auto',
-          tab === 'documents' ? 'overflow-hidden' : '',
+          tab === 'genealogy' || tab === 'documents' || tab === 'connections'
+            ? 'overflow-hidden'
+            : 'overflow-auto',
         ].join(' ')}>
           {tab === 'genealogy' ? (
             <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} onNavToEvent={navToEvent} onNavToDocument={navToDocument} />
@@ -291,7 +299,7 @@ function AppInner() {
           ) : tab === 'documents' ? (
             <DocumentsTab onNavToGenealogy={navToGenealogy} navTarget={documentsNavTarget} onNavConsumed={() => setDocumentsNavTarget(null)} />
           ) : (
-            <div className={tab === 'connections' ? 'px-4 py-4' : 'max-w-6xl mx-auto px-6 py-8'}>
+            <div className={tab === 'connections' ? 'h-full px-4 py-4' : 'max-w-6xl mx-auto px-6 py-8'}>
               {tab === 'scan'        ? <ScanTab /> :
                tab === 'clusters'   ? <ClustersTab navTarget={clusterNavTarget} onNavToCluster={navToCluster} onNavToImage={navToImage} onNavConsumed={() => setClusterNavTarget(null)} onNavToGenealogy={navToGenealogy} onExportStart={onExportStart} onExportEnd={onExportEnd} /> :
                tab === 'images'     ? <ImagesTab navFilter={imageNavFilter} openImageTarget={imageOpenTarget} onImageTargetConsumed={() => setImageOpenTarget(null)} onNavToCluster={navToCluster} onNavToEvent={navToEvent} onExportStart={onExportStart} onExportEnd={onExportEnd} /> :
