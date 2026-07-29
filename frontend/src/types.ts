@@ -455,7 +455,7 @@ export interface PersonEvent {
 }
 
 export interface UpdateStatus {
-  status: 'idle' | 'checking' | 'up_to_date' | 'update_available' | 'downloading' | 'ready' | 'applying' | 'error'
+  status: 'idle' | 'checking' | 'up_to_date' | 'dev_build' | 'update_available' | 'downloading' | 'ready' | 'applying' | 'error'
   current_version: string
   latest_version: string | null
   release_name: string | null

@@ -19,6 +19,7 @@ function UpdateIcon({ status, onClick }: { status: UpdateStatus['status'] | 'unk
     status === 'ready'            ? 'bg-green-400' :
     status === 'downloading'      ? 'bg-blue-400' :
     status === 'update_available' ? 'bg-amber-400' :
+    status === 'dev_build'        ? 'bg-zinc-500' :
     status === 'applying'         ? 'bg-zinc-400' :
     null
 
@@ -81,6 +82,7 @@ function Modal({
             <h2 className="text-base font-semibold text-zinc-100">
               {status.status === 'idle'             && t('update.idle')}
               {status.status === 'up_to_date'       && t('update.upToDate')}
+              {status.status === 'dev_build'        && t('update.devBuild')}
               {status.status === 'checking'         && t('update.checking')}
               {status.status === 'update_available' && t('update.available')}
               {status.status === 'downloading'      && t('update.downloading')}
@@ -146,6 +148,13 @@ function Modal({
           {/* Up to date */}
           {status.status === 'up_to_date' && (
             <p className="text-sm text-zinc-400">{t('update.upToDateBody')}</p>
+          )}
+
+          {/* Unstamped build — version unknown, cannot self-update */}
+          {status.status === 'dev_build' && (
+            <div className="p-3 bg-amber-950/30 border border-amber-800/40 rounded-xl">
+              <p className="text-xs text-amber-300 leading-relaxed">{t('update.devBuildBody')}</p>
+            </div>
           )}
 
           {/* Update available */}
@@ -217,8 +226,19 @@ function Modal({
         {/* Footer actions */}
         <div className="flex items-center justify-end gap-2 px-6 py-4 bg-zinc-950/50 border-t border-zinc-800">
 
-          {(status.status === 'idle' || status.status === 'up_to_date' || status.status === 'error') && (
+          {(status.status === 'idle' || status.status === 'up_to_date' ||
+            status.status === 'dev_build' || status.status === 'error') && (
             <>
+              {status.status === 'dev_build' && status.release_url && (
+                <a
+                  href={status.release_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1.5 mr-auto rounded-lg text-xs font-medium text-brand-300 hover:text-brand-200 hover:bg-zinc-800 transition-colors"
+                >
+                  {t('update.openRelease')}
+                </a>
+              )}
               <button
                 onClick={onClose}
                 className="px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
