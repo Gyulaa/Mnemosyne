@@ -62,15 +62,38 @@ def get_state() -> dict:
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
 def _app_dir() -> Path:
-    """Directory next to the executable (where user data and version.txt live)."""
+    """Directory next to the executable (where user data lives)."""
     return Path(os.environ.get('MNEMOSYNE_APP_DIR', str(Path(__file__).parent.parent)))
 
 
+def _bundle_dir() -> Path:
+    """Directory PyInstaller extracts bundled data files into (_MEIPASS)."""
+    env = os.environ.get('MNEMOSYNE_BUNDLE_DIR')
+    if env:
+        return Path(env)
+    meipass = getattr(sys, '_MEIPASS', None)
+    if meipass:
+        return Path(meipass)
+    return Path(__file__).parent.parent
+
+
 def get_current_version() -> str:
-    vf = _app_dir() / 'version.txt'
-    if vf.exists():
-        v = vf.read_text(encoding='utf-8').strip()
-        return v if v else 'dev'
+    """
+    Read the build tag stamped in at package time.
+
+    The bundle dir must be checked FIRST: PyInstaller 6 onedir puts spec `datas`
+    into <exe dir>/_internal, while _app_dir() is <exe dir> itself and holds only
+    user data. Looking solely in _app_dir() always missed version.txt in packaged
+    builds, so every release reported itself as 'dev' — and the 'dev' guard in
+    _do_check() then silently forced status to 'up_to_date' forever.
+    """
+    for base in (_bundle_dir(), _app_dir(), Path(__file__).parent.parent):
+        vf = base / 'version.txt'
+        if vf.exists():
+            # utf-8-sig strips a BOM if the build step wrote one
+            v = vf.read_text(encoding='utf-8-sig').strip()
+            if v:
+                return v
     return 'dev'
 
 
@@ -111,13 +134,18 @@ def _do_check() -> None:
             (a['browser_download_url'] for a in data.get('assets', []) if a['name'] == asset_nm),
             None,
         )
+        # An unstamped build cannot be compared — say so instead of claiming
+        # to be up to date, which is what hid this bug from the user.
+        is_dev     = current == 'dev'
         has_update = (
-            current != 'dev'
+            not is_dev
             and dl_url is not None
             and _parse_version(latest) > _parse_version(current)
         )
         _set(
-            status          = 'update_available' if has_update else 'up_to_date',
+            status          = ('update_available' if has_update
+                               else 'dev_build' if is_dev
+                               else 'up_to_date'),
             current_version = current,
             latest_version  = latest,
             release_name    = data.get('name', latest),
