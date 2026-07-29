@@ -118,8 +118,38 @@ const LABEL_TEXT: Record<EdgeLabel, string> = {
   spouse:  'spouse',
 }
 
-function edgeColor(blood: boolean) {
-  return blood ? 'bg-zinc-600' : 'bg-violet-500/40'
+// Line colour per relation kind. Spouse edges get their own hue so a marriage
+// link never reads as a descent link.
+function edgeStroke(label: EdgeLabel, highlight?: boolean) {
+  if (label === 'spouse') return highlight ? '#60a5fa' : '#a78bfa'
+  return '#52525b'
+}
+
+/**
+ * Which way the arrowhead points, in *visual* terms.
+ *
+ * A 'parent' edge runs from the parent to the child, so travelling it moves
+ * down a generation and the arrow points forward. A 'child' edge runs from the
+ * child up to the parent, so the arrow has to point backward. Either way the
+ * head lands on the child. Odd snake rows render with flex-row-reverse, which
+ * mirrors left/right — hence the XOR against `rtl`.
+ */
+function arrowPointsForward(label: EdgeLabel, rtl: boolean) {
+  return (label === 'parent') !== rtl
+}
+
+const hasArrow  = (label: EdgeLabel) => label === 'parent' || label === 'child'
+const isSpouse  = (label: EdgeLabel) => label === 'spouse'
+
+function labelPillClass(blood: boolean, highlight?: boolean) {
+  return [
+    'px-1 py-0.5 rounded text-[8px] font-medium tracking-wide uppercase whitespace-nowrap',
+    blood
+      ? 'text-zinc-500 bg-zinc-800/80'
+      : highlight
+      ? 'text-blue-300 bg-blue-950/60 border border-blue-700/50'
+      : 'text-violet-400 bg-violet-950/60 border border-violet-800/40',
+  ].join(' ')
 }
 
 // ── Person mini-card ───────────────────────────────────────────────────────────
@@ -184,21 +214,41 @@ function MiniCard({ person, highlightType, onClick }: {
 
 // ── Horizontal edge connector ──────────────────────────────────────────────────
 
-function EdgeConnector({ label, blood, highlight }: { label: EdgeLabel; blood: boolean; highlight?: boolean }) {
+function EdgeConnector({ label, blood, highlight, rtl = false }: {
+  label: EdgeLabel; blood: boolean; highlight?: boolean; rtl?: boolean
+}) {
+  const H      = 12
+  const mid    = H / 2
+  const stroke = edgeStroke(label, highlight)
+  const spouse = isSpouse(label)
+  const arrow  = hasArrow(label)
+  const fwd    = arrowPointsForward(label, rtl)
+  // Leave room for the head so the line doesn't poke through its tip
+  const x1 = arrow && !fwd ? 9 : 1
+  const x2 = arrow && fwd ? EDGE_W - 9 : EDGE_W - 1
+
   return (
     <div className="flex flex-col items-center shrink-0" style={{ width: EDGE_W }}>
-      <div
-        className={['w-full h-px', blood ? 'bg-zinc-600' : ''].join(' ')}
-        style={blood ? {} : { borderTop: `1px dashed ${highlight ? '#60a5fa80' : '#7c3aed60'}` }}
-      />
-      <span className={[
-        'mt-1 px-1 py-0.5 rounded text-[8px] font-medium tracking-wide uppercase whitespace-nowrap',
-        blood
-          ? 'text-zinc-500 bg-zinc-800/80'
-          : highlight
-          ? 'text-blue-300 bg-blue-950/60 border border-blue-700/50'
-          : 'text-violet-400 bg-violet-950/60 border border-violet-800/40',
-      ].join(' ')}>
+      <svg width={EDGE_W} height={H} aria-hidden>
+        {spouse ? (
+          // Marriage bar: a double rule, the genealogical convention for a union
+          <>
+            <line x1={1} y1={mid - 2} x2={EDGE_W - 1} y2={mid - 2} stroke={stroke} strokeWidth={1.25} />
+            <line x1={1} y1={mid + 2} x2={EDGE_W - 1} y2={mid + 2} stroke={stroke} strokeWidth={1.25} />
+          </>
+        ) : (
+          <line x1={x1} y1={mid} x2={x2} y2={mid} stroke={stroke} strokeWidth={1.25} />
+        )}
+        {arrow && (
+          <path
+            d={fwd
+              ? `M${EDGE_W - 1},${mid} L${EDGE_W - 9},${mid - 4} L${EDGE_W - 9},${mid + 4} Z`
+              : `M1,${mid} L9,${mid - 4} L9,${mid + 4} Z`}
+            fill={stroke}
+          />
+        )}
+      </svg>
+      <span className={`mt-1 ${labelPillClass(blood, highlight)}`}>
         {LABEL_TEXT[label]}
       </span>
     </div>
@@ -208,25 +258,45 @@ function EdgeConnector({ label, blood, highlight }: { label: EdgeLabel; blood: b
 // ── Turn connector (vertical, between snake rows) ──────────────────────────────
 
 function TurnConnector({ edge, side, highlight }: { edge: PathEdge; side: 'right' | 'left'; highlight?: boolean }) {
-  const lineColor = highlight ? 'bg-blue-400/70' : edgeColor(edge.blood)
+  const W = 16, SEG = 14, cx = W / 2
+  const stroke = edgeStroke(edge.label, highlight)
+  const spouse = isSpouse(edge.label)
+  const arrow  = hasArrow(edge.label)
+  // Travel between rows always runs downward, so a 'parent' edge points down at
+  // the child and a 'child' edge points back up at it. Row mirroring is
+  // horizontal only, so `side` never flips this.
+  const down   = edge.label === 'parent'
+
+  const doubleLine = (
+    <>
+      <line x1={cx - 2} y1={0} x2={cx - 2} y2={SEG} stroke={stroke} strokeWidth={1.25} />
+      <line x1={cx + 2} y1={0} x2={cx + 2} y2={SEG} stroke={stroke} strokeWidth={1.25} />
+    </>
+  )
+
   return (
     <div
       className={`flex py-0.5 ${side === 'right' ? 'justify-end' : 'justify-start'}`}
       style={{ width: ROW_W }}
     >
       <div className="flex flex-col items-center" style={{ width: CARD_W }}>
-        <div className={`w-px h-3 ${lineColor}`} />
-        <span className={[
-          'px-1 py-0.5 rounded text-[8px] font-medium tracking-wide uppercase whitespace-nowrap',
-          edge.blood
-            ? 'text-zinc-500 bg-zinc-800/80'
-            : highlight
-            ? 'text-blue-300 bg-blue-950/60 border border-blue-700/50'
-            : 'text-violet-400 bg-violet-950/60 border border-violet-800/40',
-        ].join(' ')}>
+        <svg width={W} height={SEG} aria-hidden>
+          {spouse ? doubleLine : (
+            <line x1={cx} y1={arrow && !down ? 8 : 0} x2={cx} y2={SEG} stroke={stroke} strokeWidth={1.25} />
+          )}
+          {arrow && !down && <path d={`M${cx},0 L${cx - 4},8 L${cx + 4},8 Z`} fill={stroke} />}
+        </svg>
+
+        <span className={labelPillClass(edge.blood, highlight)}>
           {LABEL_TEXT[edge.label]}
         </span>
-        <div className={`w-px h-3 ${lineColor}`} />
+
+        <svg width={W} height={SEG} aria-hidden>
+          {spouse ? doubleLine : (
+            <line x1={cx} y1={0} x2={cx} y2={arrow && down ? SEG - 8 : SEG} stroke={stroke} strokeWidth={1.25} />
+          )}
+          {arrow && down && <path d={`M${cx},${SEG} L${cx - 4},${SEG - 8} L${cx + 4},${SEG - 8} Z`} fill={stroke} />}
+        </svg>
       </div>
     </div>
   )
@@ -404,15 +474,42 @@ async function exportRelationPathPNG(
     }
   }
 
-  function drawHEdge(sx: number, ex: number, lineY: number, edge: PathEdge) {
+  function drawArrowHead(tipX: number, tipY: number, dir: 'left' | 'right' | 'up' | 'down', color: string) {
+    const L = 8, HW = 4
     ctx.beginPath()
-    ctx.setLineDash(edge.blood ? [] : [5, 3])
-    ctx.strokeStyle = edge.blood ? '#52525b' : '#6d28d9'
+    ctx.moveTo(tipX, tipY)
+    if (dir === 'right')      { ctx.lineTo(tipX - L, tipY - HW); ctx.lineTo(tipX - L, tipY + HW) }
+    else if (dir === 'left')  { ctx.lineTo(tipX + L, tipY - HW); ctx.lineTo(tipX + L, tipY + HW) }
+    else if (dir === 'down')  { ctx.lineTo(tipX - HW, tipY - L); ctx.lineTo(tipX + HW, tipY - L) }
+    else                      { ctx.lineTo(tipX - HW, tipY + L); ctx.lineTo(tipX + HW, tipY + L) }
+    ctx.closePath()
+    ctx.fillStyle = color
+    ctx.fill()
+  }
+
+  function drawHEdge(sx: number, ex: number, lineY: number, edge: PathEdge, rtl: boolean) {
+    const color  = edge.label === 'spouse' ? '#a78bfa' : '#52525b'
+    const spouse = edge.label === 'spouse'
+    const arrow  = edge.label === 'parent' || edge.label === 'child'
+    const fwd    = (edge.label === 'parent') !== rtl
+
+    ctx.strokeStyle = color
     ctx.lineWidth   = 1.5
-    ctx.moveTo(sx, lineY)
-    ctx.lineTo(ex, lineY)
-    ctx.stroke()
-    ctx.setLineDash([])
+    if (spouse) {
+      // Marriage bar — double rule, matching the on-screen connector
+      for (const dy of [-2, 2]) {
+        ctx.beginPath()
+        ctx.moveTo(sx, lineY + dy)
+        ctx.lineTo(ex, lineY + dy)
+        ctx.stroke()
+      }
+    } else {
+      ctx.beginPath()
+      ctx.moveTo(arrow && !fwd ? sx + 8 : sx, lineY)
+      ctx.lineTo(arrow && fwd ? ex - 8 : ex, lineY)
+      ctx.stroke()
+    }
+    if (arrow) drawArrowHead(fwd ? ex : sx, lineY, fwd ? 'right' : 'left', color)
 
     const label = LABEL_TEXT[edge.label].toUpperCase()
     ctx.font     = '600 7px system-ui,-apple-system,sans-serif'
@@ -443,18 +540,29 @@ async function exportRelationPathPNG(
     const midY = (topY + botY) / 2
     const bx = turnX - bw / 2, by2 = midY - bh / 2
 
-    ctx.beginPath()
-    ctx.setLineDash(edge.blood ? [] : [5, 3])
-    ctx.strokeStyle = edge.blood ? '#52525b' : '#6d28d9'
+    const color  = edge.label === 'spouse' ? '#a78bfa' : '#52525b'
+    const spouse = edge.label === 'spouse'
+    const arrow  = edge.label === 'parent' || edge.label === 'child'
+    const down   = edge.label === 'parent'
+
+    ctx.strokeStyle = color
     ctx.lineWidth   = 1.5
-    ctx.moveTo(turnX, topY)
-    ctx.lineTo(turnX, by2)
-    ctx.stroke()
-    ctx.beginPath()
-    ctx.moveTo(turnX, by2 + bh)
-    ctx.lineTo(turnX, botY)
-    ctx.stroke()
-    ctx.setLineDash([])
+    if (spouse) {
+      for (const dx of [-2, 2]) {
+        ctx.beginPath(); ctx.moveTo(turnX + dx, topY);      ctx.lineTo(turnX + dx, by2);  ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(turnX + dx, by2 + bh);  ctx.lineTo(turnX + dx, botY); ctx.stroke()
+      }
+    } else {
+      ctx.beginPath()
+      ctx.moveTo(turnX, arrow && !down ? topY + 8 : topY)
+      ctx.lineTo(turnX, by2)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(turnX, by2 + bh)
+      ctx.lineTo(turnX, arrow && down ? botY - 8 : botY)
+      ctx.stroke()
+    }
+    if (arrow) drawArrowHead(turnX, down ? botY : topY, down ? 'down' : 'up', color)
 
     roundRect(ctx, bx, by2, bw, bh, 3)
     ctx.fillStyle = edge.blood ? '#1a1a1e' : '#1e1b4b'
@@ -487,7 +595,7 @@ async function exportRelationPathPNG(
         const sx = row.isRTL
           ? CPAD + (nCols - 2 - i) * SLOT_W + CCARD_W
           : CPAD + i * SLOT_W + CCARD_W
-        drawHEdge(sx, sx + CEDGE_W, avatarY, row.edges[i])
+        drawHEdge(sx, sx + CEDGE_W, avatarY, row.edges[i], row.isRTL)
       }
     }
 
@@ -688,6 +796,7 @@ export default function RelationPathModal({ personA, personB, persons, relations
                             label={row.edges[i].label}
                             blood={row.edges[i].blood}
                             highlight={!row.edges[i].blood}
+                            rtl={row.isRTL}
                           />
                         )
                       }

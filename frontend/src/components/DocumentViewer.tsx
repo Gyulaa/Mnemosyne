@@ -2,24 +2,10 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { PersonDocument, PersonFull, DocumentNote, Source } from '../types'
-import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
-
-const DOC_TYPE_LABELS: Record<string, string> = {
-  birth_cert:    'Birth certificate',
-  death_cert:    'Death certificate',
-  marriage_cert: 'Marriage certificate',
-  baptism:       'Baptism record',
-  burial_record: 'Burial record',
-  passport:      'Passport',
-  military:      'Military record',
-  land_record:   'Land record',
-  will:          'Will / Testament',
-  letter:        'Letter',
-  photo:         'Photograph',
-  other:         'Document',
-}
+import { docTypeLabel } from '../docTypes'
 
 function isImage(mime: string | null) { return mime?.startsWith('image/') ?? false }
 function isPdf(mime: string | null)   { return mime === 'application/pdf' }
@@ -49,6 +35,7 @@ interface Props {
 }
 
 export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDocument }: Props) {
+  const t = useT()
   const { nameOrder } = useSettings()
   const { data: persons = [] }   = useQuery<PersonFull[]>({ queryKey: ['persons'], queryFn: api.persons.list })
   const { data: types = [] }     = useQuery({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
@@ -64,10 +51,10 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
   const [creatingNote, setCreatingNote] = useState(false)
   const [newNoteShell, setNewNoteShell] = useState<DocumentNote | null>(null)
 
-  const typeMap = new Map(types.map(t => [t.key, t.label]))
+  const typeMap = new Map(types.map(dt => [dt.key, dt.label]))
   const fileUrl = api.documents.fileUrl(doc.id)
   const displayName = doc.title || doc.filename
-  const typeLabel = typeMap.get(doc.doc_type ?? '') ?? DOC_TYPE_LABELS[doc.doc_type ?? ''] ?? doc.doc_type ?? 'Document'
+  const typeLabel = docTypeLabel(t, doc.doc_type, typeMap.get(doc.doc_type ?? ''))
   const linkedPersons = (doc.persons ?? []).map(lp => persons.find(p => p.id === lp.id)).filter(Boolean) as PersonFull[]
 
   async function startNewNote() {
@@ -123,7 +110,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
                 </svg>
                 <a href={fileUrl} target="_blank" rel="noreferrer"
                   className="text-xs text-brand-400 hover:text-brand-300 underline underline-offset-2 transition-colors">
-                  Open PDF in new tab
+                  {t('docViewer.openPdf')}
                 </a>
               </div>
             </div>
@@ -141,7 +128,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
             {/* Description */}
             {doc.description && (
               <div>
-                <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-1">Description</p>
+                <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-1">{t('docViewer.description')}</p>
                 <p className="text-xs text-zinc-300 leading-relaxed">{doc.description}</p>
               </div>
             )}
@@ -149,7 +136,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
             {/* Linked persons */}
             <div>
               <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">
-                Linked persons {linkedPersons.length > 1 ? `(${linkedPersons.length})` : ''}
+                {t('docViewer.linkedPersons')} {linkedPersons.length > 1 ? `(${linkedPersons.length})` : ''}
               </p>
               {linkedPersons.length > 0 ? (
                 <div className="space-y-1.5">
@@ -178,7 +165,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
                   })}
                 </div>
               ) : (
-                <p className="text-xs text-zinc-500 italic">No persons linked</p>
+                <p className="text-xs text-zinc-500 italic">{t('docViewer.noPersons')}</p>
               )}
             </div>
 
@@ -186,10 +173,10 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
             <div>
               <div className="flex items-center justify-between mb-3">
                 <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">
-                  Notes {docNotes.length > 0 ? `(${docNotes.length})` : ''}
+                  {t('docViewer.notes')} {docNotes.length > 0 ? `(${docNotes.length})` : ''}
                 </p>
                 <button onClick={startNewNote} className="text-xs text-zinc-600 hover:text-zinc-300 transition-colors">
-                  + Add
+                  {t('docViewer.addNote')}
                 </button>
               </div>
 
@@ -226,7 +213,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
                 )}
 
                 {docNotes.length === 0 && !creatingNote && (
-                  <p className="text-xs text-zinc-600 italic">No notes yet</p>
+                  <p className="text-xs text-zinc-600 italic">{t('docViewer.noNotes')}</p>
                 )}
               </div>
             </div>
@@ -244,7 +231,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
               </svg>
-              Edit
+              {t('docViewer.edit')}
             </button>
           )}
           <a
@@ -254,7 +241,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
-            Download
+            {t('docViewer.download')}
           </a>
           {(isImage(doc.mime_type) || isPdf(doc.mime_type) || isAudio(doc.mime_type)) && (
             <a href={fileUrl} target="_blank" rel="noreferrer"
@@ -263,7 +250,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
               </svg>
-              Open
+              {t('docViewer.open')}
             </a>
           )}
           <span className="ml-auto text-xs text-zinc-600 truncate">{doc.filename}</span>

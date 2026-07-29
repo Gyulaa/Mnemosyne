@@ -5,6 +5,7 @@ import { api } from '../api'
 import type { PersonDocument, PersonFull, DocumentType, Relation } from '../types'
 import DocumentViewer from './DocumentViewer'
 import { useT } from '../SettingsContext'
+import { docTypeLabel } from '../docTypes'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -185,7 +186,9 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden w-[420px] max-w-[92vw] max-h-[85vh] flex flex-col"
+      {/* 560px, not 420: the add-type row packs two inputs and a button on one
+          line, and at 420 the longer localised placeholders were clipped. */}
+      <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden w-[560px] max-w-[92vw] max-h-[85vh] flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
           <div>
@@ -215,7 +218,7 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
                     className="flex-1 bg-zinc-700 border border-zinc-500 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-brand-400"
                   />
                 ) : (
-                  <span className="flex-1 text-xs text-zinc-200">{dt.label}</span>
+                  <span className="flex-1 text-xs text-zinc-200">{docTypeLabel(t, dt.key, dt.label)}</span>
                 )}
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                   {editingId === dt.id ? (
@@ -250,13 +253,13 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
                 value={newKey}
                 onChange={e => setNewKey(e.target.value)}
                 placeholder={t('docs.typeKeyPh')}
-                className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 font-mono"
+                className="flex-1 min-w-0 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 font-mono"
               />
               <input
                 value={newLabel}
                 onChange={e => setNewLabel(e.target.value)}
                 placeholder={t('docs.typeLabelPh')}
-                className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400"
+                className="flex-[1.3] min-w-0 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400"
                 onKeyDown={e => { if (e.key === 'Enter' && newKey && newLabel) createMut.mutate() }}
               />
               <button
@@ -357,7 +360,7 @@ function UploadModal({ persons, types, onClose, onDone }: {
                 <span className="text-xs text-zinc-200 truncate max-w-xs">{file.name}</span>
               </div>
             ) : (
-              <p className="text-xs text-zinc-500">Drag here or <span className="text-brand-400">click</span> to select a file</p>
+              <p className="text-xs text-zinc-500">{t('docs.dropHint')}</p>
             )}
           </div>
 
@@ -368,7 +371,7 @@ function UploadModal({ persons, types, onClose, onDone }: {
           <div className="flex gap-2">
             <select value={docType} onChange={e => setDocType(e.target.value)}
               className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 outline-none focus:border-brand-400">
-              {types.map(dt => <option key={dt.key} value={dt.key}>{dt.label}</option>)}
+              {types.map(dt => <option key={dt.key} value={dt.key}>{docTypeLabel(t, dt.key, dt.label)}</option>)}
               {types.length === 0 && <option value="other">{t('person.docFallback')}</option>}
             </select>
             <input type="number" value={year} onChange={e => setYear(e.target.value)} placeholder={t('docs.yearPh')}
@@ -568,7 +571,7 @@ function EditDocModal({ doc, types, persons, onClose }: {
           <div className="flex gap-2">
             <select value={docType} onChange={e => setDocType(e.target.value)}
               className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 outline-none focus:border-brand-400">
-              {types.map(dt => <option key={dt.key} value={dt.key}>{dt.label}</option>)}
+              {types.map(dt => <option key={dt.key} value={dt.key}>{docTypeLabel(t, dt.key, dt.label)}</option>)}
               {types.length === 0 && <option value="other">{t('person.docFallback')}</option>}
             </select>
             <input type="number" value={year} onChange={e => setYear(e.target.value)} placeholder={t('docs.yearPh')}
@@ -638,7 +641,7 @@ const DocRow = forwardRef<HTMLTableRowElement, {
   const qc = useQueryClient()
   const [previewing, setPreviewing] = useState(false)
   const displayName = doc.title || doc.filename
-  const typeLabel = typeMap.get(doc.doc_type ?? '') ?? doc.doc_type ?? t('person.docFallback')
+  const typeLabel = docTypeLabel(t, doc.doc_type, typeMap.get(doc.doc_type ?? ''))
   const canPreview = isImage(doc.mime_type) || isPdf(doc.mime_type) || isAudio(doc.mime_type)
 
   const deleteMut = useMutation({
@@ -764,7 +767,7 @@ export default function DocumentsTab({
   const [highlightedId, setHighlightedId] = useState<number | null>(null)
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map())
 
-  const typeMap = new Map(types.map(t => [t.key, t.label]))
+  const typeMap = new Map(types.map(dt => [dt.key, dt.label]))
 
   useEffect(() => {
     if (!navTarget) return
@@ -884,7 +887,7 @@ export default function DocumentsTab({
           <select value={filterType} onChange={e => setFilterType(e.target.value)}
             className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-300 outline-none focus:border-brand-400 max-w-[160px]">
             <option value="__all__">{t('docs.allTypes')}</option>
-            {types.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+            {types.map(dt => <option key={dt.key} value={dt.key}>{docTypeLabel(t, dt.key, dt.label)}</option>)}
           </select>
 
           <PersonCombobox

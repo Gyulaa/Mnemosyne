@@ -19,7 +19,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Fo
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import update as sql_update, func, nullslast, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
@@ -2825,7 +2825,43 @@ def face_thumbnail(face_id: int, size: int = 160, db: Session = Depends(get_db))
 
 # ── Events ────────────────────────────────────────────────────────────────────
 
-def _event_person_dict(ep: DBEventPerson) -> dict:
+def _event_face_map(ev: DBEvent) -> dict[int, int]:
+    """
+    person_id → a face_id cropped from THIS event's photos.
+
+    A person's `thumbnail_face_id` is just their default portrait (their oldest
+    face), which is misleading on an event chip — it shows someone at the wrong
+    age for the event. Resolve Face → Cluster → Person over the event's own
+    images instead, preferring the earliest image in the event's own ordering
+    so the pick is stable between renders.
+    """
+    image_order = {ei.image_id: i for i, ei in enumerate(ev.event_images)}
+    if not image_order:
+        return {}
+
+    session = object_session(ev)
+    if session is None:
+        return {}
+
+    rows = (
+        session.query(DBFace.id, DBFace.image_id, DBCluster.person_id)
+        .join(DBCluster, DBFace.cluster_id == DBCluster.id)
+        .filter(
+            DBFace.image_id.in_(image_order.keys()),
+            DBCluster.person_id.isnot(None),
+        )
+        .all()
+    )
+
+    best: dict[int, tuple[int, int]] = {}   # person_id → (image position, face_id)
+    for face_id, image_id, person_id in rows:
+        key = (image_order.get(image_id, len(image_order)), face_id)
+        if person_id not in best or key < best[person_id]:
+            best[person_id] = key
+    return {pid: face_id for pid, (_pos, face_id) in best.items()}
+
+
+def _event_person_dict(ep: DBEventPerson, face_map: dict[int, int] | None = None) -> dict:
     p = ep.person
     return {
         "id": ep.id,
@@ -2834,6 +2870,9 @@ def _event_person_dict(ep: DBEventPerson) -> dict:
         "featured": bool(ep.featured),
         "person_name": p.name if p else None,
         "thumbnail_face_id": p.thumbnail_face_id if p else None,
+        # None when the person has no recognised face in this event's photos;
+        # the client falls back to thumbnail_face_id.
+        "event_face_id": (face_map or {}).get(ep.person_id),
     }
 
 
@@ -2848,6 +2887,7 @@ def _event_image_dict(ei: DBEventImage) -> dict:
 
 
 def _event_dict(ev: DBEvent) -> dict:
+    face_map = _event_face_map(ev)   # one query per event, not per person
     return {
         "id": ev.id,
         "event_type": ev.event_type,
@@ -2859,7 +2899,7 @@ def _event_dict(ev: DBEvent) -> dict:
         "created_at": ev.created_at,
         "updated_at": ev.updated_at,
         "is_private": bool(ev.is_private),
-        "persons": [_event_person_dict(ep) for ep in ev.event_persons],
+        "persons": [_event_person_dict(ep, face_map) for ep in ev.event_persons],
         "images": [_event_image_dict(ei) for ei in ev.event_images],
     }
 
