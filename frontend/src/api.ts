@@ -40,6 +40,13 @@ const patch = <T>(url: string, body?: unknown) =>
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
 
+const put = <T>(url: string, body?: unknown) =>
+  fetchJson<T>(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+
 export const api = {
   scan: {
     start: (path: string, skipDuplicates = false) =>
@@ -363,6 +370,23 @@ export const api = {
     },
     update: (id: number, fields: Partial<Pick<PersonDocument, 'title' | 'doc_type' | 'year' | 'description'>>) =>
       patch<PersonDocument>(`${BASE}/documents/${id}`, fields),
+    /** Create a document written in-app; its Markdown body is stored as a .md file. */
+    createText: (fields: {
+      title?: string; doc_type?: string; year?: number; description?: string
+      content: string; person_ids: number[]
+    }) => post<PersonDocument>(`${BASE}/documents/text`, fields),
+    getText: (id: number) =>
+      fetchJson<{ id: number; content: string }>(`${BASE}/documents/${id}/text`),
+    saveText: (id: number, content: string) =>
+      put<{ id: number; content: string }>(`${BASE}/documents/${id}/text`, { content }),
+    addCitation: (docId: number, fields: { source_id?: number; marker: number; detail?: string; custom_label?: string }) =>
+      post<NoteCitation>(`${BASE}/documents/${docId}/citations`, fields),
+    deleteCitation: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/document-citations/${id}`, { method: 'DELETE' }),
+    addImage: (docId: number, imageId: number) =>
+      post<PersonDocument>(`${BASE}/documents/${docId}/images`, { image_id: imageId }),
+    removeImage: (docId: number, imageId: number) =>
+      fetchJson<PersonDocument>(`${BASE}/documents/${docId}/images/${imageId}`, { method: 'DELETE' }),
     togglePrivacy: (id: number, isPrivate: boolean) =>
       patch<PersonDocument>(`${BASE}/documents/${id}`, { is_private: isPrivate }),
     delete: (id: number) =>

@@ -193,6 +193,24 @@ export interface Relation {
   is_private: boolean
 }
 
+/** Linked-person stub on a document — carries name parts so the UI can honour the name-order setting. */
+export interface DocumentPersonRef {
+  id: number
+  name: string | null
+  title: string | null
+  first_name: string | null
+  middle_name: string | null
+  last_name: string | null
+}
+
+export interface DocumentImageRef {
+  id: number
+  image_id: number
+  image_path: string | null
+  caption: string | null
+  sort_order: number
+}
+
 export interface PersonDocument {
   id: number
   person_id: number
@@ -205,8 +223,14 @@ export interface PersonDocument {
   description: string | null
   created_at: string | null
   is_private: boolean
+  /** Written inside the app: Markdown body, editable in the text editor. */
+  is_text: boolean
   source_id: number | null
-  persons: { id: number; name: string | null }[]
+  persons: DocumentPersonRef[]
+  /** [n] references in the Markdown body — text documents only. */
+  citations: NoteCitation[]
+  /** Library photos attached to the body — text documents only. */
+  images: DocumentImageRef[]
 }
 
 export interface DocumentType {

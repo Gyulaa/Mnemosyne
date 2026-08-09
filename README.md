@@ -106,6 +106,17 @@ From here you can also attach documents, write notes with citations, and find th
 - Preview images and PDFs right in the app
 - Select multiple documents and download them as a ZIP
 
+When you click **New**, Mnemosyne asks whether you want to upload a file you already have, or write a document right there.
+
+**Writing a document in the app** is meant for the things that were never on paper — a family chronicle, a transcription of an old letter, notes from an afternoon of research:
+
+- Write in **Markdown**: headings, **bold**, *italic*, lists, quotes. A Preview tab shows how it will look
+- Type **@** to mention a person — the name becomes a link straight to their profile
+- Use **Cite** to add a `[1]`-style reference to another document, an existing source, or any free text you type ("Grandma's account, 1998"). References are listed at the bottom of the document
+- **Attach photos** from your library to illustrate the text
+
+Text documents behave like any other document everywhere else: they can be linked to several people, filtered, searched, downloaded, and they travel with every export.
+
 ### Events
 - Record family events: births, marriages, military service, emigration, and more
 - Associate multiple people with each event
@@ -131,11 +142,15 @@ Private items show an **amber padlock** so they are always visible. Public items
 
 Only you can restore a private item to public — there is no "auto-export private" setting.
 
-### Language
+### Language and name order
 - The interface is available in **English** and **Hungarian**
 - Switch anytime from **Settings** (gear icon, top right) → **Language**
 - The choice is saved locally and persists across sessions
 - The built-in document type names are translated too. If you rename a type yourself in **Manage types**, your own wording is kept in both languages
+- **Name order** (Settings → given name first, or family name first) applies everywhere a person's name is shown — the tree, profiles, mentions, and the document lists and pickers. Searching works with either order, so "Anna Miklós" and "Miklós Anna" both find the same person
+
+### Telling people apart
+Four relatives can easily share a name. Wherever you pick a person from a list — linking a document, mentioning someone with **@**, assigning a face cluster — each entry shows their years and, underneath, their closest family: **♥** spouse, **↑** parents, **↓** children.
 
 ### Search
 - Press **Ctrl+K** (Windows) or **Cmd+K** (Mac) to search everything at once — names, documents, notes — from anywhere in the app
@@ -272,6 +287,28 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 - Notes with citations and @ mentions attachable to documents
 - Bulk selection and ZIP download; see [Document bulk download](#document-bulk-download)
 
+**Two ownership columns, and why both exist.** `documents.person_id` is the original single owner; `document_persons` is the many-to-many junction every listing actually joins on. They must be kept in step by hand:
+
+- `merge_persons` re-points `document_persons` rows at the target with `UPDATE OR IGNORE` (the plain `UPDATE` would collide when both people are linked to the same document), then deletes the leftovers. Without this the junction rows are FK-cascaded away with the source person and the document silently disappears from every listing while still existing in the table
+- `delete_person` hands ownership of that person's documents to a co-linked person before deleting them, because `Person.documents` cascades `all, delete-orphan` and would otherwise destroy documents shared with others. Only when nobody else is linked is the document dropped — and then its file is unlinked from disk, which the ORM cascade does not do
+
+**Text documents** (`documents.is_text = 1`, schema v6) are written in the app instead of uploaded. The Markdown body is stored as a `.md` file in `projects/<id>/documents/` under the usual UUID `stored_name`, so downloads, bulk ZIPs, project exports and GEDCOM media all handle them without special-casing. `filename` is a slug of the title and is re-derived whenever the title changes, so archives stay readable.
+
+| Concern | Table / endpoint |
+|---|---|
+| Body | `GET` / `PUT /api/documents/{id}/text` → `{ content }` |
+| Create | `POST /api/documents/text` — requires at least one `person_ids` entry |
+| `[n]` references | `document_citations` · `POST /api/documents/{id}/citations`, `DELETE /api/document-citations/{id}` |
+| Attached photos | `document_images` · `POST /api/documents/{id}/images`, `DELETE /api/documents/{id}/images/{image_id}` |
+
+`document_citations` mirrors `note_citations` exactly (`source_id` NULL means a free-text citation carried in `custom_label`), so the same renderer and References panel work for both. Citing a document from the editor calls `promote-to-source` first, which is idempotent — citing the same document twice reuses one `Source`.
+
+### Person pickers
+
+`frontend/src/familyContext.tsx` is the single source for the close-relative context shown under a name in every picker: `useFamilyContext(persons, relations, nameOrder)` returns id → `{ spouses, parents, children, siblings }` with names already rendered in the configured order, and `<FamilyContextLines>` renders the ♥ / ↑ / ↓ / ~ lines (capped at two names each, siblings only when nothing closer exists). `components/PersonSelect.tsx` builds `PersonMultiSelect` and `PersonFilterCombobox` on top of it.
+
+Document payloads carry the individual name parts (`_doc_person_dict` in `main.py`), not just the stored display name — `persons.name` is always composed by `_derive_display_name()` in one fixed order, so a client that only receives it cannot honour the name-order setting.
+
 ### Global Search
 - **Ctrl+K** / **Cmd+K** — searches persons (name, nickname), events, documents, and note content simultaneously
 - Keyboard navigation: ↑ ↓ to move, Enter to open, Escape to close
@@ -403,6 +440,8 @@ Image-Organizer/
 │       ├── types.ts                   # TypeScript interfaces
 │       ├── SettingsContext.tsx        # Global settings (name order, language, auto-update toggle)
 │       ├── docTypes.ts                # Built-in document type keys + translated labels
+│       ├── familyContext.tsx          # Close-relative lookup + lines shown in person pickers
+│       ├── markdown.ts                # Shared Markdown renderer (@ mentions, [n] citations)
 │       ├── i18n/
 │       │   └── translations.ts        # EN/HU translation strings (flat dot-notation keys)
 │       └── components/
@@ -420,7 +459,10 @@ Image-Organizer/
 │           ├── RelationPathModal.tsx  # Relationship path finder + PNG export
 │           ├── ExportModal.tsx        # ZIP export settings
 │           ├── SearchPalette.tsx      # Global search (Ctrl+K)
-│           ├── DocumentViewer.tsx     # Document preview modal
+│           ├── DocumentsTab.tsx       # Document list, filters, upload / create chooser
+│           ├── DocumentViewer.tsx     # Document preview modal (renders Markdown bodies)
+│           ├── TextDocumentEditor.tsx # In-app Markdown documents + citations + photos
+│           ├── PersonSelect.tsx       # Shared person pickers (multi-select, filter combobox)
 │           ├── GedcomImportModal.tsx  # GEDCOM import wizard
 │           ├── UpdateBanner.tsx       # Auto-update icon + modal
 │           ├── StatisticsView.tsx
@@ -443,6 +485,16 @@ Image-Organizer/
 ## Projects and database
 
 Each project has its own directory (`projects/<id>/`) with its own SQLite database. The schema version is stored in `schema_version` table; migrations run at startup and are idempotent.
+
+| Version | Adds |
+|---|---|
+| v1→v2 | `sources.event_id` |
+| v2→v3 | `document_types`, `document_persons` (multi-person documents) |
+| v3→v4 | `person_subclusters` |
+| v4→v5 | `is_private` on six tables |
+| v5→v6 | `documents.is_text`, `document_citations`, `document_images` (in-app text documents) |
+
+`Base.metadata.create_all()` runs before the migration block, so new *tables* appear on their own; a new *column* on an existing table still needs an explicit `ALTER TABLE` in the version block.
 
 Database files (`*.db`) and `config.json` are not tracked by git.
 
@@ -467,6 +519,8 @@ Entirely client-side (Canvas 2D API); images are pre-loaded before drawing.
 
 The ZIP contains the original files (collisions renamed `<name> (2).<ext>`) and an optional `_index.txt` plain-text manifest with titles, types, years, linked persons, descriptions, and full note text with citations.
 
+Text documents appear as their `.md` file. Their body references (`document_citations`) and attached-photo count are listed in the manifest under the document itself — those live on the document, not on a note, so they need their own block.
+
 ---
 
 ## ZIP export
@@ -488,6 +542,8 @@ A ZIP archive packages the database and all referenced media into a portable, se
 2. **Person/cluster filter** (mutually exclusive): person list, cluster list, or full project
 3. **Content toggles**: notes, sources, events, documents, images, faceless images — each independently removable
 4. **Privacy filter** (always applied, cannot be disabled): removes all rows where `is_private=1` across images, clusters, relations, documents, notes, and events; private cluster faces are moved to the noise cluster before the cluster is deleted
+
+Anywhere documents or images are deleted from the export copy, `_delete_document_children()` clears the matching `document_citations` / `document_images` rows first. The export DB is written with the plain `sqlite3` module, where `PRAGMA foreign_keys` is **off**, so nothing cascades for you — dropped documents would otherwise leave dangling children behind in the shipped database.
 5. **Path rewrite**: image paths updated to `images/<id>_<filename>` (absolute → relative)
 6. Pack with DEFLATE compression, streamed to the response
 
@@ -499,6 +555,10 @@ A ZIP archive packages the database and all referenced media into a portable, se
 2. Extracted to `projects/<new_id>/`
 3. `project.db` → `photo_organizer.db`
 4. Image paths rewritten back to absolute
+
+**Merge import** (`POST /api/import/merge/preview` → `/confirm`, `merge_import.py`) is the other direction: it folds a ZIP into the *active* project with a per-person create/merge/skip decision. Unlike the pipeline above it does not copy the database — it re-inserts row by row and remaps every foreign key, so **each table has to be handled explicitly or its data is silently dropped**. Columns are read through `_safe_rows()` and guarded with `_has_column()`, because an incoming ZIP may have been exported by an older schema.
+
+Documents carry `is_text` (without it a chronicle arrives as an opaque file), `document_citations` (remapped through `src_id_remap`, `source_id NULL` kept for free-text labels), and `document_images` (remapped through `img_id_remap`; a merge import only brings in images belonging to named clusters, so a link whose photo stayed behind is skipped).
 
 **Callers**
 
@@ -556,5 +616,8 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 - **New file bundled into the build** → add it to `datas` in `mnemosyne.spec` **and** read it via `MNEMOSYNE_BUNDLE_DIR`, not `MNEMOSYNE_APP_DIR` — see *Auto-update* for why the two are not interchangeable
 - **New streaming ZIP endpoint** → wrap the pipe in `NonSeekableWriter` (see *ZIP export*), otherwise the archive is silently corrupt on Windows
 - **New data table with `person_id` FK** → update `_delete_persons` in `export_utils.py` with an explicit `DELETE FROM <table> WHERE person_id IN (...)` line before the `DELETE FROM persons` line. If the table has `ON DELETE CASCADE` (like `person_subclusters`) the cascade would handle it automatically, but being explicit is the established pattern here
+- **New data table with `document_id` FK** → add it to `_delete_document_children()` in `export_utils.py` (FKs are off in the export copy, so nothing cascades), include it in `_doc_dict` in `main.py`, and carry it through `read_zip_db` + `execute_merge` in `merge_import.py` — a merge import copies nothing it is not told about
+- **New person picker anywhere in the UI** → build it on `useFamilyContext` + `<FamilyContextLines>` from `familyContext.tsx`, or on `PersonMultiSelect` / `PersonFilterCombobox` from `components/PersonSelect.tsx`. Rolling a fourth hand-written relative lookup is how the pickers drifted apart last time
+- **Any UI that shows a person's name** → render it through `displayPersonName(person, nameOrder)`. The stored `persons.name` is always composed in one fixed order by `_derive_display_name()`, so printing it directly ignores the user's setting. If the payload is a stub rather than a full person, give the stub its name parts server-side (see `_doc_person_dict`)
 - **Schema change to `note_citations`** → add idempotent migration in `database.py` using the `PRAGMA table_info` + table-recreate pattern
 - **New `is_private` on a table** → (1) add `ALTER TABLE … ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0` to the v4→v5 migration block in `database.py`; (2) include `is_private` in the relevant `_xxx_dict` serialiser in `main.py`; (3) add the privacy-filter DELETE block for that table inside `build_export_db` in `export_utils.py`; (4) add `WHERE COALESCE(is_private,0)=0` to the relevant query in `build_gedcom_zip` in `gedcom_export.py` if applicable; (5) add `togglePrivacy` call to `api.ts`; (6) update the TypeScript interface in `types.ts`; (7) add the padlock button to the relevant component

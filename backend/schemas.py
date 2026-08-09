@@ -161,3 +161,22 @@ class EventPersonAdd(BaseModel):
 class BulkDownloadRequest(BaseModel):
     ids: list[int]
     include_notes: bool = True
+
+
+class TextDocumentCreate(BaseModel):
+    """A document written inside the app rather than uploaded."""
+    title: Optional[str] = None
+    doc_type: Optional[str] = "other"
+    year: Optional[int] = None
+    description: Optional[str] = None
+    content: str = ''
+    person_ids: list[int] = []
+
+
+class TextDocumentBody(BaseModel):
+    content: str = ''
+
+
+class DocumentImageAdd(BaseModel):
+    image_id: int
+    caption: Optional[str] = None

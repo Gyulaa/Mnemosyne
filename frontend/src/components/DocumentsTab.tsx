@@ -1,10 +1,13 @@
-import { useState, useRef, useEffect, forwardRef, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, forwardRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { PersonDocument, PersonFull, DocumentType, Relation } from '../types'
+import type { PersonDocument, PersonFull, DocumentType, DocumentPersonRef } from '../types'
 import DocumentViewer from './DocumentViewer'
-import { useT } from '../SettingsContext'
+import TextDocumentEditor from './TextDocumentEditor'
+import { PersonMultiSelect, PersonFilterCombobox, usePersonDirectory } from './PersonSelect'
+import { useT, useSettings, displayPersonName } from '../SettingsContext'
+import type { useFamilyContext } from '../familyContext'
 import { docTypeLabel } from '../docTypes'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -13,21 +16,17 @@ function isImage(mime: string | null) { return mime?.startsWith('image/') ?? fal
 function isPdf(mime: string | null)   { return mime === 'application/pdf' }
 function isAudio(mime: string | null) { return mime?.startsWith('audio/') ?? false }
 
-// One-line biographical summary used in person pickers to help distinguish
-// persons with identical names.
-function personSummary(p: PersonFull): string | null {
-  const by = p.birth_date ? p.birth_date.slice(0, 4) : p.birth_year != null ? String(p.birth_year) : null
-  const dy = p.death_date ? p.death_date.slice(0, 4) : p.death_year != null ? String(p.death_year) : null
-  const parts: string[] = []
-  if (by && dy)   parts.push(`${by}–${dy}`)
-  else if (by)    parts.push(`* ${by}`)
-  else if (dy)    parts.push(`† ${dy}`)
-  if (p.birth_place) parts.push(p.birth_place)
-  if (p.occupation)  parts.push(p.occupation)
-  return parts.length > 0 ? parts.join(' · ') : null
+/** Display name for a linked-person stub, in the user's configured name order. */
+function refName(p: DocumentPersonRef, order: 'en' | 'hu', fallback = '(unnamed)') {
+  return displayPersonName(p, order, fallback)
 }
 
-function fileIcon(mime: string | null) {
+function fileIcon(mime: string | null, isText = false) {
+  if (isText) return (
+    <svg className="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 7.5h1.5m-1.5 3h1.5m-7.5 3h7.5m-7.5 3h7.5m3-9h3.375c.621 0 1.125.504 1.125 1.125V18a2.25 2.25 0 01-2.25 2.25M16.5 7.5V18a2.25 2.25 0 002.25 2.25M16.5 7.5V4.875c0-.621-.504-1.125-1.125-1.125H4.125C3.504 3.75 3 4.254 3 4.875V18a2.25 2.25 0 002.25 2.25h13.5M6 7.5h3v3H6v-3z"/>
+    </svg>
+  )
   if (isImage(mime)) return (
     <svg className="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3 8.25V18a2.25 2.25 0 002.25 2.25h13.5A2.25 2.25 0 0021 18V8.25"/>
@@ -50,108 +49,86 @@ function fileIcon(mime: string | null) {
   )
 }
 
-// ── PersonCombobox ────────────────────────────────────────────────────────────
-
-function PersonCombobox({ persons, value, onChange }: {
-  persons: PersonFull[]
-  value: number | null
-  onChange: (id: number | null) => void
-}) {
-  const t = useT()
-  const [open, setOpen] = useState(false)
-  const [search, setSearch] = useState('')
-  const containerRef = useRef<HTMLDivElement>(null)
-  const selected = persons.find(p => p.id === value)
-
-  const filtered = !search.trim()
-    ? persons
-    : persons.filter(p => {
-        const q = search.toLowerCase()
-        return (p.name ?? '').toLowerCase().includes(q)
-          || (p.first_name ?? '').toLowerCase().includes(q)
-          || (p.last_name ?? '').toLowerCase().includes(q)
-      })
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false)
-        setSearch('')
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  const select = (id: number | null) => {
-    onChange(id)
-    setOpen(false)
-    setSearch('')
-  }
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="flex items-center justify-between gap-2 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs outline-none hover:border-zinc-600 focus:border-brand-400 min-w-[140px] max-w-[180px]"
-      >
-        <span className={selected ? 'text-zinc-100 truncate' : 'text-zinc-500'}>
-          {selected ? (selected.name ?? '(unnamed)') : t('docs.allPersons')}
-        </span>
-        <svg className={`w-3 h-3 text-zinc-500 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" d="M19 9l-7 7-7-7"/>
-        </svg>
-      </button>
-      {open && (
-        <div className="absolute top-full left-0 mt-1 w-64 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 overflow-hidden">
-          <div className="px-2 py-2 border-b border-zinc-800">
-            <input
-              autoFocus
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder={t('docs.searchPersons')}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
-            />
-          </div>
-          <div className="max-h-60 overflow-y-auto py-1">
-            <button
-              onClick={() => select(null)}
-              className={`w-full px-3 py-1.5 text-xs text-left hover:bg-zinc-800 transition-colors ${value === null ? 'text-brand-300' : 'text-zinc-400'}`}
-            >
-              {t('docs.allPersons')}
-            </button>
-            {filtered.map(p => {
-              const sum = personSummary(p)
-              return (
-                <button key={p.id} onClick={() => select(p.id)}
-                  className={`w-full px-3 py-1.5 text-xs text-left flex flex-col hover:bg-zinc-800 transition-colors ${value === p.id ? 'text-brand-300' : 'text-zinc-100'}`}
-                >
-                  <span>{p.name ?? '(unnamed)'}</span>
-                  {sum && <span className="text-xs text-zinc-500 leading-tight">{sum}</span>}
-                </button>
-              )
-            })}
-            {filtered.length === 0 && (
-              <p className="px-3 py-2 text-xs text-zinc-600 italic">{t('docs.noResults')}</p>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── PersonChip ────────────────────────────────────────────────────────────────
 
-function PersonChip({ person, onClick }: { person: { id: number; name: string | null }; onClick?: () => void }) {
+function PersonChip({ person, onClick }: { person: DocumentPersonRef; onClick?: () => void }) {
+  const { nameOrder } = useSettings()
   return (
     <button
       onClick={onClick}
       className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-zinc-700/60 hover:bg-zinc-700 text-zinc-300 hover:text-zinc-100 text-xs transition-colors"
     >
-      {person.name ?? '(unnamed)'}
+      {refName(person, nameOrder)}
     </button>
+  )
+}
+
+// ── CreateChooserModal ────────────────────────────────────────────────────────
+
+/** First step of "New": write something here, or bring in a file. */
+function CreateChooserModal({ onPick, onClose }: {
+  onPick: (mode: 'text' | 'upload') => void
+  onClose: () => void
+}) {
+  const t = useT()
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [onClose])
+
+  const options = [
+    {
+      mode: 'text' as const,
+      title: t('docs.chooseWriteTitle'),
+      desc: t('docs.chooseWriteDesc'),
+      icon: (
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+      ),
+    },
+    {
+      mode: 'upload' as const,
+      title: t('docs.chooseUploadTitle'),
+      desc: t('docs.chooseUploadDesc'),
+      icon: (
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 7.5 7.5 12M12 7.5v12" />
+      ),
+    },
+  ]
+
+  return (
+    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden w-[520px] max-w-[92vw]"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800">
+          <div>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-0.5">{t('docs.heading')}</p>
+            <h2 className="text-sm font-semibold text-zinc-100">{t('docs.chooseTitle')}</h2>
+          </div>
+          <button onClick={onClose}
+            className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" d="M6 6l12 12M6 18L18 6" />
+            </svg>
+          </button>
+        </div>
+        <div className="p-4 grid grid-cols-2 gap-3">
+          {options.map(o => (
+            <button key={o.mode} onClick={() => onPick(o.mode)}
+              className="group flex flex-col items-start gap-2 p-4 rounded-xl bg-zinc-800/50 border border-zinc-700/70 hover:border-brand-500 hover:bg-zinc-800 transition-colors text-left">
+              <span className="w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-700 group-hover:border-brand-500/60 flex items-center justify-center transition-colors">
+                <svg className="w-5 h-5 text-zinc-400 group-hover:text-brand-400 transition-colors"
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  {o.icon}
+                </svg>
+              </span>
+              <span className="text-sm font-semibold text-zinc-100">{o.title}</span>
+              <span className="text-xs text-zinc-500 leading-relaxed">{o.desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -280,8 +257,9 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
 
 // ── UploadModal ───────────────────────────────────────────────────────────────
 
-function UploadModal({ persons, types, onClose, onDone }: {
+function UploadModal({ persons, familyMap, types, onClose, onDone }: {
   persons: PersonFull[]
+  familyMap: ReturnType<typeof useFamilyContext>
   types: DocumentType[]
   onClose: () => void
   onDone: () => void
@@ -295,17 +273,13 @@ function UploadModal({ persons, types, onClose, onDone }: {
   const [year, setYear] = useState('')
   const [description, setDescription] = useState('')
   const [selectedPersonIds, setSelectedPersonIds] = useState<number[]>([])
-  const [personSearch, setPersonSearch] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
-  const filteredPersons = persons.filter(p =>
-    !personSearch || (p.name ?? '').toLowerCase().includes(personSearch.toLowerCase())
-  )
-
   const togglePerson = (id: number) =>
     setSelectedPersonIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
+  const selectedPersonIdSet = useMemo(() => new Set(selectedPersonIds), [selectedPersonIds])
 
   async function submit() {
     if (!file || selectedPersonIds.length === 0 || uploading) return
@@ -385,40 +359,13 @@ function UploadModal({ persons, types, onClose, onDone }: {
           {/* Person selection */}
           <div>
             <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.linkedPersons')}</p>
-            {selectedPersonIds.length > 0 && (
-              <div className="flex flex-wrap gap-1 mb-2">
-                {selectedPersonIds.map(pid => {
-                  const p = persons.find(x => x.id === pid)
-                  return (
-                    <span key={pid} className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-brand-800/60 border border-brand-600/50 text-brand-300 text-xs">
-                      {p?.name ?? '(unnamed)'}
-                      <button onClick={() => togglePerson(pid)} className="hover:text-white">×</button>
-                    </span>
-                  )
-                })}
-              </div>
-            )}
-            <input value={personSearch} onChange={e => setPersonSearch(e.target.value)} placeholder={t('docs.searchPersons')}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 mb-1" />
-            <div className="max-h-40 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-800/40">
-              {filteredPersons.slice(0, 50).map(p => {
-                const selected = selectedPersonIds.includes(p.id)
-                const bio = personSummary(p)
-                return (
-                  <button key={p.id} onClick={() => togglePerson(p.id)}
-                    className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors text-left ${selected ? 'bg-brand-800/50 text-brand-200' : 'text-zinc-300 hover:bg-zinc-700/60'}`}>
-                    <span className={`w-3 h-3 rounded-sm border shrink-0 flex items-center justify-center mt-0.5 ${selected ? 'bg-brand-500 border-brand-400' : 'border-zinc-600'}`}>
-                      {selected && <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 12 12"><path d="M10 3L5 8.5 2 5.5"/></svg>}
-                    </span>
-                    <span className="flex flex-col min-w-0">
-                      <span className="truncate">{p.name ?? '(unnamed)'}</span>
-                      {bio && <span className={`text-xs truncate ${selected ? 'text-brand-400/70' : 'text-zinc-500'}`}>{bio}</span>}
-                    </span>
-                  </button>
-                )
-              })}
-              {filteredPersons.length === 0 && <p className="px-3 py-2 text-xs text-zinc-600">{t('docs.noPersonsFound')}</p>}
-            </div>
+            <PersonMultiSelect
+              persons={persons}
+              familyMap={familyMap}
+              selectedIds={selectedPersonIdSet}
+              onToggle={togglePerson}
+              maxHeight={200}
+            />
             {selectedPersonIds.length === 0 && (
               <p className="text-xs text-zinc-600 mt-1">{t('docs.selectPerson')}</p>
             )}
@@ -443,10 +390,11 @@ function UploadModal({ persons, types, onClose, onDone }: {
 
 // ── EditDocModal ──────────────────────────────────────────────────────────────
 
-function EditDocModal({ doc, types, persons, onClose }: {
+function EditDocModal({ doc, types, persons, familyMap, onClose }: {
   doc: PersonDocument
   types: DocumentType[]
   persons: PersonFull[]
+  familyMap: ReturnType<typeof useFamilyContext>
   onClose: () => void
 }) {
   const t = useT()
@@ -455,38 +403,14 @@ function EditDocModal({ doc, types, persons, onClose }: {
   const [docType, setDocType]       = useState(doc.doc_type ?? 'other')
   const [year, setYear]             = useState(doc.year ? String(doc.year) : '')
   const [description, setDescription] = useState(doc.description ?? '')
-  const [personSearch, setPersonSearch] = useState('')
   const [linkedIds, setLinkedIds]   = useState(() => new Set(doc.persons.map(p => p.id)))
   const [saving, setSaving]         = useState(false)
-  const [hoveredPid, setHoveredPid] = useState<{ pid: number; rect: DOMRect } | null>(null)
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [onClose])
-
-  const { data: relations = [] } = useQuery<Relation[]>({ queryKey: ['relations'], queryFn: api.relations.list })
-
-  const familyMap = useMemo(() => {
-    type FE = { spouses: string[]; parents: string[]; children: string[] }
-    const map = new Map<number, FE>()
-    const byId = new Map(persons.map(p => [p.id, p]))
-    const name = (id: number) => byId.get(id)?.name ?? null
-    const entry = (id: number): FE => { if (!map.has(id)) map.set(id, { spouses: [], parents: [], children: [] }); return map.get(id)! }
-    for (const r of relations) {
-      if (r.type === 'spouse') {
-        const nB = name(r.person_b_id); const nA = name(r.person_a_id)
-        if (nB) entry(r.person_a_id).spouses.push(nB)
-        if (nA) entry(r.person_b_id).spouses.push(nA)
-      } else if (r.type === 'parent') {
-        const nP = name(r.person_a_id); const nC = name(r.person_b_id)
-        if (nP) entry(r.person_b_id).parents.push(nP)
-        if (nC) entry(r.person_a_id).children.push(nC)
-      }
-    }
-    return map
-  }, [relations, persons])
 
   async function togglePerson(personId: number) {
     const wasLinked = linkedIds.has(personId)
@@ -519,38 +443,7 @@ function EditDocModal({ doc, types, persons, onClose }: {
     }
   }
 
-  const filteredPersons = personSearch
-    ? persons.filter(p => (p.name ?? '').toLowerCase().includes(personSearch.toLowerCase()))
-    : persons
-
-  const familyTooltip = hoveredPid && (() => {
-    const fam = familyMap.get(hoveredPid.pid)
-    if (!fam || (!fam.spouses.length && !fam.parents.length && !fam.children.length)) return null
-    const r = hoveredPid.rect
-    const tooltipW = 208
-    const left = r.right + 10 + tooltipW > window.innerWidth ? r.left - tooltipW - 10 : r.right + 10
-    const top = Math.min(r.top, window.innerHeight - 140)
-    return createPortal(
-      <div style={{ position: 'fixed', top, left, zIndex: 800, width: tooltipW }}
-        className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-3 pointer-events-none">
-        {fam.spouses.length > 0 && (
-          <p className="text-xs text-brand-400 truncate mb-0.5">♥ {fam.spouses.join(', ')}</p>
-        )}
-        {fam.parents.length > 0 && (
-          <p className="text-xs text-zinc-500 truncate mb-0.5">↑ {fam.parents.join(', ')}</p>
-        )}
-        {fam.children.length > 0 && (
-          <p className="text-xs text-zinc-500 truncate">
-            ↓ {fam.children.length <= 3 ? fam.children.join(', ') : `${fam.children[0]}, ${fam.children[1]} +${fam.children.length - 2}`}
-          </p>
-        )}
-      </div>,
-      document.body
-    )
-  })()
-
   return (
-    <>
     <div className="fixed inset-0 z-[650] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
@@ -583,29 +476,13 @@ function EditDocModal({ doc, types, persons, onClose }: {
 
           <div>
             <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.linkedPersons')}</p>
-            <input value={personSearch} onChange={e => setPersonSearch(e.target.value)} placeholder={t('docs.searchPersons')}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 mb-1" />
-            <div className="max-h-44 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-800/40">
-              {filteredPersons.slice(0, 100).map(p => {
-                const linked = linkedIds.has(p.id)
-                const bio = personSummary(p)
-                return (
-                  <button key={p.id} onClick={() => togglePerson(p.id)}
-                    onMouseEnter={e => setHoveredPid({ pid: p.id, rect: e.currentTarget.getBoundingClientRect() })}
-                    onMouseLeave={() => setHoveredPid(null)}
-                    className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-xs transition-colors text-left ${linked ? 'bg-brand-900/40 text-brand-200' : 'text-zinc-300 hover:bg-zinc-800'}`}>
-                    <span className={`w-4 h-4 rounded border shrink-0 flex items-center justify-center mt-0.5 ${linked ? 'bg-brand-500 border-brand-400' : 'border-zinc-600'}`}>
-                      {linked && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 10" stroke="currentColor" strokeWidth={2}><path d="M1 5l3 3 7-7"/></svg>}
-                    </span>
-                    <span className="flex flex-col min-w-0">
-                      <span className="truncate">{p.name ?? '(unnamed)'}</span>
-                      {bio && <span className={`text-xs truncate ${linked ? 'text-brand-400/70' : 'text-zinc-500'}`}>{bio}</span>}
-                    </span>
-                  </button>
-                )
-              })}
-              {filteredPersons.length === 0 && <p className="px-3 py-2 text-xs text-zinc-600">{t('docs.noPersonsFound')}</p>}
-            </div>
+            <PersonMultiSelect
+              persons={persons}
+              familyMap={familyMap}
+              selectedIds={linkedIds}
+              onToggle={togglePerson}
+              maxHeight={220}
+            />
           </div>
         </div>
 
@@ -620,8 +497,6 @@ function EditDocModal({ doc, types, persons, onClose }: {
         </div>
       </div>
     </div>
-    {familyTooltip}
-    </>
   )
 }
 
@@ -642,7 +517,8 @@ const DocRow = forwardRef<HTMLTableRowElement, {
   const [previewing, setPreviewing] = useState(false)
   const displayName = doc.title || doc.filename
   const typeLabel = docTypeLabel(t, doc.doc_type, typeMap.get(doc.doc_type ?? ''))
-  const canPreview = isImage(doc.mime_type) || isPdf(doc.mime_type) || isAudio(doc.mime_type)
+  // Text documents open in the viewer too — it renders their Markdown body.
+  const canPreview = doc.is_text || isImage(doc.mime_type) || isPdf(doc.mime_type) || isAudio(doc.mime_type)
 
   const deleteMut = useMutation({
     mutationFn: () => api.documents.delete(doc.id),
@@ -686,9 +562,9 @@ const DocRow = forwardRef<HTMLTableRowElement, {
         {/* Icon / thumbnail */}
         <td className="pl-1 pr-2 py-2.5 w-11 shrink-0">
           <div className="w-8 h-8 rounded-lg bg-zinc-800 border border-zinc-700/60 flex items-center justify-center overflow-hidden">
-            {isImage(doc.mime_type)
+            {isImage(doc.mime_type) && !doc.is_text
               ? <img src={api.documents.fileUrl(doc.id)} alt="" className="w-full h-full object-cover" />
-              : fileIcon(doc.mime_type)}
+              : fileIcon(doc.mime_type, doc.is_text)}
           </div>
         </td>
         {/* Title + description */}
@@ -751,9 +627,10 @@ export default function DocumentsTab({
   onNavConsumed?: () => void
 }) {
   const t = useT()
+  const { nameOrder } = useSettings()
   const { data: docs = [] }    = useQuery<PersonDocument[]>({ queryKey: ['docs-all'], queryFn: api.documents.listAll })
-  const { data: persons = [] } = useQuery<PersonFull[]>({ queryKey: ['persons'],   queryFn: api.persons.list })
   const { data: types = [] }   = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
+  const { persons, familyMap } = usePersonDirectory()
 
   const [search, setSearch]           = useState('')
   const [filterType, setFilterType]   = useState<string>('__all__')
@@ -761,7 +638,9 @@ export default function DocumentsTab({
   const [selectedIds, setSelectedIds]  = useState<Set<number>>(new Set())
   const [includeNotes, setIncludeNotes] = useState(true)
   const [downloading, setDownloading]  = useState(false)
+  const [showChooser, setShowChooser] = useState(false)
   const [showUpload, setShowUpload]   = useState(false)
+  const [creatingText, setCreatingText] = useState(false)
   const [showTypeManager, setShowTypeManager] = useState(false)
   const [editingDocId, setEditingDocId] = useState<number | null>(null)
   const [highlightedId, setHighlightedId] = useState<number | null>(null)
@@ -793,7 +672,11 @@ export default function DocumentsTab({
     if (filterPerson != null && !d.persons.some(p => p.id === filterPerson)) return false
     if (search) {
       const q = search.toLowerCase()
-      const haystack = [d.title, d.filename, d.description, ...(d.persons.map(p => p.name))].filter(Boolean).join(' ').toLowerCase()
+      const haystack = [
+        d.title, d.filename, d.description,
+        // Both orders, so searching "Anna Miklós" or "Miklós Anna" finds the same row.
+        ...d.persons.flatMap(p => [p.name, refName(p, nameOrder, '')]),
+      ].filter(Boolean).join(' ').toLowerCase()
       if (!haystack.includes(q)) return false
     }
     return true
@@ -829,38 +712,64 @@ export default function DocumentsTab({
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {showChooser && (
+        <CreateChooserModal
+          onClose={() => setShowChooser(false)}
+          onPick={mode => {
+            setShowChooser(false)
+            if (mode === 'text') setCreatingText(true)
+            else setShowUpload(true)
+          }}
+        />
+      )}
       {showUpload && (
         <UploadModal
           persons={persons}
+          familyMap={familyMap}
           types={types}
           onClose={() => setShowUpload(false)}
           onDone={() => setShowUpload(false)}
+        />
+      )}
+      {creatingText && (
+        <TextDocumentEditor
+          types={types}
+          onClose={() => setCreatingText(false)}
         />
       )}
       {showTypeManager && (
         <TypeManagerModal onClose={() => setShowTypeManager(false)} />
       )}
       {editingDoc && (
-        <EditDocModal
-          doc={editingDoc}
-          types={types}
-          persons={persons}
-          onClose={() => setEditingDocId(null)}
-        />
+        editingDoc.is_text ? (
+          <TextDocumentEditor
+            doc={editingDoc}
+            types={types}
+            onClose={() => setEditingDocId(null)}
+          />
+        ) : (
+          <EditDocModal
+            doc={editingDoc}
+            types={types}
+            persons={persons}
+            familyMap={familyMap}
+            onClose={() => setEditingDocId(null)}
+          />
+        )
       )}
 
       {/* Header */}
       <div className="shrink-0 border-b" style={{ background: '#111117', borderColor: 'rgba(255,255,255,0.06)' }}>
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-3">
           <h1 className="text-sm font-semibold text-zinc-100">{t('docs.heading')}</h1>
-          <span className="text-xs text-zinc-600 tabular-nums">{docs.length} total</span>
+          <span className="text-xs text-zinc-600 tabular-nums">{t('docs.totalCount', { n: docs.length })}</span>
           <div className="ml-auto flex items-center gap-2">
             <button onClick={() => setShowTypeManager(true)}
               className="h-7 px-2.5 rounded-lg border border-zinc-700 bg-zinc-800/60 hover:bg-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5">
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
               {t('docs.manageTypes')}
             </button>
-            <button onClick={() => setShowUpload(true)}
+            <button onClick={() => setShowChooser(true)}
               className="h-7 px-3 rounded-lg bg-brand-600 hover:bg-brand-500 text-xs font-medium text-white transition-colors flex items-center gap-1.5">
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
               {t('docs.newDoc')}
@@ -890,8 +799,9 @@ export default function DocumentsTab({
             {types.map(dt => <option key={dt.key} value={dt.key}>{docTypeLabel(t, dt.key, dt.label)}</option>)}
           </select>
 
-          <PersonCombobox
+          <PersonFilterCombobox
             persons={personOptions}
+            familyMap={familyMap}
             value={filterPerson}
             onChange={setFilterPerson}
           />
@@ -903,7 +813,7 @@ export default function DocumentsTab({
             </button>
           )}
 
-          <span className="ml-auto text-xs text-zinc-600 tabular-nums shrink-0">{filtered.length} result{filtered.length !== 1 ? 's' : ''}</span>
+          <span className="ml-auto text-xs text-zinc-600 tabular-nums shrink-0">{t('docs.resultCount', { n: filtered.length })}</span>
         </div>
       </div>
 
@@ -969,7 +879,7 @@ export default function DocumentsTab({
       {someSelected && (
         <div className="shrink-0 border-t px-6 py-3 flex items-center gap-4" style={{ background: '#111117', borderColor: 'rgba(255,255,255,0.06)' }}>
           <span className="text-xs font-medium text-zinc-300">
-            {selectedIds.size} selected
+            {t('docs.selectedCount', { n: selectedIds.size })}
           </span>
           <button
             onClick={() => setSelectedIds(new Set())}
