@@ -308,6 +308,63 @@ class EventImage(Base):
     image = relationship("Image")
 
 
+class ChatThread(Base):
+    """One AI assistant conversation.
+
+    Project-scoped (a thread about the Kovács family is meaningless in another
+    project) and **never exported** — `build_export_db` deletes all three chat
+    tables unconditionally, because the export copies the whole database and
+    only then filters it.
+    """
+    __tablename__ = "chat_threads"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=True)
+    provider = Column(String, nullable=True)     # 'anthropic'
+    model = Column(String, nullable=True)        # model id used for this thread
+    created_at = Column(String, nullable=True)   # ISO timestamp
+    updated_at = Column(String, nullable=True)
+    messages = relationship(
+        "ChatMessage", back_populates="thread",
+        cascade="all, delete-orphan", order_by="ChatMessage.id",
+    )
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(Integer, ForeignKey("chat_threads.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String, nullable=False)        # 'user' | 'assistant'
+    content = Column(String, nullable=True)
+    created_at = Column(String, nullable=True)
+    # Usage is recorded per assistant message so the UI can show running cost.
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    cache_read_tokens = Column(Integer, nullable=True)
+    thread = relationship("ChatThread", back_populates="messages")
+    tool_calls = relationship(
+        "ChatToolCall", back_populates="message",
+        cascade="all, delete-orphan", order_by="ChatToolCall.id",
+    )
+
+
+class ChatToolCall(Base):
+    """One tool invocation made while producing an assistant message.
+
+    Persisted so the conversation can be replayed in the UI with its evidence
+    trail intact — in genealogy the tool results are what make an answer
+    checkable rather than merely plausible.
+    """
+    __tablename__ = "chat_tool_calls"
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False, index=True)
+    tool_name = Column(String, nullable=False)
+    arguments_json = Column(String, nullable=True)
+    result_json = Column(String, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    is_error = Column(Boolean, nullable=False, default=False, server_default="0")
+    message = relationship("ChatMessage", back_populates="tool_calls")
+
+
 def configure_engine(engine):
     """Attach WAL-mode pragma listener to a SQLAlchemy engine."""
     @event.listens_for(engine, "connect")
@@ -316,6 +373,22 @@ def configure_engine(engine):
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA synchronous=NORMAL")
         cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
+
+def configure_readonly_engine(engine):
+    """Attach a `query_only` pragma listener — the AI assistant's data path.
+
+    `PRAGMA query_only=ON` makes every write on the connection fail with
+    SQLITE_READONLY, which is the structural guarantee behind the read-only
+    tool set. Preferred over a `mode=ro` URI because that can fail outright
+    when the database is in WAL mode and needs recovery.
+    """
+    @event.listens_for(engine, "connect")
+    def _set_pragmas(dbapi_conn, _):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.execute("PRAGMA query_only=ON")
         cur.close()
 
 
@@ -707,4 +780,46 @@ def init_db_schema(engine):
                 )
             """))
             conn.execute(text("UPDATE schema_version SET version = 6"))
+            conn.commit()
+
+        # v6 → v7: AI assistant conversations. Project-scoped and never
+        # exported — see the DELETE block at the top of build_export_db.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 7:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS chat_threads (
+                    id         INTEGER PRIMARY KEY,
+                    title      TEXT,
+                    provider   TEXT,
+                    model      TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id                INTEGER PRIMARY KEY,
+                    thread_id         INTEGER NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+                    role              TEXT NOT NULL,
+                    content           TEXT,
+                    created_at        TEXT,
+                    input_tokens      INTEGER,
+                    output_tokens     INTEGER,
+                    cache_read_tokens INTEGER
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS chat_tool_calls (
+                    id             INTEGER PRIMARY KEY,
+                    message_id     INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+                    tool_name      TEXT NOT NULL,
+                    arguments_json TEXT,
+                    result_json    TEXT,
+                    duration_ms    INTEGER,
+                    is_error       BOOLEAN NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_messages_thread_id ON chat_messages(thread_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_tool_calls_message_id ON chat_tool_calls(message_id)"))
+            conn.execute(text("UPDATE schema_version SET version = 7"))
             conn.commit()

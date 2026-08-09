@@ -155,6 +155,16 @@ def build_export_db(
         conn.execute("PRAGMA journal_mode=DELETE")
         conn.execute("PRAGMA foreign_keys=ON")
 
+        # AI assistant conversations never leave the machine. This copy is of the
+        # *whole* database, so the absence of an export toggle is not protection —
+        # only an unconditional delete is. Children first, so the block does not
+        # depend on cascade behaviour.
+        for _chat_table in ("chat_tool_calls", "chat_messages", "chat_threads"):
+            try:
+                conn.execute(f"DELETE FROM {_chat_table}")
+            except sqlite3.OperationalError:
+                pass  # pre-v7 database being exported — nothing to strip
+
         if person_ids is not None and len(person_ids) > 0:
             pids_str = ",".join(str(x) for x in person_ids)
 

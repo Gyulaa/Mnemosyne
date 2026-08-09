@@ -19,6 +19,9 @@ a = Analysis(
         (str(ROOT / 'frontend' / 'dist'), 'frontend_dist'),
         (str(ROOT / 'frontend' / 'public' / 'favicon.png'), '.'),
         (str(ROOT / 'version.txt'), '.'),
+        # Model manifest — bundled, so it is read from MNEMOSYNE_BUNDLE_DIR,
+        # not the app dir. See backend/ai/config.py.
+        (str(ROOT / 'backend' / 'ai' / 'models.json'), 'ai'),
         # insightface's pickle_object.py looks for sys._MEIPASS/objects/*.pkl when frozen
     ] + ([(_insightface_objects, 'objects')] if _insightface_objects and Path(_insightface_objects).exists() else []),
     hiddenimports=[
@@ -78,6 +81,18 @@ a = Analysis(
         'sqlalchemy',
         'sqlalchemy.dialects.sqlite',
         'sqlalchemy.dialects.sqlite.pysqlite',
+        # LLM SDKs — httpx picks its transport dynamically, so PyInstaller
+        # cannot see these by static analysis.
+        'anthropic',
+        'openai',
+        'httpx',
+        'httpx._transports',
+        'httpx._transports.default',
+        'httpcore',
+        'h11',
+        'certifi',
+        'jiter',
+        'distro',
         # app backend
         'backend',
         'backend.main',
@@ -87,6 +102,12 @@ a = Analysis(
         'backend.project_manager',
         'backend.schemas',
         'backend.image_utils',
+        'backend.ai',
+        'backend.ai.config',
+        'backend.ai.provider',
+        'backend.ai.tools',
+        'backend.ai.primer',
+        'backend.ai.orchestrator',
     ],
     hookspath=[],
     runtime_hooks=[],

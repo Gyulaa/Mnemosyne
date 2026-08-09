@@ -98,9 +98,11 @@ export default function ImagesTab({
       setIncludeMode('or')
       setShowPersonFilter(true)
       setFilter('all')
-      setPage(1)
       setSelected(new Set())
     }
+    // Always start the search from the first page — the walk below only goes
+    // forward, so beginning mid-way could step straight past the target.
+    setPage(1)
     setPendingOpenImageId(openImageTarget.imageId)
     onImageTargetConsumed?.()
   }, [openImageTarget?.key]) // eslint-disable-line
@@ -283,15 +285,21 @@ export default function ImagesTab({
   const pageItems = data?.items ?? []
   const allPageSelected = pageItems.length > 0 && pageItems.every(i => selected.has(i.id))
 
-  // Once filtered images load, find the pending image and open it in the preview modal
+  // Once filtered images load, find the pending image and open it in the preview modal.
+  // If it is not on this page, walk forward until it is: an unfiltered library
+  // paginates, so a target arriving from elsewhere (e.g. an assistant link) is
+  // usually several pages in, and stopping here would just show the gallery.
   useEffect(() => {
     if (pendingOpenImageId === null || isFetching || !pageItems.length) return
     const idx = pageItems.findIndex(img => img.id === pendingOpenImageId)
     if (idx >= 0) {
       setPreviewIdx(idx)
       setPendingOpenImageId(null)
+      return
     }
-  }, [pageItems, pendingOpenImageId, isFetching])
+    if (page < totalPages) setPage(p => p + 1)
+    else setPendingOpenImageId(null)   // not in the current filter — give up quietly
+  }, [pageItems, pendingOpenImageId, isFetching, page, totalPages])
 
   function handleDragMouseDown(id: number) {
     return (e: React.MouseEvent) => {

@@ -11,6 +11,7 @@ import ProjectSwitcher from './components/ProjectSwitcher'
 import SearchPalette from './components/SearchPalette'
 import DocumentViewer from './components/DocumentViewer'
 import UpdateBanner from './components/UpdateBanner'
+import AssistantPanel from './components/AssistantPanel'
 import type { PersonDocument } from './types'
 import { SettingsProvider, useSettings, useT, displayPersonName } from './SettingsContext'
 
@@ -47,6 +48,7 @@ function AppInner() {
   const [exportError, setExportError] = useState<string | null>(null)
   const [exportCancel, setExportCancel] = useState<(() => void) | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [assistantOpen, setAssistantOpen] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<PersonDocument | null>(null)
   const [aboutOpen,    setAboutOpen]    = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -78,6 +80,11 @@ function AppInner() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
         setSearchOpen(o => !o)
+      }
+      // Ctrl/Cmd+J toggles the assistant — K is already the search palette.
+      if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
+        e.preventDefault()
+        setAssistantOpen(o => !o)
       }
     }
     window.addEventListener('keydown', handler)
@@ -284,10 +291,13 @@ function AppInner() {
           </div>
         </header>
 
+        {/* The assistant sits beside the main area rather than over it, so the
+            tree stays visible while it answers. */}
+        <div className="flex-1 min-h-0 flex">
         {/* Tabs that manage their own scrolling must not also scroll the main
             area, otherwise their full-height panes overflow it. */}
         <main className={[
-          'flex-1 min-h-0',
+          'flex-1 min-w-0 min-h-0',
           tab === 'genealogy' || tab === 'documents' || tab === 'connections'
             ? 'overflow-hidden'
             : 'overflow-auto',
@@ -307,7 +317,47 @@ function AppInner() {
             </div>
           )}
         </main>
+
+        {assistantOpen && (
+          <AssistantPanel
+            onClose={() => setAssistantOpen(false)}
+            onNavToPerson={navToGenealogy}
+            onNavToImage={id => navToImage(id, [])}
+            onNavToImages={navToImages}
+          />
+        )}
+        </div>
       </div>
+
+      {/* Floating assistant launcher.
+          z-40 is deliberate: every modal backdrop in the app starts at z-50, so
+          the widget dims behind a photo viewer or document editor on its own,
+          with no open-modal state to track.
+
+          The 80px inset is set by the tallest bottom-anchored UI in the app —
+          the tree view's control bar, which sits at bottom-3 with 28px buttons
+          and wraps to a second row in a narrow window, reaching ~74px. The
+          right inset matches it so the widget sits in an even corner rather
+          than hugging one edge. */}
+      {!assistantOpen && (
+        <button
+          onClick={() => setAssistantOpen(true)}
+          title={`${t('chat.title')} (Ctrl+J)`}
+          aria-label={t('chat.title')}
+          className="ai-fab fixed bottom-20 right-20 z-40 rounded-2xl flex items-center justify-center text-white"
+          style={{
+            width: '52px',
+            height: '52px',
+            background: 'linear-gradient(135deg, #9333ea 0%, #7e22ce 100%)',
+            boxShadow: '0 0 0 1px rgba(147,51,234,0.5), 0 8px 24px -6px rgba(147,51,234,0.55), 0 4px 12px rgba(0,0,0,0.4)',
+          }}
+        >
+          <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2l1.9 5.6L19.5 9.5l-5.6 1.9L12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z" />
+            <path d="M18.5 15l.8 2.3 2.2.8-2.2.8-.8 2.3-.8-2.3-2.2-.8 2.2-.8.8-2.3z" opacity="0.75" />
+          </svg>
+        </button>
+      )}
 
       {/* Global export progress — persists across tab switches */}
       {exportBusy && (
