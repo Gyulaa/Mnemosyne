@@ -49,6 +49,87 @@ body::after {
   100% { transform: translateX(350%); }
 }
 
+/* ── Assistant panel ──────────────────────────────────────────────────────── */
+
+/* Each streamed chunk and each new message rises into place. Short and small —
+   at streaming speed anything longer reads as jitter rather than motion. */
+@keyframes ai-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ai-panel-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* The caret trailing the streaming answer — a breath, not a blink. */
+@keyframes ai-caret {
+  0%, 100% { opacity: 0.15; }
+  50%      { opacity: 1; }
+}
+
+/* Slow drift across the empty-state heading, so the panel feels alive before
+   the user has typed anything. */
+@keyframes ai-shimmer {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+@keyframes ai-fab-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.9); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.ai-panel      { animation: ai-panel-in 260ms cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* Floating launcher — lifts slightly on hover, settles on press. */
+.ai-fab {
+  animation: ai-fab-in 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1), filter 160ms;
+}
+.ai-fab:hover  { transform: translateY(-2px); filter: brightness(1.08); }
+.ai-fab:active { transform: translateY(0) scale(0.96); }
+.ai-fade-up    { animation: ai-fade-up 220ms ease-out; }
+.ai-caret      { animation: ai-caret 1.1s ease-in-out infinite; }
+
+.ai-shimmer {
+  background: linear-gradient(100deg, #e4e4e7 20%, #c084fc 40%, #a855f7 55%, #e4e4e7 75%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: ai-shimmer 6s linear infinite;
+}
+
+/* Markdown bodies inside the assistant need slightly tighter rhythm than the
+   note editor, which has more room to breathe. */
+.ai-prose p:first-child { margin-top: 0; }
+.ai-prose p:last-child  { margin-bottom: 0; }
+.ai-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 0.9em;
+}
+.ai-prose th, .ai-prose td {
+  border: 1px solid #3f3f46;
+  padding: 0.3em 0.5em;
+  text-align: left;
+}
+.ai-prose th { background: #27272a; color: #e4e4e7; font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-panel, .ai-fade-up, .ai-caret, .ai-shimmer, .ai-fab {
+    animation: none;
+  }
+  .ai-fab, .ai-fab:hover, .ai-fab:active { transform: none; transition: none; }
+  .ai-shimmer {
+    -webkit-text-fill-color: #e4e4e7;
+    background: none;
+  }
+}
+
 /* Note editor — rendered markdown styles */
 .note-preview a.note-ref,
 .note-content a.note-ref {
@@ -69,6 +150,39 @@ body::after {
 }
 .note-preview a.note-person-ref:hover,
 .note-content a.note-person-ref:hover { text-decoration: underline; }
+
+/* Photo and gallery references produced by the assistant. Styled as chips
+   rather than plain links so a list of them stays scannable. */
+.note-content a.note-image-ref,
+.note-content a.note-people-ref,
+.note-preview a.note-image-ref,
+.note-preview a.note-people-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25em;
+  padding: 0.05em 0.45em;
+  margin: 0 0.1em;
+  border: 1px solid #3f3f46;      /* zinc-700 */
+  border-radius: 6px;
+  background: #27272a;             /* zinc-800 */
+  color: #d4d4d8;                  /* zinc-300 */
+  text-decoration: none;
+  font-size: 0.85em;
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms, background 120ms;
+}
+.note-content a.note-image-ref:hover,
+.note-content a.note-people-ref:hover,
+.note-preview a.note-image-ref:hover,
+.note-preview a.note-people-ref:hover {
+  border-color: #a855f7;           /* brand-400 */
+  background: rgba(168, 85, 247, 0.1);
+  color: #e9d5ff;                  /* brand-200 */
+}
+.note-content a.note-image-ref::before,
+.note-preview a.note-image-ref::before { content: '🖼'; font-size: 0.9em; }
+.note-content a.note-people-ref::before,
+.note-preview a.note-people-ref::before { content: '🖼'; font-size: 0.9em; }
 
 /* Markdown element styles inside note-content and note-preview */
 .note-content p, .note-preview p { margin: 0.5em 0; }

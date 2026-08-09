@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, object_session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentImage as DBDocumentImage, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentImage as DBDocumentImage, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage, ChatThread as DBChatThread, ChatMessage as DBChatMessage, ChatToolCall as DBChatToolCall
 from . import scanner as scanner_mod
 from . import clusterer
 from .clusterer import recompute_person_subclusters
@@ -39,8 +39,12 @@ from .schemas import (
     BulkDownloadRequest,
     TextDocumentCreate, TextDocumentBody, DocumentImageAdd,
     DuplicateGroup, DuplicateImageInfo,
+    AiSettingsUpdate, ChatThreadCreate, ChatThreadUpdate, ChatSendRequest,
 )
 from .image_utils import load_image_bgr, crop_thumbnail, IMAGE_EXTENSIONS
+from .ai import config as ai_config
+from .ai import orchestrator as ai_orchestrator
+from .ai import provider as ai_provider
 
 app = FastAPI(title="Photo Organizer API", version="0.1.0")
 
@@ -3357,6 +3361,190 @@ def update_apply():
     except RuntimeError as exc:
         raise HTTPException(500, str(exc))
     return {'ok': True}
+
+
+# ── AI assistant ──────────────────────────────────────────────────────────────
+
+def _chat_thread_dict(t: DBChatThread) -> dict:
+    return {
+        'id': t.id,
+        'title': t.title,
+        'provider': t.provider,
+        'model': t.model,
+        'created_at': t.created_at,
+        'updated_at': t.updated_at,
+    }
+
+
+def _chat_message_dict(m: DBChatMessage) -> dict:
+    return {
+        'id': m.id,
+        'thread_id': m.thread_id,
+        'role': m.role,
+        'content': m.content,
+        'created_at': m.created_at,
+        'input_tokens': m.input_tokens,
+        'output_tokens': m.output_tokens,
+        'cache_read_tokens': m.cache_read_tokens,
+        'tool_calls': [
+            {
+                'id': tc.id,
+                'name': tc.tool_name,
+                'input': json.loads(tc.arguments_json) if tc.arguments_json else {},
+                'result': json.loads(tc.result_json) if tc.result_json else None,
+                'duration_ms': tc.duration_ms,
+                'is_error': bool(tc.is_error),
+            }
+            for tc in m.tool_calls
+        ],
+    }
+
+
+def get_readonly_db():
+    """Session on the query_only pool — the assistant's data path only."""
+    yield from project_manager.get_readonly_db()
+
+
+@app.get('/api/ai/settings')
+def ai_get_settings():
+    # public_settings() masks the key. Nothing here may return it raw.
+    return ai_config.public_settings()
+
+
+@app.put('/api/ai/settings')
+def ai_update_settings(body: AiSettingsUpdate):
+    if body.model is not None and not body.model.strip():
+        raise HTTPException(400, 'Model must not be empty')
+    if body.provider is not None and body.provider not in {p['id'] for p in ai_config.list_providers()}:
+        raise HTTPException(400, f'Unknown provider: {body.provider}')
+    ai_config.save_settings(
+        provider=body.provider,
+        model=body.model,
+        api_key=body.api_key,
+        allow_private=body.allow_private,
+        enabled=body.enabled,
+        base_url=body.base_url,
+    )
+    return ai_config.public_settings()
+
+
+@app.get('/api/ai/models')
+async def ai_list_models(provider: Optional[str] = None, refresh: bool = False):
+    """Models for the picker.
+
+    The live list from the provider is the source of truth for what exists; the
+    bundled manifest only supplies labels, notes and prices. `refresh=true`
+    forces a fetch, otherwise a cached list older than a week refreshes itself.
+    """
+    target = provider or ai_config.get_settings()['provider']
+    key = ai_config.provider_key(target)
+    error: Optional[str] = None
+
+    if key and (refresh or ai_config.cache_is_stale(target)):
+        try:
+            ids = await ai_provider.discover_models(target, key, ai_config.get_settings().get('base_url'))
+            ai_config.set_cached_models(target, ids)
+        except Exception as exc:
+            # A failed refresh must not empty the picker — fall through to
+            # whatever is cached, or to the manifest.
+            error = f'{type(exc).__name__}: {exc}'
+
+    cache = ai_config.get_cached_models(target)
+    return {
+        'provider': target,
+        'models': ai_config.merged_models(target),
+        'providers': ai_config.list_providers(),
+        'default': ai_config.default_model(target),
+        'fetched_at': cache['fetched_at'],
+        'live': bool(cache['ids']),
+        'error': error,
+    }
+
+
+@app.get('/api/ai/threads')
+def ai_list_threads(db: Session = Depends(get_db)):
+    threads = db.query(DBChatThread).order_by(DBChatThread.updated_at.desc(), DBChatThread.id.desc()).all()
+    return [_chat_thread_dict(t) for t in threads]
+
+
+@app.post('/api/ai/threads', status_code=201)
+def ai_create_thread(body: ChatThreadCreate, db: Session = Depends(get_db)):
+    now = datetime.now().isoformat()
+    t = DBChatThread(
+        title=(body.title or '').strip() or None,
+        provider=ai_config.get_settings()['provider'],
+        model=ai_config.get_settings()['model'],
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(t)
+    db.commit()
+    return _chat_thread_dict(t)
+
+
+@app.patch('/api/ai/threads/{thread_id}')
+def ai_rename_thread(thread_id: int, body: ChatThreadUpdate, db: Session = Depends(get_db)):
+    t = db.get(DBChatThread, thread_id)
+    if not t:
+        raise HTTPException(404, 'Thread not found')
+    t.title = body.title.strip() or None
+    t.updated_at = datetime.now().isoformat()
+    db.commit()
+    return _chat_thread_dict(t)
+
+
+@app.delete('/api/ai/threads/{thread_id}')
+def ai_delete_thread(thread_id: int, db: Session = Depends(get_db)):
+    t = db.get(DBChatThread, thread_id)
+    if not t:
+        raise HTTPException(404, 'Thread not found')
+    db.delete(t)
+    db.commit()
+    return {'ok': True}
+
+
+@app.get('/api/ai/threads/{thread_id}/messages')
+def ai_thread_messages(thread_id: int, db: Session = Depends(get_db)):
+    t = db.get(DBChatThread, thread_id)
+    if not t:
+        raise HTTPException(404, 'Thread not found')
+    msgs = db.query(DBChatMessage).filter(DBChatMessage.thread_id == thread_id).order_by(DBChatMessage.id).all()
+    return [_chat_message_dict(m) for m in msgs]
+
+
+@app.post('/api/ai/threads/{thread_id}/stream')
+async def ai_stream(thread_id: int, body: ChatSendRequest):
+    if not body.message.strip():
+        raise HTTPException(400, 'Message must not be empty')
+    settings = ai_config.get_settings()
+    if not settings['api_key']:
+        raise HTTPException(400, 'No API key configured')
+
+    write_db = project_manager.session_factory()
+    read_db = next(project_manager.get_readonly_db())
+    docs_dir = _docs_dir()
+
+    async def _gen():
+        try:
+            async for frame in ai_orchestrator.run_turn(
+                write_db=write_db,
+                read_db=read_db,
+                thread_id=thread_id,
+                user_text=body.message,
+                docs_dir=docs_dir,
+                lang=body.lang,
+                name_order=body.name_order,
+            ):
+                yield frame
+        finally:
+            read_db.close()
+            write_db.close()
+
+    return StreamingResponse(
+        _gen(),
+        media_type='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
 
 
 # ── Static frontend (production build) ────────────────────────────────────────

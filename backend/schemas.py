@@ -180,3 +180,35 @@ class TextDocumentBody(BaseModel):
 class DocumentImageAdd(BaseModel):
     image_id: int
     caption: Optional[str] = None
+
+
+# ── AI assistant ──────────────────────────────────────────────────────────────
+
+class AiSettingsUpdate(BaseModel):
+    """Patch for the `ai` block in config.json.
+
+    Omitted fields keep their stored value; `api_key=""` clears the key, which
+    is how the UI disconnects. The key is write-only — no response ever carries
+    it back unmasked.
+    """
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    allow_private: Optional[bool] = None
+    enabled: Optional[bool] = None
+    # Only for OpenAI-compatible endpoints that are not OpenAI itself.
+    base_url: Optional[str] = None
+
+
+class ChatThreadCreate(BaseModel):
+    title: Optional[str] = None
+
+
+class ChatThreadUpdate(BaseModel):
+    title: str
+
+
+class ChatSendRequest(BaseModel):
+    message: str
+    lang: str = 'en'
+    name_order: str = 'en'

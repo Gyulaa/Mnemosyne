@@ -11,3 +11,5 @@ uvicorn[standard]
 sqlalchemy
 python-multipart
 aiofiles
+anthropic
+openai
