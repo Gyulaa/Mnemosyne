@@ -57,6 +57,14 @@ def _safe_rows(conn: sqlite3.Connection, sql: str) -> list[dict]:
         return []
 
 
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    """Whether an incoming (possibly older-schema) DB has a given column."""
+    try:
+        return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})").fetchall())
+    except Exception:
+        return False
+
+
 # ── Read incoming ZIP DB ──────────────────────────────────────────────────────
 
 def read_zip_db(zip_data: bytes) -> dict:
@@ -84,13 +92,23 @@ def read_zip_db(zip_data: bytes) -> dict:
             "marriage_year, marriage_place, divorce_year, divorce_place FROM relations"
         )
 
+        # is_text arrived in schema v6; older export ZIPs simply don't have it.
+        is_text_col = ", is_text" if _has_column(conn, "documents", "is_text") else ""
         documents = _safe_rows(conn,
             "SELECT id, person_id, stored_name, filename, mime_type, "
-            "title, doc_type, year, description FROM documents"
+            f"title, doc_type, year, description{is_text_col} FROM documents"
         )
 
         document_persons = _safe_rows(conn,
             "SELECT document_id, person_id, role FROM document_persons"
+        )
+
+        # Body references and attached photos of in-app text documents (v6+).
+        document_citations = _safe_rows(conn,
+            "SELECT id, document_id, source_id, marker, detail, custom_label FROM document_citations"
+        )
+        document_images = _safe_rows(conn,
+            "SELECT document_id, image_id, sort_order, caption FROM document_images"
         )
 
         person_notes = _safe_rows(conn,
@@ -134,7 +152,7 @@ def read_zip_db(zip_data: bytes) -> dict:
             "SELECT id, source_id, person_id, fact, detail, notes FROM citations"
         )
         note_citations = _safe_rows(conn,
-            "SELECT id, note_id, source_id, marker, detail FROM note_citations"
+            "SELECT id, note_id, source_id, marker, detail, custom_label FROM note_citations"
         )
         event_images_data = _safe_rows(conn,
             "SELECT event_id, image_id FROM event_images"
@@ -146,8 +164,10 @@ def read_zip_db(zip_data: bytes) -> dict:
     return {
         'persons':          persons,
         'relations':        relations,
-        'documents':        documents,
-        'document_persons': document_persons,
+        'documents':          documents,
+        'document_persons':   document_persons,
+        'document_citations': document_citations,
+        'document_images':    document_images,
         'person_notes':     person_notes,
         'events':           events,
         'event_persons':    event_persons,
@@ -742,12 +762,15 @@ def execute_merge(
                     (docs_dir / new_stored).write_bytes(zf.read(arc))
 
                     mime = doc.get('mime_type') or mimetypes.guess_type(doc.get('filename') or '')[0] or 'application/octet-stream'
+                    # Without is_text an imported chronicle would arrive as an
+                    # opaque file: no Markdown rendering, no text editor.
                     cur = conn.execute(
                         "INSERT INTO documents "
-                        "(person_id, stored_name, filename, mime_type, title, doc_type, year, description, created_at) "
-                        "VALUES (?,?,?,?,?,?,?,?,datetime('now'))",
+                        "(person_id, stored_name, filename, mime_type, title, doc_type, year, description, is_text, created_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
                         (local_pid, new_stored, doc.get('filename'), mime,
-                         doc.get('title'), doc.get('doc_type'), doc.get('year'), doc.get('description')),
+                         doc.get('title'), doc.get('doc_type'), doc.get('year'), doc.get('description'),
+                         1 if doc.get('is_text') else 0),
                     )
                     new_doc_id = cur.lastrowid
                     doc_id_remap[doc['id']] = new_doc_id
@@ -978,18 +1001,43 @@ def execute_merge(
 
         for nc in incoming_data.get('note_citations', []):
             local_note_id = note_id_remap.get(nc['note_id'])
-            local_src_id  = src_id_remap.get(nc['source_id'])
-            if local_note_id is None or local_src_id is None:
+            if local_note_id is None:
+                continue
+            # source_id is NULL for free-text citations — those have no source
+            # to remap, but the label still has to come across.
+            local_src_id = src_id_remap.get(nc['source_id']) if nc.get('source_id') else None
+            if nc.get('source_id') and local_src_id is None:
                 continue
             dup = conn.execute(
-                "SELECT id FROM note_citations WHERE note_id = ? AND source_id = ? AND marker IS ?",
+                "SELECT id FROM note_citations WHERE note_id = ? AND source_id IS ? AND marker IS ?",
                 (local_note_id, local_src_id, nc.get('marker')),
             ).fetchone()
             if dup:
                 continue
             conn.execute(
-                "INSERT INTO note_citations (note_id, source_id, marker, detail) VALUES (?,?,?,?)",
-                (local_note_id, local_src_id, nc.get('marker'), nc.get('detail')),
+                "INSERT INTO note_citations (note_id, source_id, marker, detail, custom_label) VALUES (?,?,?,?,?)",
+                (local_note_id, local_src_id, nc.get('marker'), nc.get('detail'), nc.get('custom_label')),
+            )
+        conn.commit()
+
+        # Body references of text documents — same shape, keyed to the document.
+        for dc in incoming_data.get('document_citations', []):
+            local_doc_id = doc_id_remap.get(dc['document_id'])
+            if local_doc_id is None:
+                continue
+            local_src_id = src_id_remap.get(dc['source_id']) if dc.get('source_id') else None
+            if dc.get('source_id') and local_src_id is None:
+                continue
+            dup = conn.execute(
+                "SELECT id FROM document_citations WHERE document_id = ? AND marker IS ?",
+                (local_doc_id, dc.get('marker')),
+            ).fetchone()
+            if dup:
+                continue
+            conn.execute(
+                "INSERT INTO document_citations (document_id, source_id, marker, detail, custom_label) "
+                "VALUES (?,?,?,?,?)",
+                (local_doc_id, local_src_id, dc.get('marker'), dc.get('detail'), dc.get('custom_label')),
             )
         conn.commit()
 
@@ -1003,6 +1051,22 @@ def execute_merge(
             conn.execute(
                 "INSERT OR IGNORE INTO event_images (event_id, image_id) VALUES (?,?)",
                 (local_ev_id, local_img_id),
+            )
+        conn.commit()
+
+    # Photos attached to text documents. Only images that actually came across
+    # can be linked — a merge import brings in faces of named clusters, so a
+    # photo nobody is tagged in stays behind and its link is simply skipped.
+    if doc_id_remap and img_id_remap:
+        for di in incoming_data.get('document_images', []):
+            local_doc_id = doc_id_remap.get(di['document_id'])
+            local_img_id = img_id_remap.get(di['image_id'])
+            if local_doc_id is None or local_img_id is None:
+                continue
+            conn.execute(
+                "INSERT OR IGNORE INTO document_images (document_id, image_id, sort_order, caption) "
+                "VALUES (?,?,?,?)",
+                (local_doc_id, local_img_id, di.get('sort_order') or 0, di.get('caption')),
             )
         conn.commit()
 

@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { PersonDocument, PersonFull, DocumentNote, Source } from '../types'
 import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
+import { renderMarkdown } from '../markdown'
 import { docTypeLabel } from '../docTypes'
 
 function isImage(mime: string | null) { return mime?.startsWith('image/') ?? false }
@@ -51,11 +52,30 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
   const [creatingNote, setCreatingNote] = useState(false)
   const [newNoteShell, setNewNoteShell] = useState<DocumentNote | null>(null)
 
+  // Text documents keep their Markdown body in a .md file — fetch and render it.
+  const { data: textBody } = useQuery({
+    queryKey: ['document-text', doc.id],
+    queryFn: () => api.documents.getText(doc.id),
+    enabled: doc.is_text,
+  })
+  const bodyHtml = useMemo(
+    () => (textBody ? renderMarkdown(textBody.content, doc.citations ?? []) : ''),
+    [textBody, doc.citations],
+  )
+
   const typeMap = new Map(types.map(dt => [dt.key, dt.label]))
   const fileUrl = api.documents.fileUrl(doc.id)
   const displayName = doc.title || doc.filename
   const typeLabel = docTypeLabel(t, doc.doc_type, typeMap.get(doc.doc_type ?? ''))
   const linkedPersons = (doc.persons ?? []).map(lp => persons.find(p => p.id === lp.id)).filter(Boolean) as PersonFull[]
+
+  function handleBodyClick(e: React.MouseEvent<HTMLDivElement>) {
+    const anchor = (e.target as Element).closest('a.note-person-ref')
+    if (!anchor) return
+    e.preventDefault()
+    const match = (anchor as HTMLAnchorElement).getAttribute('href')?.match(/person-ref-(\d+)$/)
+    if (match) { onClose(); onNavToPerson(parseInt(match[1])) }
+  }
 
   async function startNewNote() {
     const created = await api.documentNotes.create(doc.id, { content: '' })
@@ -72,7 +92,7 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
     >
       <div
         className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
-        style={{ width: 520, maxWidth: '92vw', maxHeight: '90vh' }}
+        style={{ width: doc.is_text ? 680 : 520, maxWidth: '92vw', maxHeight: '90vh' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -95,8 +115,61 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto">
 
+          {/* Text-document body */}
+          {doc.is_text && (
+            <div className="px-5 pt-4">
+              {textBody === undefined ? (
+                <p className="text-xs text-zinc-600 italic">{t('textDoc.loading')}</p>
+              ) : textBody.content.trim() ? (
+                <div className="note-content text-sm text-zinc-300 leading-relaxed"
+                  dangerouslySetInnerHTML={{ __html: bodyHtml }}
+                  onClick={handleBodyClick} />
+              ) : (
+                <p className="text-sm text-zinc-600 italic">{t('textDoc.emptyBody')}</p>
+              )}
+
+              {(doc.citations?.length ?? 0) > 0 && (
+                <div className="mt-4 border-t border-zinc-800 pt-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-zinc-600 mb-1.5">
+                    {t('textDoc.references')}
+                  </p>
+                  {[...doc.citations].sort((a, b) => a.marker - b.marker).map(c => (
+                    <div key={c.id} className="flex items-start gap-2 py-0.5">
+                      <span className="text-xs text-zinc-600 font-mono shrink-0 w-5 text-right">[{c.marker}]</span>
+                      {c.source_document_id != null ? (
+                        <button
+                          onClick={() => onNavToDocument?.(c.source_document_id!)}
+                          className="text-xs text-amber-400 hover:text-amber-200 truncate text-left transition-colors">
+                          {c.custom_label ?? c.source_title ?? '—'}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-amber-300/90 truncate">{c.custom_label ?? c.source_title ?? '—'}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {(doc.images?.length ?? 0) > 0 && (
+                <div className="mt-4">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-zinc-600 mb-2">
+                    {t('textDoc.photos')} ({doc.images.length})
+                  </p>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {doc.images.map(img => (
+                      <a key={img.image_id} href={api.imageViewUrl(img.image_id, 1600)} target="_blank" rel="noreferrer"
+                        className="aspect-square rounded-lg overflow-hidden bg-zinc-800 hover:ring-2 hover:ring-brand-400 transition-all">
+                        <img src={api.imageViewUrl(img.image_id, 240)} alt="" className="w-full h-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Preview */}
-          {isImage(doc.mime_type) && (
+          {isImage(doc.mime_type) && !doc.is_text && (
             <div className="bg-zinc-950 flex items-center justify-center" style={{ maxHeight: 280, minHeight: 120 }}>
               <img src={fileUrl} alt={displayName} className="max-w-full max-h-[280px] object-contain" />
             </div>

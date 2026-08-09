@@ -106,6 +106,17 @@ From here you can also attach documents, write notes with citations, and find th
 - Preview images and PDFs right in the app
 - Select multiple documents and download them as a ZIP
 
+When you click **New**, Mnemosyne asks whether you want to upload a file you already have, or write a document right there.
+
+**Writing a document in the app** is meant for the things that were never on paper — a family chronicle, a transcription of an old letter, notes from an afternoon of research:
+
+- Write in **Markdown**: headings, **bold**, *italic*, lists, quotes. A Preview tab shows how it will look
+- Type **@** to mention a person — the name becomes a link straight to their profile
+- Use **Cite** to add a `[1]`-style reference to another document, an existing source, or any free text you type ("Grandma's account, 1998"). References are listed at the bottom of the document
+- **Attach photos** from your library to illustrate the text
+
+Text documents behave like any other document everywhere else: they can be linked to several people, filtered, searched, downloaded, and they travel with every export.
+
 ### Events
 - Record family events: births, marriages, military service, emigration, and more
 - Associate multiple people with each event
@@ -131,11 +142,15 @@ Private items show an **amber padlock** so they are always visible. Public items
 
 Only you can restore a private item to public — there is no "auto-export private" setting.
 
-### Language
+### Language and name order
 - The interface is available in **English** and **Hungarian**
 - Switch anytime from **Settings** (gear icon, top right) → **Language**
 - The choice is saved locally and persists across sessions
 - The built-in document type names are translated too. If you rename a type yourself in **Manage types**, your own wording is kept in both languages
+- **Name order** (Settings → given name first, or family name first) applies everywhere a person's name is shown — the tree, profiles, mentions, and the document lists and pickers. Searching works with either order, so "Anna Miklós" and "Miklós Anna" both find the same person
+
+### Telling people apart
+Four relatives can easily share a name. Wherever you pick a person from a list — linking a document, mentioning someone with **@**, assigning a face cluster — each entry shows their years and, underneath, their closest family: **♥** spouse, **↑** parents, **↓** children.
 
 ### Search
 - Press **Ctrl+K** (Windows) or **Cmd+K** (Mac) to search everything at once — names, documents, notes — from anywhere in the app
@@ -145,6 +160,15 @@ Only you can restore a private item to public — there is no "auto-export priva
 - Shows the chain of relationships step by step
 - Line style encodes the relationship: an arrow always points at the **child** in a parent/child link, spouses are joined by a **double line**, siblings by a plain line
 - Export the chain as a PNG image
+
+### AI assistant (optional)
+- Press **Ctrl+J** (or the sparkle icon in the header) to open the assistant beside whatever tab you are on — ask questions about your tree in plain language and the tree stays visible while it answers
+- It can **only read** your data. It cannot create, edit or delete anything
+- Every person it mentions becomes a link straight to their profile, so you can check any claim it makes
+- You see each lookup it performs, and can expand any of them to read the raw result
+- **Off until you turn it on.** It needs an API key — either [Anthropic](https://console.anthropic.com) or [OpenAI](https://platform.openai.com/api-keys) — stored on your own computer. You can save both and switch between them at any time
+- Anything you marked **private** stays hidden from it unless you explicitly allow it
+- Conversations are saved with the project and are **never included in any export**
 
 ---
 
@@ -251,11 +275,13 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 | Note | `PATCH /api/notes/{id}` (via general update, `is_private` field) |
 | Event | `PATCH /api/events/{id}` (via general update, `is_private` field) |
 
-**Export enforcement** is applied in two independent layers, so neither can be bypassed:
+**Export enforcement** is applied in three independent layers, so no single mistake exposes private data:
 
 1. **ZIP export** (`export_utils.py` → `build_export_db`): after all other filters run, a privacy filter block deletes private rows from the in-memory copy of the DB before it is packed into the ZIP. Private images and their faces are removed; private clusters have their faces moved to the noise cluster (`label=-1`) and are then deleted; private relations, notes, events, and documents are deleted with their child rows.
 
 2. **GEDCOM export** (`gedcom_export.py` → `build_gedcom_zip`): all six queries that could expose private data use `WHERE COALESCE(is_private,0)=0`. The `COALESCE` handles legacy databases that predate the v5 migration. Private event_person rows pointing to private events are silently skipped because the events are not in `events_by_id`.
+
+3. **AI assistant tools** (`ai/tools.py` → `_priv_ok`): every tool drops private rows unless the user turned on `allow_private` in the assistant settings. Note `persons` has no `is_private` column — a person is never private, only their relations, notes, documents, events, clusters and images are, so filtering happens on those. The tree primer applies the same filter to relations, which means the private and non-private primers are different strings and therefore separate prompt-cache entries — correct, and free.
 
 **Frontend**: amber padlock (always visible) when private, gray padlock (hover-only) when public. Implemented in `NoteEditor.tsx` (`NoteCard`), `PersonPanel.tsx` (`DocRow`, `RelRow`, spouse section), `EventsTab.tsx` (`EventCard`, `EventDetailView`), `ClustersTab.tsx` (`ClusterCard`), `ImagesTab.tsx` (bulk toolbar "Make private" button).
 
@@ -272,6 +298,28 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 - Notes with citations and @ mentions attachable to documents
 - Bulk selection and ZIP download; see [Document bulk download](#document-bulk-download)
 
+**Two ownership columns, and why both exist.** `documents.person_id` is the original single owner; `document_persons` is the many-to-many junction every listing actually joins on. They must be kept in step by hand:
+
+- `merge_persons` re-points `document_persons` rows at the target with `UPDATE OR IGNORE` (the plain `UPDATE` would collide when both people are linked to the same document), then deletes the leftovers. Without this the junction rows are FK-cascaded away with the source person and the document silently disappears from every listing while still existing in the table
+- `delete_person` hands ownership of that person's documents to a co-linked person before deleting them, because `Person.documents` cascades `all, delete-orphan` and would otherwise destroy documents shared with others. Only when nobody else is linked is the document dropped — and then its file is unlinked from disk, which the ORM cascade does not do
+
+**Text documents** (`documents.is_text = 1`, schema v6) are written in the app instead of uploaded. The Markdown body is stored as a `.md` file in `projects/<id>/documents/` under the usual UUID `stored_name`, so downloads, bulk ZIPs, project exports and GEDCOM media all handle them without special-casing. `filename` is a slug of the title and is re-derived whenever the title changes, so archives stay readable.
+
+| Concern | Table / endpoint |
+|---|---|
+| Body | `GET` / `PUT /api/documents/{id}/text` → `{ content }` |
+| Create | `POST /api/documents/text` — requires at least one `person_ids` entry |
+| `[n]` references | `document_citations` · `POST /api/documents/{id}/citations`, `DELETE /api/document-citations/{id}` |
+| Attached photos | `document_images` · `POST /api/documents/{id}/images`, `DELETE /api/documents/{id}/images/{image_id}` |
+
+`document_citations` mirrors `note_citations` exactly (`source_id` NULL means a free-text citation carried in `custom_label`), so the same renderer and References panel work for both. Citing a document from the editor calls `promote-to-source` first, which is idempotent — citing the same document twice reuses one `Source`.
+
+### Person pickers
+
+`frontend/src/familyContext.tsx` is the single source for the close-relative context shown under a name in every picker: `useFamilyContext(persons, relations, nameOrder)` returns id → `{ spouses, parents, children, siblings }` with names already rendered in the configured order, and `<FamilyContextLines>` renders the ♥ / ↑ / ↓ / ~ lines (capped at two names each, siblings only when nothing closer exists). `components/PersonSelect.tsx` builds `PersonMultiSelect` and `PersonFilterCombobox` on top of it.
+
+Document payloads carry the individual name parts (`_doc_person_dict` in `main.py`), not just the stored display name — `persons.name` is always composed by `_derive_display_name()` in one fixed order, so a client that only receives it cannot honour the name-order setting.
+
 ### Global Search
 - **Ctrl+K** / **Cmd+K** — searches persons (name, nickname), events, documents, and note content simultaneously
 - Keyboard navigation: ↑ ↓ to move, Enter to open, Escape to close
@@ -282,6 +330,138 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 - Edge rendering encodes direction: `parent` edges point forward, `child` edges point backward, so the arrowhead always lands on the child. Odd rows render `flex-row-reverse`, so the visual direction is XOR-ed against the row's RTL flag. Spouse edges draw as a double rule instead of an arrow. The PNG exporter mirrors this logic - change both or they drift apart
 - Blood vs. marriage-relative badge, Lowest Common Ancestor annotation
 - **Export as PNG** — see [Relationship path export](#relationship-path-export)
+
+---
+
+## AI assistant (implementation detail)
+
+Lives in `backend/ai/`. Read-only, opt-in, and off until an API key is stored.
+
+### Why not RAG
+
+The genealogy data is small but **relational** — the value is in the edges, the dates and the counts. Chunking it into a vector index destroys exactly that: a family tree flattened into embeddings can no longer answer "how many grandchildren", "who lived longest", or "how are these two related". The scale confirms it — `SearchPalette.tsx` already loads every person, event, document and note into memory, and `RelationPathModal.tsx` runs BFS over the whole relation graph client-side.
+
+So instead: **tool use over SQL**, plus a cached skeleton of the whole tree in the prompt. Free-text search is plain Python matching over the notes/documents/sources corpus; at this size an FTS5 index would be pure overhead, and Python gives accent-insensitive matching that SQLite's ASCII-only `LIKE` cannot (`_norm()` follows the NFD approach of `_make_id` in `project_manager.py`).
+
+### Fat tools, and why lines of descent are walked server-side
+
+The tools push computation *into* the tool rather than leaving it to the model. `get_ancestors` is the clearest case and exists because of a real failure: this tree contains **43 repeated names**, including four people called "Miklós Samu", two of whom are father and son. A model tracing a line by chaining `get_person` calls collapsed the two and silently dropped a generation — a confident, wrong, and entirely plausible-looking answer.
+
+So the walk happens in `_t_get_ancestors`, and the result carries ids and generation numbers the model cannot conflate. The primer additionally lists every duplicated name with its ids, and the system prompt forbids identifying anyone by name alone.
+
+**Picking the next person up a paternal line uses the surname before `sex`.** `sex` is a single field that is easy to mis-enter — this project has eight people whose recorded sex is inverted — whereas a surname carrying from father to child is corroborated by every other record. When the two signals disagree the tool follows the surname and returns a note saying the `sex` value looks wrong, so a data defect surfaces as a data defect instead of a truncated ancestry. A lone parent is followed only when their sex is *unrecorded*; following one recorded as the opposite sex is how a paternal line silently becomes a maternal one.
+
+### Both directions, and estimates from the data
+
+`get_ancestors` has a counterpart, `get_descendants` — without it the assistant reported a dead end for a person who had no recorded parents but 49 descendants across six generations, because the only way down the tree was repeated `get_person` calls.
+
+`estimate_life_period` answers "roughly when did this undated person live". It measures **this family's** median parent-child birth gap rather than assuming a textbook 25–30 years; in this project the real figure is 31 years (n=64, quartiles 28–35), and the generic assumption put an ancestor's birth a century too late.
+
+Its anchors are found by two **one-directional** walks — pure ancestors, pure descendants. A single walk that may travel both ways drifts sideways through marriages (down to a shared child, back up to the other parent) and starts offering in-laws from unrelated branches as evidence: generationally correct, evidentially worthless.
+
+### Photo-library use is a first-class case
+
+Mnemosyne is also used purely to organise photographs and events, so the tool surface covers that too: `get_photo_stats` (totals per decade, who appears most, how much is unidentified), `find_photos` (by people together or individually, year range, faces nobody has named), and `find_shared_photos`. Every photo answer carries a `#people-…` gallery link, because the point is to act on the set — select, tag, export — not to read a list of ids.
+
+### Guessable values must be discoverable
+
+`event_type` is a stored vocabulary (`religious`, `custom`, …) that rarely matches the word a question uses — a filter of `confirmation` matched nothing, which the model reported as "the event was never recorded". Two mitigations: `build_vocabulary()` puts the project's actual `event_type` and `doc_type` values in the cached prefix, and `list_events` returns the available types in a `note` whenever a type filter matches nothing. The general rule for this tool layer: **an empty result must never be mistakable for an absent fact.**
+
+For the same reason `get_person(include=['events'])` returns each event's attendees. Returning the event without them reads as "nobody was recorded", which is a different claim from "you didn't ask".
+
+### Truncation must be visible
+
+Every list-returning tool goes through `_capped()`, which returns `count`, the true `total`, and a `truncated` flag with an explicit warning. This exists because a silent cap produced a confidently wrong answer: asked how many photos contained two people, the model called `list_photos_of` for each, got 50 of 340 and 50 of 67, intersected the two truncated lists and reported 15. The real answer is 45.
+
+A truncated list is indistinguishable from a complete one unless the tool says so — the same failure shape as an empty result reading as an absent fact. `find_shared_photos` then removes the need for that intersection altogether by computing it server-side.
+
+### Clickable references
+
+Raw ids in an answer are dead ends — a user cannot click the number `299`. `markdown.ts` resolves four constructs, and the system prompt requires them:
+
+| Written by the model | Renders as | Click goes to |
+|---|---|---|
+| `@[Name](#pid-42)` | `a.note-person-ref` | that person's profile |
+| `[caption](#img-40)` | `a.note-image-ref` | that photo in the Images tab |
+| `[caption](#people-3,6)` | `a.note-people-ref` | Images tab filtered to photos containing **all** of them |
+| `[3]` | `a.note-ref` | the citation |
+
+The gallery form reuses `navToImages`, which the Connections tab already uses and which sets `include_mode: 'and'` — so the link lands on exactly the set the assistant counted, ready to select and export. **Order matters in `markdown.ts`:** the citation rule matches `[digits]`, so the link forms must be consumed first or `[3](#img-7)` is eaten as citation 3.
+
+### Read-only, three independent layers
+
+| Layer | Where |
+|---|---|
+| `PRAGMA query_only=ON` on a dedicated connection pool — writes raise `SQLITE_READONLY` | `configure_readonly_engine` in `database.py`, `ProjectManager.get_readonly_db()` |
+| Tools are the only data path; no model-written SQL is executed in any form | `ai/tools.py` |
+| `Tool.mutates=True` is rejected at registration | `ToolRegistry.register` |
+
+`query_only` is used rather than a `mode=ro` URI because the latter can fail outright on a WAL database needing recovery.
+
+### The tree primer
+
+`ai/primer.py` serialises the whole tree as one pipe-delimited line per person (`id | Surname/Given | sex | birth-death | parent ids | spouse ids`) — about 3k tokens for 330 people. It sits behind the single `cache_control` breakpoint, so it is read back at ~0.1x cost.
+
+**No cache-invalidation bookkeeping exists, deliberately.** The serialisation is deterministic (sorted by id, no timestamps), so unchanged data produces identical bytes and hits the cache, and changed data produces different bytes and correctly misses. Anything non-deterministic added here silently destroys the cache-hit rate — verify with `usage.cache_read_input_tokens`, which the orchestrator records per assistant message.
+
+Names in the primer are written `Surname/Given` precisely because they are order-neutral; the system prompt tells the model which order to *render*. Tools return name parts for the same reason (see `_person_stub`) — `persons.name` is always composed in one fixed order by `_derive_display_name()`.
+
+### Provider abstraction
+
+`ai/provider.py` defines `LLMProvider` plus a neutral message shape and a `ProviderEvent` union. Two adapters implement it:
+
+| Adapter | Serves | Notes |
+|---|---|---|
+| `AnthropicProvider` | Anthropic | `thinking: {type: "adaptive"}` + `output_config.effort`. Do **not** add `temperature`, `top_p` or `budget_tokens` — all three are rejected with a 400 on current models. Explicit `cache_control` breakpoint on the primer |
+| `OpenAICompatProvider` | OpenAI today; OpenRouter / Ollama / LM Studio by setting `base_url` alone | Chat Completions API. Uses `max_completion_tokens`, and `stream_options.include_usage` (usage is otherwise absent from a streamed response) |
+
+Nothing provider-specific may leak above the protocol. Three differences are absorbed inside `OpenAICompatProvider`: the system prompt becomes an ordinary message (and the `cache_control` markers are dropped — OpenAI caches long prefixes automatically), tools are wrapped in a `function` envelope, and **streamed tool arguments arrive as fragments that must be reassembled per `index`** before they parse as JSON. That last one is the part that breaks silently if reimplemented carelessly.
+
+### Providers, keys and models
+
+Keys and the selected model are stored **per provider** in the `ai` block of `config.json`:
+
+```json
+"ai": { "provider": "openai",
+        "keys":   { "anthropic": "sk-ant-…", "openai": "sk-proj-…" },
+        "models": { "anthropic": "claude-opus-5", "openai": "gpt-5.1" } }
+```
+
+so switching provider does not mean re-entering credentials. `_ai_block()` migrates the older single-key layout on read. `save_settings` applies `api_key`/`model` to the provider being set *in the same call*, so "switch to OpenAI and paste its key" works as one request.
+
+### The model list is fetched, not hardcoded
+
+`models.json` is **metadata, not a gate**. What a model *is* comes from the provider's own `/models` endpoint, so a model released after this build appears without a code or manifest change.
+
+`GET /api/ai/models?provider=…` returns the merged list: curated entries first (keeping their labels, notes and prices), then everything else the account can use, with fallback capabilities. The live ids are cached in `config.json` under `ai.discovered` and refreshed automatically once a week (`CACHE_MAX_AGE_DAYS`), or on demand with `?refresh=true`.
+
+Three rules keep the picker from ever going empty or stale:
+
+- **A failed refresh never clears it.** The endpoint falls through to the cached list, or to the manifest, and reports the failure in an `error` field alongside the models.
+- **Non-chat models are filtered out** by `is_chat_model()` — providers list embeddings, TTS, transcription and image models on the same endpoint. The substring list is deliberately conservative: showing one odd id is better than hiding a usable model.
+- **The picker also accepts a typed model id**, so nothing is blocked even if discovery is unavailable. Combined with the `caps` fallback, an unknown id degrades to a conservative capability set rather than an error.
+
+### Model manifest
+
+`backend/ai/models.json` declares capabilities and pricing. **Code branches on `caps.*`, never on a model id** — adding a model is a manifest edit, not a code change, and an unknown model falls back to a conservative capability set rather than being blocked.
+
+It is a **bundled** file, so it is read from `MNEMOSYNE_BUNDLE_DIR` (spec `datas` target `ai`), not `MNEMOSYNE_APP_DIR`. This is the same distinction that made `version.txt` report `dev` in every packaged build — see *Auto-update*.
+
+### Why the API key lives in `config.json`
+
+The updater copies only `projects/`, `config.json` and `models/` into the new version. A separate secrets file at the app-dir root would be silently wiped by every auto-update, so the key goes in the `ai` block of `config.json`. `ProjectManager._write_config` merges rather than replaces for the same reason — a project switch must not drop the block.
+
+### Conversations
+
+Stored in the project database (v7) so they survive restarts and stay with the project they are about. `build_export_db` deletes all three tables **unconditionally, before any other filter** — the export copies the whole database and only then filters, so the absence of an export toggle is not protection.
+
+The deletion happens on the **copy**, never on the project. Exporting does not clear the user's own history — `_vacuum_copy` writes a separate file and every filter in `build_export_db` operates on that. Verified end to end: a project with conversations exports a ZIP whose database contains zero chat rows while the original keeps all of them. History is replayed to the model as **text only**; tool calls are persisted for the UI but not fed back, which keeps history compact and makes each turn re-read the database (correct when the user edits the tree between questions).
+
+### Frontend
+
+`AssistantPanel.tsx` sits beside `<main>` rather than over it, so the tree stays visible while the assistant answers. Streaming is a `fetch` + `ReadableStream` read (`api.ai.stream`), deliberately not react-query — it is a long-lived body read, not a cache entry. Thread and message lists are ordinary react-query.
+
+Answers render through the existing `markdown.ts`: the system prompt requires `@[Name](#pid-ID)` mentions, which already become `a.note-person-ref` anchors, and the panel delegates clicks on them to `navToGenealogy` exactly as `NoteEditor.tsx` and `DocumentViewer.tsx` do. That is the feature's main defence against hallucination — every claim is one click from its source.
 
 ---
 
@@ -403,6 +583,8 @@ Image-Organizer/
 │       ├── types.ts                   # TypeScript interfaces
 │       ├── SettingsContext.tsx        # Global settings (name order, language, auto-update toggle)
 │       ├── docTypes.ts                # Built-in document type keys + translated labels
+│       ├── familyContext.tsx          # Close-relative lookup + lines shown in person pickers
+│       ├── markdown.ts                # Shared Markdown renderer (@ mentions, [n] citations)
 │       ├── i18n/
 │       │   └── translations.ts        # EN/HU translation strings (flat dot-notation keys)
 │       └── components/
@@ -420,7 +602,10 @@ Image-Organizer/
 │           ├── RelationPathModal.tsx  # Relationship path finder + PNG export
 │           ├── ExportModal.tsx        # ZIP export settings
 │           ├── SearchPalette.tsx      # Global search (Ctrl+K)
-│           ├── DocumentViewer.tsx     # Document preview modal
+│           ├── DocumentsTab.tsx       # Document list, filters, upload / create chooser
+│           ├── DocumentViewer.tsx     # Document preview modal (renders Markdown bodies)
+│           ├── TextDocumentEditor.tsx # In-app Markdown documents + citations + photos
+│           ├── PersonSelect.tsx       # Shared person pickers (multi-select, filter combobox)
 │           ├── GedcomImportModal.tsx  # GEDCOM import wizard
 │           ├── UpdateBanner.tsx       # Auto-update icon + modal
 │           ├── StatisticsView.tsx
@@ -443,6 +628,17 @@ Image-Organizer/
 ## Projects and database
 
 Each project has its own directory (`projects/<id>/`) with its own SQLite database. The schema version is stored in `schema_version` table; migrations run at startup and are idempotent.
+
+| Version | Adds |
+|---|---|
+| v1→v2 | `sources.event_id` |
+| v2→v3 | `document_types`, `document_persons` (multi-person documents) |
+| v3→v4 | `person_subclusters` |
+| v4→v5 | `is_private` on six tables |
+| v5→v6 | `documents.is_text`, `document_citations`, `document_images` (in-app text documents) |
+| v6→v7 | `chat_threads`, `chat_messages`, `chat_tool_calls` (AI assistant conversations) |
+
+`Base.metadata.create_all()` runs before the migration block, so new *tables* appear on their own; a new *column* on an existing table still needs an explicit `ALTER TABLE` in the version block.
 
 Database files (`*.db`) and `config.json` are not tracked by git.
 
@@ -467,6 +663,8 @@ Entirely client-side (Canvas 2D API); images are pre-loaded before drawing.
 
 The ZIP contains the original files (collisions renamed `<name> (2).<ext>`) and an optional `_index.txt` plain-text manifest with titles, types, years, linked persons, descriptions, and full note text with citations.
 
+Text documents appear as their `.md` file. Their body references (`document_citations`) and attached-photo count are listed in the manifest under the document itself — those live on the document, not on a note, so they need their own block.
+
 ---
 
 ## ZIP export
@@ -488,6 +686,8 @@ A ZIP archive packages the database and all referenced media into a portable, se
 2. **Person/cluster filter** (mutually exclusive): person list, cluster list, or full project
 3. **Content toggles**: notes, sources, events, documents, images, faceless images — each independently removable
 4. **Privacy filter** (always applied, cannot be disabled): removes all rows where `is_private=1` across images, clusters, relations, documents, notes, and events; private cluster faces are moved to the noise cluster before the cluster is deleted
+
+Anywhere documents or images are deleted from the export copy, `_delete_document_children()` clears the matching `document_citations` / `document_images` rows first. The export DB is written with the plain `sqlite3` module, where `PRAGMA foreign_keys` is **off**, so nothing cascades for you — dropped documents would otherwise leave dangling children behind in the shipped database.
 5. **Path rewrite**: image paths updated to `images/<id>_<filename>` (absolute → relative)
 6. Pack with DEFLATE compression, streamed to the response
 
@@ -499,6 +699,10 @@ A ZIP archive packages the database and all referenced media into a portable, se
 2. Extracted to `projects/<new_id>/`
 3. `project.db` → `photo_organizer.db`
 4. Image paths rewritten back to absolute
+
+**Merge import** (`POST /api/import/merge/preview` → `/confirm`, `merge_import.py`) is the other direction: it folds a ZIP into the *active* project with a per-person create/merge/skip decision. Unlike the pipeline above it does not copy the database — it re-inserts row by row and remaps every foreign key, so **each table has to be handled explicitly or its data is silently dropped**. Columns are read through `_safe_rows()` and guarded with `_has_column()`, because an incoming ZIP may have been exported by an older schema.
+
+Documents carry `is_text` (without it a chronicle arrives as an opaque file), `document_citations` (remapped through `src_id_remap`, `source_id NULL` kept for free-text labels), and `document_images` (remapped through `img_id_remap`; a merge import only brings in images belonging to named clusters, so a link whose photo stayed behind is skipped).
 
 **Callers**
 
@@ -542,7 +746,10 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 - The server binds exclusively to `127.0.0.1` — not reachable from the network
 - CORS restricted to `http://localhost` and `http://127.0.0.1`
 - ZIP imports are path-validated (Zip Slip protection)
-- The app never sends any data to any external server; the only outbound connection is the optional GitHub update check
+- **Outbound connections.** With default settings the app sends nothing anywhere; the only outbound request is the optional GitHub update check. Two features change that, both opt-in and both off until the user acts:
+  - the update check itself (toggleable in settings)
+  - the **AI assistant** — once an API key is stored, questions and the data needed to answer them go to the configured provider. See *AI assistant* below
+- The API key lives in `config.json`. It is write-only over HTTP: `GET /api/ai/settings` returns it masked (`sk-ant-api…9f2a`), and no other endpoint returns it at all
 
 ---
 
@@ -556,5 +763,14 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 - **New file bundled into the build** → add it to `datas` in `mnemosyne.spec` **and** read it via `MNEMOSYNE_BUNDLE_DIR`, not `MNEMOSYNE_APP_DIR` — see *Auto-update* for why the two are not interchangeable
 - **New streaming ZIP endpoint** → wrap the pipe in `NonSeekableWriter` (see *ZIP export*), otherwise the archive is silently corrupt on Windows
 - **New data table with `person_id` FK** → update `_delete_persons` in `export_utils.py` with an explicit `DELETE FROM <table> WHERE person_id IN (...)` line before the `DELETE FROM persons` line. If the table has `ON DELETE CASCADE` (like `person_subclusters`) the cascade would handle it automatically, but being explicit is the established pattern here
+- **New data table with `document_id` FK** → add it to `_delete_document_children()` in `export_utils.py` (FKs are off in the export copy, so nothing cascades), include it in `_doc_dict` in `main.py`, and carry it through `read_zip_db` + `execute_merge` in `merge_import.py` — a merge import copies nothing it is not told about
+- **New person picker anywhere in the UI** → build it on `useFamilyContext` + `<FamilyContextLines>` from `familyContext.tsx`, or on `PersonMultiSelect` / `PersonFilterCombobox` from `components/PersonSelect.tsx`. Rolling a fourth hand-written relative lookup is how the pickers drifted apart last time
+- **Any UI that shows a person's name** → render it through `displayPersonName(person, nameOrder)`. The stored `persons.name` is always composed in one fixed order by `_derive_display_name()`, so printing it directly ignores the user's setting. If the payload is a stub rather than a full person, give the stub its name parts server-side (see `_doc_person_dict`)
 - **Schema change to `note_citations`** → add idempotent migration in `database.py` using the `PRAGMA table_info` + table-recreate pattern
+- **New AI assistant tool** → register it in `build_registry()` in `ai/tools.py` with `mutates=False` (the registry rejects anything else); apply the `_priv_ok` privacy filter; return name *parts* rather than `persons.name`; add a `chat.tool.<name>` label to **both** dictionaries in `i18n/translations.ts`. Prefer one fat tool over several thin ones — push the computation into the tool, as `get_relationship_path` does with the BFS and `get_ancestors` does with the line walk. Two rules learned the hard way: an empty result must carry enough context that it cannot be read as an absent fact, and anything the model would otherwise have to *guess* (a stored enum value) belongs either in the tool's error path or in `build_vocabulary()`
+- **New chat table** → add an unconditional `DELETE FROM <table>` to the chat block at the top of `build_export_db` in `export_utils.py`, children first. The export copies the whole database and then filters, so a table you forget here is silently exported — this is the one mistake in this area with a real privacy cost
+- **New model** → usually *nothing to do*: the list is fetched from the provider and new ids appear on the next refresh. Add an entry to `backend/ai/models.json` only to give it a friendly label, a note or a price (omit `pricing` rather than guessing — a missing block just hides the cost estimate, a wrong one misinforms). Never add a model-id branch in code; if you want one, the missing thing belongs in `caps`
+- **New non-chat model type appearing in the picker** → add a substring to `_NON_CHAT_MARKERS` in `ai/config.py`. Keep it conservative — over-filtering silently hides usable models, which is the worse failure
+- **New provider** → add an entry to `providers` in `models.json`, and either reuse `OpenAICompatProvider` with a `base_url` (correct for anything OpenAI-compatible) or add an adapter implementing `LLMProvider`. Wire it into `build_provider` and `discover_models` in `ai/provider.py`. Nothing above the protocol should need to change; if it does, the abstraction has sprung a leak
+- **New bundled AI data file** → spec `datas` **and** read it via `MNEMOSYNE_BUNDLE_DIR` in `ai/config.py`, never `MNEMOSYNE_APP_DIR`
 - **New `is_private` on a table** → (1) add `ALTER TABLE … ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0` to the v4→v5 migration block in `database.py`; (2) include `is_private` in the relevant `_xxx_dict` serialiser in `main.py`; (3) add the privacy-filter DELETE block for that table inside `build_export_db` in `export_utils.py`; (4) add `WHERE COALESCE(is_private,0)=0` to the relevant query in `build_gedcom_zip` in `gedcom_export.py` if applicable; (5) add `togglePrivacy` call to `api.ts`; (6) update the TypeScript interface in `types.ts`; (7) add the padlock button to the relevant component

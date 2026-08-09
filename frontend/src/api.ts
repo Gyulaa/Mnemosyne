@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, ChatThread, ChatMessage, ChatStreamEvent } from './types'
 
 const BASE = '/api'
 
@@ -36,6 +36,13 @@ const post = <T>(url: string, body?: unknown) =>
 const patch = <T>(url: string, body?: unknown) =>
   fetchJson<T>(url, {
     method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+
+const put = <T>(url: string, body?: unknown) =>
+  fetchJson<T>(url, {
+    method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
@@ -363,6 +370,23 @@ export const api = {
     },
     update: (id: number, fields: Partial<Pick<PersonDocument, 'title' | 'doc_type' | 'year' | 'description'>>) =>
       patch<PersonDocument>(`${BASE}/documents/${id}`, fields),
+    /** Create a document written in-app; its Markdown body is stored as a .md file. */
+    createText: (fields: {
+      title?: string; doc_type?: string; year?: number; description?: string
+      content: string; person_ids: number[]
+    }) => post<PersonDocument>(`${BASE}/documents/text`, fields),
+    getText: (id: number) =>
+      fetchJson<{ id: number; content: string }>(`${BASE}/documents/${id}/text`),
+    saveText: (id: number, content: string) =>
+      put<{ id: number; content: string }>(`${BASE}/documents/${id}/text`, { content }),
+    addCitation: (docId: number, fields: { source_id?: number; marker: number; detail?: string; custom_label?: string }) =>
+      post<NoteCitation>(`${BASE}/documents/${docId}/citations`, fields),
+    deleteCitation: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/document-citations/${id}`, { method: 'DELETE' }),
+    addImage: (docId: number, imageId: number) =>
+      post<PersonDocument>(`${BASE}/documents/${docId}/images`, { image_id: imageId }),
+    removeImage: (docId: number, imageId: number) =>
+      fetchJson<PersonDocument>(`${BASE}/documents/${docId}/images/${imageId}`, { method: 'DELETE' }),
     togglePrivacy: (id: number, isPrivate: boolean) =>
       patch<PersonDocument>(`${BASE}/documents/${id}`, { is_private: isPrivate }),
     delete: (id: number) =>
@@ -492,5 +516,69 @@ export const api = {
     check:     () => post<{ ok: boolean }>(`${BASE}/update/check`),
     download:  () => post<{ ok: boolean }>(`${BASE}/update/download`),
     apply:     () => post<{ ok: boolean }>(`${BASE}/update/apply`),
+  },
+  ai: {
+    getSettings: () => fetchJson<AiSettings>(`${BASE}/ai/settings`),
+    saveSettings: (fields: Partial<{ provider: string; model: string; api_key: string; allow_private: boolean; enabled: boolean; base_url: string }>) =>
+      put<AiSettings>(`${BASE}/ai/settings`, fields),
+    /**
+     * Models for the picker. The list comes from the provider itself (cached
+     * server-side for a week); the bundled manifest only adds labels and
+     * prices. `refresh` forces a live fetch.
+     */
+    listModels: (provider?: string, refresh = false) => {
+      const q = new URLSearchParams()
+      if (provider) q.set('provider', provider)
+      if (refresh) q.set('refresh', 'true')
+      const qs = q.toString()
+      return fetchJson<AiModelCatalog>(`${BASE}/ai/models${qs ? `?${qs}` : ''}`)
+    },
+
+    listThreads: () => fetchJson<ChatThread[]>(`${BASE}/ai/threads`),
+    createThread: (title?: string) => post<ChatThread>(`${BASE}/ai/threads`, { title: title ?? null }),
+    renameThread: (id: number, title: string) => patch<ChatThread>(`${BASE}/ai/threads/${id}`, { title }),
+    deleteThread: (id: number) => fetchJson<{ ok: boolean }>(`${BASE}/ai/threads/${id}`, { method: 'DELETE' }),
+    listMessages: (threadId: number) => fetchJson<ChatMessage[]>(`${BASE}/ai/threads/${threadId}/messages`),
+
+    /**
+     * Stream one turn. Deliberately not react-query: this is a long-lived
+     * SSE body read with a ReadableStream, not a request/response cache entry.
+     * `onEvent` fires per frame; the promise settles when the stream ends.
+     */
+    stream: async (
+      threadId: number,
+      body: { message: string; lang: string; name_order: string },
+      onEvent: (ev: ChatStreamEvent) => void,
+      signal?: AbortSignal,
+    ): Promise<void> => {
+      const res = await fetch(`${BASE}/ai/threads/${threadId}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      })
+      if (!res.ok || !res.body) throw new Error((await res.text()) || `HTTP ${res.status}`)
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        // Frames are separated by a blank line; the last chunk may be partial.
+        const frames = buffer.split('\n\n')
+        buffer = frames.pop() ?? ''
+        for (const frame of frames) {
+          const line = frame.trim()
+          if (!line.startsWith('data: ')) continue
+          try {
+            onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent)
+          } catch {
+            /* ignore a malformed frame rather than killing the stream */
+          }
+        }
+      }
+    },
   },
 }

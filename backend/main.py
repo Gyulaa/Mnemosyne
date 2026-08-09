@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, object_session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentImage as DBDocumentImage, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage, ChatThread as DBChatThread, ChatMessage as DBChatMessage, ChatToolCall as DBChatToolCall
 from . import scanner as scanner_mod
 from . import clusterer
 from .clusterer import recompute_person_subclusters
@@ -37,9 +37,14 @@ from .schemas import (
     NoteCreate, NoteUpdate, NoteCitationCreate,
     EventCreate, EventUpdate, EventImageAdd, EventPersonAdd,
     BulkDownloadRequest,
+    TextDocumentCreate, TextDocumentBody, DocumentImageAdd,
     DuplicateGroup, DuplicateImageInfo,
+    AiSettingsUpdate, ChatThreadCreate, ChatThreadUpdate, ChatSendRequest,
 )
 from .image_utils import load_image_bgr, crop_thumbnail, IMAGE_EXTENSIONS
+from .ai import config as ai_config
+from .ai import orchestrator as ai_orchestrator
+from .ai import provider as ai_provider
 
 app = FastAPI(title="Photo Organizer API", version="0.1.0")
 
@@ -1736,6 +1741,52 @@ def _rel_dict(r: "DBRelation") -> dict:
     }
 
 
+def _doc_person_dict(p: "DBPerson") -> dict:
+    """Linked-person stub for document payloads.
+
+    Ships the individual name parts alongside the stored display name: the
+    stored one is always composed in a single fixed order, so only the client
+    can render it in the user's configured name order.
+    """
+    return {
+        "id": p.id,
+        "name": p.name,
+        "title": p.title,
+        "first_name": p.first_name,
+        "middle_name": p.middle_name,
+        "last_name": p.last_name,
+    }
+
+
+def _doc_citation_dict(c: "DBDocumentCitation") -> dict:
+    s = c.source
+    return {
+        "id": c.id,
+        "note_id": c.document_id,
+        "source_id": c.source_id,
+        "marker": c.marker,
+        "detail": c.detail,
+        "custom_label": c.custom_label,
+        "source_title": s.title if s else None,
+        "source_type": s.source_type if s else None,
+        "source_document_id": s.document_id if s else None,
+        "source_event_id": s.event_id if s else None,
+        "source_year": s.year if s else None,
+        "source_author": s.author if s else None,
+    }
+
+
+def _doc_image_dict(di: "DBDocumentImage") -> dict:
+    img = di.image
+    return {
+        "id": di.id,
+        "image_id": di.image_id,
+        "image_path": img.path if img else None,
+        "caption": di.caption,
+        "sort_order": di.sort_order,
+    }
+
+
 def _doc_dict(d: "DBDocument") -> dict:
     return {
         "id": d.id,
@@ -1749,10 +1800,19 @@ def _doc_dict(d: "DBDocument") -> dict:
         "description": d.description,
         "created_at": d.created_at,
         "is_private": bool(d.is_private),
+        "is_text": bool(d.is_text),
         "source_id": d.source.id if d.source else None,
         "persons": [
-            {"id": dp.person_id, "name": dp.person.name if dp.person else None}
-            for dp in (d.linked_persons or [])
+            _doc_person_dict(dp.person)
+            for dp in (d.linked_persons or []) if dp.person
+        ],
+        "citations": [
+            _doc_citation_dict(c)
+            for c in sorted(d.body_citations or [], key=lambda c: c.marker)
+        ],
+        "images": [
+            _doc_image_dict(di)
+            for di in sorted(d.body_images or [], key=lambda i: (i.sort_order, i.id))
         ],
     }
 
@@ -1974,6 +2034,13 @@ def merge_persons(source_id: int, target_id: int, db: Session = Depends(get_db))
     db.execute(text("UPDATE documents    SET person_id = :tid WHERE person_id = :sid"), {"tid": target_id, "sid": source_id})
     db.execute(text("UPDATE person_notes SET person_id = :tid WHERE person_id = :sid"), {"tid": target_id, "sid": source_id})
     db.execute(text("UPDATE citations    SET person_id = :tid WHERE person_id = :sid"), {"tid": target_id, "sid": source_id})
+    # document_persons is what every document listing joins on, and its rows would
+    # be FK-cascaded away with the source person — re-point them at the target
+    # first (OR IGNORE skips documents the target is already linked to).
+    db.execute(text(
+        "UPDATE OR IGNORE document_persons SET person_id = :tid WHERE person_id = :sid"
+    ), {"tid": target_id, "sid": source_id})
+    db.execute(text("DELETE FROM document_persons WHERE person_id = :sid"), {"sid": source_id})
 
     # 6. Delete source (event_persons already transferred; relations already transferred)
     db.execute(text("DELETE FROM event_persons WHERE person_id = :sid"), {"sid": source_id})
@@ -2003,6 +2070,25 @@ def delete_person(person_id: int, db: Session = Depends(get_db)):
     # event_persons has no ORM cascade from Person and the actual DB table was created
     # by Base.metadata.create_all() without ON DELETE CASCADE, so delete manually.
     db.execute(text("DELETE FROM event_persons WHERE person_id = :pid"), {"pid": person_id})
+
+    # Documents this person happens to own (documents.person_id) would be
+    # cascade-deleted with them — including ones shared with other people.
+    # Hand those over to a co-linked person instead; only drop a document when
+    # nobody is left, and then take its file off disk too.
+    docs_dir = _docs_dir()
+    for doc in list(p.documents):
+        heir = (
+            db.query(DBDocumentPerson)
+            .filter(DBDocumentPerson.document_id == doc.id, DBDocumentPerson.person_id != person_id)
+            .first()
+        )
+        if heir:
+            doc.person_id = heir.person_id
+        else:
+            (docs_dir / doc.stored_name).unlink(missing_ok=True)
+    db.flush()
+    db.expire(p, ["documents"])   # re-read the collection so handed-over docs aren't cascaded
+
     db.delete(p)
     db.commit()
     # Clean up events that no longer have any participants
@@ -2187,6 +2273,153 @@ def unlink_person_from_document(doc_id: int, person_id: int, db: Session = Depen
     return _doc_dict(d)
 
 
+# ── Text documents (written in-app) ───────────────────────────────────────────
+#
+# The Markdown body lives in a .md file inside the project's documents dir, the
+# same place uploads go. That way downloads, bulk ZIPs and project exports keep
+# working without knowing text documents exist.
+
+def _text_doc_path(d: "DBDocument") -> Path:
+    return _docs_dir() / d.stored_name
+
+
+def _slug_filename(title: str | None) -> str:
+    base = (title or "").strip() or "document"
+    ascii_base = unicodedata.normalize("NFD", base).encode("ascii", "ignore").decode("ascii")
+    safe = re.sub(r"[^\w\s-]", "", ascii_base).strip().replace(" ", "_")
+    return f"{safe or 'document'}.md"
+
+
+@app.post("/api/documents/text", status_code=201)
+def create_text_document(body: TextDocumentCreate, db: Session = Depends(get_db)):
+    person_ids = [pid for pid in dict.fromkeys(body.person_ids)]
+    if not person_ids:
+        raise HTTPException(400, "At least one person must be linked")
+    persons = db.query(DBPerson).filter(DBPerson.id.in_(person_ids)).all()
+    if len(persons) != len(person_ids):
+        raise HTTPException(404, "Person not found")
+
+    docs_dir = _docs_dir()
+    stored_name = f"{uuid.uuid4().hex}.md"
+    (docs_dir / stored_name).write_text(body.content or "", encoding="utf-8")
+
+    doc = DBDocument(
+        person_id=person_ids[0],
+        stored_name=stored_name,
+        filename=_slug_filename(body.title),
+        mime_type="text/markdown",
+        title=(body.title or "").strip() or None,
+        doc_type=body.doc_type or "other",
+        year=body.year,
+        description=(body.description or "").strip() or None,
+        created_at=datetime.now().isoformat(),
+        is_text=True,
+    )
+    db.add(doc)
+    db.flush()
+    for pid in person_ids:
+        db.add(DBDocumentPerson(document_id=doc.id, person_id=pid))
+    db.commit()
+    db.refresh(doc)
+    return _doc_dict(doc)
+
+
+@app.get("/api/documents/{doc_id}/text")
+def get_text_document_body(doc_id: int, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if not d.is_text:
+        raise HTTPException(400, "Not a text document")
+    path = _text_doc_path(d)
+    content = path.read_text(encoding="utf-8") if path.exists() else ""
+    return {"id": d.id, "content": content}
+
+
+@app.put("/api/documents/{doc_id}/text")
+def update_text_document_body(doc_id: int, body: TextDocumentBody, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if not d.is_text:
+        raise HTTPException(400, "Not a text document")
+    _text_doc_path(d).write_text(body.content or "", encoding="utf-8")
+    # Keep the on-disk name in step with the title so exported ZIPs stay readable.
+    d.filename = _slug_filename(d.title)
+    db.commit()
+    return {"id": d.id, "content": body.content or ""}
+
+
+@app.post("/api/documents/{doc_id}/citations", status_code=201)
+def add_document_citation(doc_id: int, body: NoteCitationCreate, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if body.source_id is None and not body.custom_label:
+        raise HTTPException(400, "Either source_id or custom_label is required")
+    c = DBDocumentCitation(
+        document_id=doc_id,
+        source_id=body.source_id,
+        marker=body.marker,
+        detail=body.detail,
+        custom_label=body.custom_label,
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return _doc_citation_dict(c)
+
+
+@app.delete("/api/document-citations/{citation_id}")
+def delete_document_citation(citation_id: int, db: Session = Depends(get_db)):
+    c = db.get(DBDocumentCitation, citation_id)
+    if not c:
+        raise HTTPException(404, "Citation not found")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/documents/{doc_id}/images", status_code=201)
+def attach_document_image(doc_id: int, body: DocumentImageAdd, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if not db.get(DBImage, body.image_id):
+        raise HTTPException(404, "Image not found")
+    existing = (
+        db.query(DBDocumentImage)
+        .filter_by(document_id=doc_id, image_id=body.image_id)
+        .first()
+    )
+    if not existing:
+        max_order = (
+            db.query(func.max(DBDocumentImage.sort_order))
+            .filter(DBDocumentImage.document_id == doc_id)
+            .scalar()
+        ) or 0
+        db.add(DBDocumentImage(
+            document_id=doc_id, image_id=body.image_id,
+            caption=body.caption, sort_order=max_order + 1,
+        ))
+        db.commit()
+        db.refresh(d)
+    return _doc_dict(d)
+
+
+@app.delete("/api/documents/{doc_id}/images/{image_id}")
+def detach_document_image(doc_id: int, image_id: int, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    di = db.query(DBDocumentImage).filter_by(document_id=doc_id, image_id=image_id).first()
+    if di:
+        db.delete(di)
+        db.commit()
+        db.refresh(d)
+    return _doc_dict(d)
+
+
 # ── Document types ─────────────────────────────────────────────────────────────
 
 @app.get("/api/document-types")
@@ -2243,6 +2476,8 @@ def update_document(doc_id: int, body: dict, db: Session = Depends(get_db)):
     for f in ("title", "doc_type", "year", "description", "is_private"):
         if f in body:
             setattr(d, f, body[f])
+    if d.is_text and "title" in body:
+        d.filename = _slug_filename(d.title)
     db.commit()
     return _doc_dict(d)
 
@@ -2354,6 +2589,26 @@ def bulk_download_documents(body: BulkDownloadRequest, db: Session = Depends(get
                 lines.append(f"    Persons: {person_names}")
                 if doc.description:
                     lines.append(f"    Description: {_plain(doc.description)}")
+
+                # A text document's own [n] references live on the document,
+                # not on a note — list them so the .md in the ZIP is readable.
+                body_cites = sorted(doc.body_citations or [], key=lambda c: c.marker)
+                if body_cites:
+                    lines.append("")
+                    lines.append("    Sources:")
+                    for bc in body_cites:
+                        if bc.source:
+                            label = bc.source.title
+                            if bc.source.year:
+                                label += f" ({bc.source.year})"
+                        else:
+                            label = bc.custom_label or f"[{bc.marker}]"
+                        if bc.detail:
+                            label += f" — {bc.detail}"
+                        lines.append(f"      [{bc.marker}] {label}")
+
+                if doc.body_images:
+                    lines.append(f"    Photos:  {len(doc.body_images)} attached")
 
                 notes = (
                     db.query(DBDocumentNote)
@@ -3106,6 +3361,190 @@ def update_apply():
     except RuntimeError as exc:
         raise HTTPException(500, str(exc))
     return {'ok': True}
+
+
+# ── AI assistant ──────────────────────────────────────────────────────────────
+
+def _chat_thread_dict(t: DBChatThread) -> dict:
+    return {
+        'id': t.id,
+        'title': t.title,
+        'provider': t.provider,
+        'model': t.model,
+        'created_at': t.created_at,
+        'updated_at': t.updated_at,
+    }
+
+
+def _chat_message_dict(m: DBChatMessage) -> dict:
+    return {
+        'id': m.id,
+        'thread_id': m.thread_id,
+        'role': m.role,
+        'content': m.content,
+        'created_at': m.created_at,
+        'input_tokens': m.input_tokens,
+        'output_tokens': m.output_tokens,
+        'cache_read_tokens': m.cache_read_tokens,
+        'tool_calls': [
+            {
+                'id': tc.id,
+                'name': tc.tool_name,
+                'input': json.loads(tc.arguments_json) if tc.arguments_json else {},
+                'result': json.loads(tc.result_json) if tc.result_json else None,
+                'duration_ms': tc.duration_ms,
+                'is_error': bool(tc.is_error),
+            }
+            for tc in m.tool_calls
+        ],
+    }
+
+
+def get_readonly_db():
+    """Session on the query_only pool — the assistant's data path only."""
+    yield from project_manager.get_readonly_db()
+
+
+@app.get('/api/ai/settings')
+def ai_get_settings():
+    # public_settings() masks the key. Nothing here may return it raw.
+    return ai_config.public_settings()
+
+
+@app.put('/api/ai/settings')
+def ai_update_settings(body: AiSettingsUpdate):
+    if body.model is not None and not body.model.strip():
+        raise HTTPException(400, 'Model must not be empty')
+    if body.provider is not None and body.provider not in {p['id'] for p in ai_config.list_providers()}:
+        raise HTTPException(400, f'Unknown provider: {body.provider}')
+    ai_config.save_settings(
+        provider=body.provider,
+        model=body.model,
+        api_key=body.api_key,
+        allow_private=body.allow_private,
+        enabled=body.enabled,
+        base_url=body.base_url,
+    )
+    return ai_config.public_settings()
+
+
+@app.get('/api/ai/models')
+async def ai_list_models(provider: Optional[str] = None, refresh: bool = False):
+    """Models for the picker.
+
+    The live list from the provider is the source of truth for what exists; the
+    bundled manifest only supplies labels, notes and prices. `refresh=true`
+    forces a fetch, otherwise a cached list older than a week refreshes itself.
+    """
+    target = provider or ai_config.get_settings()['provider']
+    key = ai_config.provider_key(target)
+    error: Optional[str] = None
+
+    if key and (refresh or ai_config.cache_is_stale(target)):
+        try:
+            ids = await ai_provider.discover_models(target, key, ai_config.get_settings().get('base_url'))
+            ai_config.set_cached_models(target, ids)
+        except Exception as exc:
+            # A failed refresh must not empty the picker — fall through to
+            # whatever is cached, or to the manifest.
+            error = f'{type(exc).__name__}: {exc}'
+
+    cache = ai_config.get_cached_models(target)
+    return {
+        'provider': target,
+        'models': ai_config.merged_models(target),
+        'providers': ai_config.list_providers(),
+        'default': ai_config.default_model(target),
+        'fetched_at': cache['fetched_at'],
+        'live': bool(cache['ids']),
+        'error': error,
+    }
+
+
+@app.get('/api/ai/threads')
+def ai_list_threads(db: Session = Depends(get_db)):
+    threads = db.query(DBChatThread).order_by(DBChatThread.updated_at.desc(), DBChatThread.id.desc()).all()
+    return [_chat_thread_dict(t) for t in threads]
+
+
+@app.post('/api/ai/threads', status_code=201)
+def ai_create_thread(body: ChatThreadCreate, db: Session = Depends(get_db)):
+    now = datetime.now().isoformat()
+    t = DBChatThread(
+        title=(body.title or '').strip() or None,
+        provider=ai_config.get_settings()['provider'],
+        model=ai_config.get_settings()['model'],
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(t)
+    db.commit()
+    return _chat_thread_dict(t)
+
+
+@app.patch('/api/ai/threads/{thread_id}')
+def ai_rename_thread(thread_id: int, body: ChatThreadUpdate, db: Session = Depends(get_db)):
+    t = db.get(DBChatThread, thread_id)
+    if not t:
+        raise HTTPException(404, 'Thread not found')
+    t.title = body.title.strip() or None
+    t.updated_at = datetime.now().isoformat()
+    db.commit()
+    return _chat_thread_dict(t)
+
+
+@app.delete('/api/ai/threads/{thread_id}')
+def ai_delete_thread(thread_id: int, db: Session = Depends(get_db)):
+    t = db.get(DBChatThread, thread_id)
+    if not t:
+        raise HTTPException(404, 'Thread not found')
+    db.delete(t)
+    db.commit()
+    return {'ok': True}
+
+
+@app.get('/api/ai/threads/{thread_id}/messages')
+def ai_thread_messages(thread_id: int, db: Session = Depends(get_db)):
+    t = db.get(DBChatThread, thread_id)
+    if not t:
+        raise HTTPException(404, 'Thread not found')
+    msgs = db.query(DBChatMessage).filter(DBChatMessage.thread_id == thread_id).order_by(DBChatMessage.id).all()
+    return [_chat_message_dict(m) for m in msgs]
+
+
+@app.post('/api/ai/threads/{thread_id}/stream')
+async def ai_stream(thread_id: int, body: ChatSendRequest):
+    if not body.message.strip():
+        raise HTTPException(400, 'Message must not be empty')
+    settings = ai_config.get_settings()
+    if not settings['api_key']:
+        raise HTTPException(400, 'No API key configured')
+
+    write_db = project_manager.session_factory()
+    read_db = next(project_manager.get_readonly_db())
+    docs_dir = _docs_dir()
+
+    async def _gen():
+        try:
+            async for frame in ai_orchestrator.run_turn(
+                write_db=write_db,
+                read_db=read_db,
+                thread_id=thread_id,
+                user_text=body.message,
+                docs_dir=docs_dir,
+                lang=body.lang,
+                name_order=body.name_order,
+            ):
+                yield frame
+        finally:
+            read_db.close()
+            write_db.close()
+
+    return StreamingResponse(
+        _gen(),
+        media_type='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
 
 
 # ── Static frontend (production build) ────────────────────────────────────────

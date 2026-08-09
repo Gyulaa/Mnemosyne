@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Float, LargeBinary, Boolean,
-    ForeignKey, DateTime, event, text,
+    ForeignKey, DateTime, UniqueConstraint, event, text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -133,10 +133,45 @@ class Document(Base):
     description = Column(String, nullable=True)
     created_at = Column(String, nullable=True)      # ISO timestamp
     is_private = Column(Boolean, nullable=False, default=False, server_default="0")
+    # True for documents written inside the app (Markdown body stored as a .md
+    # file in the project's documents dir, so exports/downloads work unchanged).
+    is_text = Column(Boolean, nullable=False, default=False, server_default="0")
     person = relationship("Person", back_populates="documents")
     source = relationship("Source", back_populates="document", uselist=False)
     linked_persons = relationship("DocumentPerson", back_populates="document", cascade="all, delete-orphan")
     document_notes = relationship("DocumentNote", back_populates="document", cascade="all, delete-orphan")
+    body_citations = relationship("DocumentCitation", back_populates="document", cascade="all, delete-orphan")
+    body_images = relationship("DocumentImage", back_populates="document", cascade="all, delete-orphan")
+
+
+class DocumentCitation(Base):
+    """A [n] reference inside a text document's Markdown body.
+
+    Mirrors NoteCitation/DocumentNoteCitation: source_id points at a Source
+    (a document promoted to a source, an event, …), or is NULL for free-text.
+    """
+    __tablename__ = "document_citations"
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True)
+    marker = Column(Integer, nullable=False)
+    detail = Column(String, nullable=True)
+    custom_label = Column(String, nullable=True)
+    document = relationship("Document", back_populates="body_citations")
+    source = relationship("Source")
+
+
+class DocumentImage(Base):
+    """A photo from the library attached to a text document."""
+    __tablename__ = "document_images"
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    image_id = Column(Integer, ForeignKey("images.id", ondelete="CASCADE"), nullable=False, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    caption = Column(String, nullable=True)
+    document = relationship("Document", back_populates="body_images")
+    image = relationship("Image")
+    __table_args__ = (UniqueConstraint("document_id", "image_id", name="uq_document_image"),)
 
 
 class DocumentPerson(Base):
@@ -273,6 +308,63 @@ class EventImage(Base):
     image = relationship("Image")
 
 
+class ChatThread(Base):
+    """One AI assistant conversation.
+
+    Project-scoped (a thread about the Kovács family is meaningless in another
+    project) and **never exported** — `build_export_db` deletes all three chat
+    tables unconditionally, because the export copies the whole database and
+    only then filters it.
+    """
+    __tablename__ = "chat_threads"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=True)
+    provider = Column(String, nullable=True)     # 'anthropic'
+    model = Column(String, nullable=True)        # model id used for this thread
+    created_at = Column(String, nullable=True)   # ISO timestamp
+    updated_at = Column(String, nullable=True)
+    messages = relationship(
+        "ChatMessage", back_populates="thread",
+        cascade="all, delete-orphan", order_by="ChatMessage.id",
+    )
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(Integer, ForeignKey("chat_threads.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String, nullable=False)        # 'user' | 'assistant'
+    content = Column(String, nullable=True)
+    created_at = Column(String, nullable=True)
+    # Usage is recorded per assistant message so the UI can show running cost.
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    cache_read_tokens = Column(Integer, nullable=True)
+    thread = relationship("ChatThread", back_populates="messages")
+    tool_calls = relationship(
+        "ChatToolCall", back_populates="message",
+        cascade="all, delete-orphan", order_by="ChatToolCall.id",
+    )
+
+
+class ChatToolCall(Base):
+    """One tool invocation made while producing an assistant message.
+
+    Persisted so the conversation can be replayed in the UI with its evidence
+    trail intact — in genealogy the tool results are what make an answer
+    checkable rather than merely plausible.
+    """
+    __tablename__ = "chat_tool_calls"
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False, index=True)
+    tool_name = Column(String, nullable=False)
+    arguments_json = Column(String, nullable=True)
+    result_json = Column(String, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    is_error = Column(Boolean, nullable=False, default=False, server_default="0")
+    message = relationship("ChatMessage", back_populates="tool_calls")
+
+
 def configure_engine(engine):
     """Attach WAL-mode pragma listener to a SQLAlchemy engine."""
     @event.listens_for(engine, "connect")
@@ -281,6 +373,22 @@ def configure_engine(engine):
         cur.execute("PRAGMA journal_mode=WAL")
         cur.execute("PRAGMA synchronous=NORMAL")
         cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
+
+def configure_readonly_engine(engine):
+    """Attach a `query_only` pragma listener — the AI assistant's data path.
+
+    `PRAGMA query_only=ON` makes every write on the connection fail with
+    SQLITE_READONLY, which is the structural guarantee behind the read-only
+    tool set. Preferred over a `mode=ro` URI because that can fail outright
+    when the database is in WAL mode and needs recovery.
+    """
+    @event.listens_for(engine, "connect")
+    def _set_pragmas(dbapi_conn, _):
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.execute("PRAGMA query_only=ON")
         cur.close()
 
 
@@ -640,4 +748,78 @@ def init_db_schema(engine):
                 except Exception:
                     pass
             conn.execute(text("UPDATE schema_version SET version = 5"))
+            conn.commit()
+
+        # v5 → v6: in-app text documents — Markdown body, its own citations,
+        # and attached library photos.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 6:
+            try:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN is_text BOOLEAN NOT NULL DEFAULT 0"))
+                conn.commit()
+            except Exception:
+                pass
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS document_citations (
+                    id           INTEGER PRIMARY KEY,
+                    document_id  INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    source_id    INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+                    marker       INTEGER NOT NULL,
+                    detail       TEXT,
+                    custom_label TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS document_images (
+                    id          INTEGER PRIMARY KEY,
+                    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    image_id    INTEGER NOT NULL REFERENCES images(id)    ON DELETE CASCADE,
+                    sort_order  INTEGER NOT NULL DEFAULT 0,
+                    caption     TEXT,
+                    UNIQUE(document_id, image_id)
+                )
+            """))
+            conn.execute(text("UPDATE schema_version SET version = 6"))
+            conn.commit()
+
+        # v6 → v7: AI assistant conversations. Project-scoped and never
+        # exported — see the DELETE block at the top of build_export_db.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 7:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS chat_threads (
+                    id         INTEGER PRIMARY KEY,
+                    title      TEXT,
+                    provider   TEXT,
+                    model      TEXT,
+                    created_at TEXT,
+                    updated_at TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id                INTEGER PRIMARY KEY,
+                    thread_id         INTEGER NOT NULL REFERENCES chat_threads(id) ON DELETE CASCADE,
+                    role              TEXT NOT NULL,
+                    content           TEXT,
+                    created_at        TEXT,
+                    input_tokens      INTEGER,
+                    output_tokens     INTEGER,
+                    cache_read_tokens INTEGER
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS chat_tool_calls (
+                    id             INTEGER PRIMARY KEY,
+                    message_id     INTEGER NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+                    tool_name      TEXT NOT NULL,
+                    arguments_json TEXT,
+                    result_json    TEXT,
+                    duration_ms    INTEGER,
+                    is_error       BOOLEAN NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_messages_thread_id ON chat_messages(thread_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_tool_calls_message_id ON chat_tool_calls(message_id)"))
+            conn.execute(text("UPDATE schema_version SET version = 7"))
             conn.commit()

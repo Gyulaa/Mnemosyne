@@ -87,8 +87,24 @@ def _vacuum_copy(source: Path, dest: Path) -> None:
 def _delete_images(conn: sqlite3.Connection, keep_subquery: str) -> None:
     """Delete images (and dependent rows) that don't match keep_subquery."""
     conn.execute(f"DELETE FROM event_images WHERE image_id NOT IN ({keep_subquery})")
+    try:
+        conn.execute(f"DELETE FROM document_images WHERE image_id NOT IN ({keep_subquery})")
+    except sqlite3.OperationalError:
+        pass   # schema older than v6
     conn.execute(f"DELETE FROM faces WHERE image_id NOT IN ({keep_subquery})")
     conn.execute(f"DELETE FROM images WHERE id NOT IN ({keep_subquery})")
+
+
+def _delete_document_children(conn: sqlite3.Connection, where_clause: str) -> None:
+    """Remove rows hanging off documents matched by where_clause (on document_id).
+
+    Tables added in schema v6, so tolerate their absence in older export inputs.
+    """
+    for table in ("document_citations", "document_images"):
+        try:
+            conn.execute(f"DELETE FROM {table} WHERE {where_clause}")
+        except sqlite3.OperationalError:
+            pass
 
 
 def _delete_persons(conn: sqlite3.Connection, where_clause: str) -> None:
@@ -101,6 +117,9 @@ def _delete_persons(conn: sqlite3.Connection, where_clause: str) -> None:
     conn.execute(f"DELETE FROM citations WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
     conn.execute(f"DELETE FROM event_persons WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
     conn.execute(f"DELETE FROM document_persons WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
+    _delete_document_children(
+        conn, f"document_id IN (SELECT id FROM documents WHERE person_id IN (SELECT id FROM persons WHERE {where_clause}))"
+    )
     conn.execute(f"DELETE FROM documents WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
     conn.execute(f"""
         DELETE FROM relations
@@ -135,6 +154,16 @@ def build_export_db(
     try:
         conn.execute("PRAGMA journal_mode=DELETE")
         conn.execute("PRAGMA foreign_keys=ON")
+
+        # AI assistant conversations never leave the machine. This copy is of the
+        # *whole* database, so the absence of an export toggle is not protection —
+        # only an unconditional delete is. Children first, so the block does not
+        # depend on cascade behaviour.
+        for _chat_table in ("chat_tool_calls", "chat_messages", "chat_threads"):
+            try:
+                conn.execute(f"DELETE FROM {_chat_table}")
+            except sqlite3.OperationalError:
+                pass  # pre-v7 database being exported — nothing to strip
 
         if person_ids is not None and len(person_ids) > 0:
             pids_str = ",".join(str(x) for x in person_ids)
@@ -259,6 +288,7 @@ def build_export_db(
         # ── Documents ─────────────────────────────────────────────────────────
         if not include_documents:
             conn.execute("DELETE FROM document_persons")
+            _delete_document_children(conn, "1=1")
             conn.execute("DELETE FROM documents")
             conn.commit()
 
@@ -266,6 +296,10 @@ def build_export_db(
         # Private images
         try:
             conn.execute("DELETE FROM event_images WHERE image_id IN (SELECT id FROM images WHERE is_private=1)")
+            try:
+                conn.execute("DELETE FROM document_images WHERE image_id IN (SELECT id FROM images WHERE is_private=1)")
+            except sqlite3.OperationalError:
+                pass
             conn.execute("DELETE FROM faces WHERE image_id IN (SELECT id FROM images WHERE is_private=1)")
             conn.execute("DELETE FROM images WHERE is_private=1")
         except Exception:
@@ -294,6 +328,7 @@ def build_export_db(
             conn.execute("DELETE FROM document_note_citations WHERE note_id IN (SELECT id FROM document_notes WHERE document_id IN (SELECT id FROM documents WHERE is_private=1))")
             conn.execute("DELETE FROM document_notes WHERE document_id IN (SELECT id FROM documents WHERE is_private=1)")
             conn.execute("DELETE FROM document_persons WHERE document_id IN (SELECT id FROM documents WHERE is_private=1)")
+            _delete_document_children(conn, "document_id IN (SELECT id FROM documents WHERE is_private=1)")
             conn.execute("DELETE FROM documents WHERE is_private=1")
         except Exception:
             pass
