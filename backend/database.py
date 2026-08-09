@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Float, LargeBinary, Boolean,
-    ForeignKey, DateTime, event, text,
+    ForeignKey, DateTime, UniqueConstraint, event, text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -133,10 +133,45 @@ class Document(Base):
     description = Column(String, nullable=True)
     created_at = Column(String, nullable=True)      # ISO timestamp
     is_private = Column(Boolean, nullable=False, default=False, server_default="0")
+    # True for documents written inside the app (Markdown body stored as a .md
+    # file in the project's documents dir, so exports/downloads work unchanged).
+    is_text = Column(Boolean, nullable=False, default=False, server_default="0")
     person = relationship("Person", back_populates="documents")
     source = relationship("Source", back_populates="document", uselist=False)
     linked_persons = relationship("DocumentPerson", back_populates="document", cascade="all, delete-orphan")
     document_notes = relationship("DocumentNote", back_populates="document", cascade="all, delete-orphan")
+    body_citations = relationship("DocumentCitation", back_populates="document", cascade="all, delete-orphan")
+    body_images = relationship("DocumentImage", back_populates="document", cascade="all, delete-orphan")
+
+
+class DocumentCitation(Base):
+    """A [n] reference inside a text document's Markdown body.
+
+    Mirrors NoteCitation/DocumentNoteCitation: source_id points at a Source
+    (a document promoted to a source, an event, …), or is NULL for free-text.
+    """
+    __tablename__ = "document_citations"
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True)
+    marker = Column(Integer, nullable=False)
+    detail = Column(String, nullable=True)
+    custom_label = Column(String, nullable=True)
+    document = relationship("Document", back_populates="body_citations")
+    source = relationship("Source")
+
+
+class DocumentImage(Base):
+    """A photo from the library attached to a text document."""
+    __tablename__ = "document_images"
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    image_id = Column(Integer, ForeignKey("images.id", ondelete="CASCADE"), nullable=False, index=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    caption = Column(String, nullable=True)
+    document = relationship("Document", back_populates="body_images")
+    image = relationship("Image")
+    __table_args__ = (UniqueConstraint("document_id", "image_id", name="uq_document_image"),)
 
 
 class DocumentPerson(Base):
@@ -640,4 +675,36 @@ def init_db_schema(engine):
                 except Exception:
                     pass
             conn.execute(text("UPDATE schema_version SET version = 5"))
+            conn.commit()
+
+        # v5 → v6: in-app text documents — Markdown body, its own citations,
+        # and attached library photos.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 6:
+            try:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN is_text BOOLEAN NOT NULL DEFAULT 0"))
+                conn.commit()
+            except Exception:
+                pass
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS document_citations (
+                    id           INTEGER PRIMARY KEY,
+                    document_id  INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    source_id    INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+                    marker       INTEGER NOT NULL,
+                    detail       TEXT,
+                    custom_label TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS document_images (
+                    id          INTEGER PRIMARY KEY,
+                    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    image_id    INTEGER NOT NULL REFERENCES images(id)    ON DELETE CASCADE,
+                    sort_order  INTEGER NOT NULL DEFAULT 0,
+                    caption     TEXT,
+                    UNIQUE(document_id, image_id)
+                )
+            """))
+            conn.execute(text("UPDATE schema_version SET version = 6"))
             conn.commit()

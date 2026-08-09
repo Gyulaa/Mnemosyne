@@ -1,10 +1,10 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
 import type { PersonNote, DocumentNote, NoteCitation, Source, PersonEvent, PersonFull, Relation } from '../types'
 import { api } from '../api'
+import { renderMarkdown } from '../markdown'
+import { useFamilyContext, FamilyContextLines } from '../familyContext'
 
 // ── NoteOps — injectable API operations (supports person notes & document notes) ─
 
@@ -16,26 +16,6 @@ export interface NoteOps {
   togglePrivacy?: (id: number, isPrivate: boolean) => Promise<unknown>
 }
 import { useSettings, displayPersonName } from '../SettingsContext'
-
-// ── Markdown renderer ─────────────────────────────────────────────────────────
-
-marked.setOptions({ breaks: true, gfm: true })
-
-function renderMarkdown(content: string, citations: NoteCitation[]): string {
-  // Replace @[Name](#pid-ID) person mentions before markdown parse
-  let processed = content.replace(/@\[([^\]]+)\]\(#pid-(\d+)\)/g, (_, name, id) =>
-    `<a href="#person-ref-${id}" class="note-person-ref">@${name}</a>`
-  )
-  // Replace [n] citation markers with superscript anchors
-  processed = processed.replace(/\[(\d+)\]/g, (_, n) => {
-    const nc = citations.find(c => c.marker === parseInt(n))
-    if (!nc) return `[${n}]`
-    const label = nc.custom_label ?? nc.source_title ?? `Source ${n}`
-    return `<sup><a href="#note-ref-${nc.id}" class="note-ref" title="${label.replace(/"/g, '&quot;')}">[${n}]</a></sup>`
-  })
-  const html = marked.parse(processed) as string
-  return DOMPurify.sanitize(html, { ADD_ATTR: ['title', 'href', 'class'] })
-}
 
 // ── @ mention helper ──────────────────────────────────────────────────────────
 
@@ -112,36 +92,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
 
   // ── Family context lookup from relations ──────────────────────────────────
 
-  const familyMap = useMemo(() => {
-    type FamilyEntry = { spouses: string[]; parents: string[]; children: string[]; siblings: string[] }
-    const map = new Map<number, FamilyEntry>()
-    const personById = new Map(persons.map(p => [p.id, p]))
-    const getName = (id: number) => {
-      const p = personById.get(id)
-      return p ? (displayPersonName(p, nameOrder) || p.name || null) : null
-    }
-    const entry = (id: number): FamilyEntry => {
-      if (!map.has(id)) map.set(id, { spouses: [], parents: [], children: [], siblings: [] })
-      return map.get(id)!
-    }
-    for (const r of relations) {
-      if (r.type === 'spouse') {
-        const nB = getName(r.person_b_id); const nA = getName(r.person_a_id)
-        if (nB) entry(r.person_a_id).spouses.push(nB)
-        if (nA) entry(r.person_b_id).spouses.push(nA)
-      } else if (r.type === 'parent') {
-        // person_a is parent of person_b
-        const nParent = getName(r.person_a_id); const nChild = getName(r.person_b_id)
-        if (nParent) entry(r.person_b_id).parents.push(nParent)
-        if (nChild) entry(r.person_a_id).children.push(nChild)
-      } else if (r.type === 'sibling') {
-        const nA = getName(r.person_a_id); const nB = getName(r.person_b_id)
-        if (nB) entry(r.person_a_id).siblings.push(nB)
-        if (nA) entry(r.person_b_id).siblings.push(nA)
-      }
-    }
-    return map
-  }, [relations, persons, nameOrder])
+  const familyMap = useFamilyContext(persons, relations, nameOrder)
 
   // ── @ mention filtering ───────────────────────────────────────────────────
 
@@ -489,32 +440,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
                   {bio && (
                     <p className="text-xs text-zinc-500 mt-0.5 truncate">{bio}</p>
                   )}
-                  {active && fam && (
-                    <div className="mt-1 space-y-0.5">
-                      {fam.spouses.length > 0 && (
-                        <p className="text-xs text-brand-400 truncate">
-                          ♥ {fam.spouses.join(', ')}
-                        </p>
-                      )}
-                      {fam.parents.length > 0 && (
-                        <p className="text-xs text-zinc-500 truncate">
-                          ↑ {fam.parents.join(', ')}
-                        </p>
-                      )}
-                      {fam.children.length > 0 && (
-                        <p className="text-xs text-zinc-500 truncate">
-                          ↓ {fam.children.length <= 3
-                            ? fam.children.join(', ')
-                            : `${fam.children[0]}, ${fam.children[1]} +${fam.children.length - 2}`}
-                        </p>
-                      )}
-                      {fam.spouses.length === 0 && fam.parents.length === 0 && fam.children.length > 0 && fam.siblings.length > 0 && (
-                        <p className="text-xs text-zinc-600 truncate">
-                          ~ {fam.siblings.slice(0, 2).join(', ')}{fam.siblings.length > 2 ? ` +${fam.siblings.length - 2}` : ''}
-                        </p>
-                      )}
-                    </div>
-                  )}
+                  {active && <FamilyContextLines fam={fam} />}
                 </button>
               )
             })}
