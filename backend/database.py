@@ -311,7 +311,7 @@ class EventImage(Base):
 class ChatThread(Base):
     """One AI assistant conversation.
 
-    Project-scoped (a thread about the Kovács family is meaningless in another
+    Project-scoped (a thread about one family is meaningless in another
     project) and **never exported** — `build_export_db` deletes all three chat
     tables unconditionally, because the export copies the whole database and
     only then filters it.

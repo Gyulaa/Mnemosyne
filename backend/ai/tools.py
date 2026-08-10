@@ -106,8 +106,8 @@ class ToolRegistry:
 def _norm(s: str | None) -> str:
     """Accent- and case-insensitive comparison key.
 
-    SQLite's LIKE is only case-insensitive for ASCII, so "Mária" would not match
-    "mária" in SQL. Same NFD approach as `_make_id` in project_manager.py.
+    SQLite's LIKE is only case-insensitive for ASCII, so an accented word would
+    not match its lower-case form in SQL. Same NFD approach as `_make_id` in project_manager.py.
     """
     if not s:
         return ""
