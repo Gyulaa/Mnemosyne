@@ -144,6 +144,8 @@ export const api = {
     create:   (name: string) => post<Project>(`${BASE}/projects`, { name }),
     activate: (id: string) => post<Project>(`${BASE}/projects/${encodeURIComponent(id)}/activate`),
     rename:   (id: string, name: string) => patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { name }),
+    setDefaultProband: (id: string, personId: number | null) =>
+      patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { default_proband_id: personId }),
     delete:   (id: string) =>
       fetchJson<{ ok: boolean; new_active: import('./types').Project | null }>(`${BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     exportZip: async (

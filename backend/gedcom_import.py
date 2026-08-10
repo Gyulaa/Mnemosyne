@@ -370,8 +370,8 @@ def _name_norms(first: Optional[str], last: Optional[str], raw: Optional[str]) -
     """Build all reasonable normalized variants of a person's name."""
     norms: set[str] = set()
     if first and last:
-        norms.add(_norm(f"{first} {last}"))   # Western: Anna Mária Példa
-        norms.add(_norm(f"{last} {first}"))   # Hungarian: Példa Anna Mária
+        norms.add(_norm(f"{first} {last}"))   # Western order:   Anna Mária Példa
+        norms.add(_norm(f"{last} {first}"))   # Hungarian order: Példa Anna Mária
     elif first:
         norms.add(_norm(first))
     elif last:

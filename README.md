@@ -233,7 +233,7 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 - Ancestor depth and cousin-degree (lateral depth) controls
 - Collapse/expand subtrees; collapsed nodes show a hidden-person count
 - Shift+click any node to refocus the tree on that person
-- **Pin a default proband** with the pin button in the bottom-right controls: the tree opens on that person instead of the first in the list. Stored per project in `localStorage` under `mnemosyne_default_proband_<projectId>` (person ids are per-project database ids). Precedence: in-session selection > pin > first person; a pin naming a deleted person falls back silently
+- **Pin a default proband** with the pin button in the bottom-right controls: the tree opens on that person instead of the first in the list. Stored server-side as `default_proband_id` in `projects/<id>/project.json` — it belongs to the project rather than to one browser profile, travels with `projects/` through an auto-update, and is what the AI assistant reads to know who "I" means. A value left in `localStorage` by an older build is migrated on first load. Precedence: in-session selection > pin > first person; a pin naming a deleted person falls back silently
 - Export as PNG: 1× or 2× DPI, dark or light background, with or without face photos
 
 **Person profile**
@@ -345,17 +345,17 @@ So instead: **tool use over SQL**, plus a cached skeleton of the whole tree in t
 
 ### Fat tools, and why lines of descent are walked server-side
 
-The tools push computation *into* the tool rather than leaving it to the model. `get_ancestors` is the clearest case and exists because of a real failure: given names repeat constantly in a family tree, often between a father and his son. A model tracing a line by chaining `get_person` calls collapsed the two and silently dropped a generation — a confident, wrong, and entirely plausible-looking answer.
+The tools push computation *into* the tool rather than leaving it to the model. `get_ancestors` is the clearest case and exists because of a real failure mode: given names repeat constantly in a family tree, often between a father and his son. A model tracing a line by chaining `get_person` calls collapses two same-named people into one and silently drops a generation — a confident, wrong, and entirely plausible-looking answer.
 
 So the walk happens in `_t_get_ancestors`, and the result carries ids and generation numbers the model cannot conflate. The primer additionally lists every duplicated name with its ids, and the system prompt forbids identifying anyone by name alone.
 
-**Picking the next person up a paternal line uses the surname before `sex`.** `sex` is a single field that is easy to mis-enter — and an inverted value is a common defect in a hand-built tree, whereas a surname carrying from father to child is corroborated by every other record. When the two signals disagree the tool follows the surname and returns a note saying the `sex` value looks wrong, so a data defect surfaces as a data defect instead of a truncated ancestry. A lone parent is followed only when their sex is *unrecorded*; following one recorded as the opposite sex is how a paternal line silently becomes a maternal one.
+**Picking the next person up a paternal line uses the surname before `sex`.** `sex` is a single field that is easy to mis-enter, and an inverted value is a common defect in a hand-built tree, whereas a surname carrying from father to child is corroborated by every other record. When the two signals disagree the tool follows the surname and returns a note saying the `sex` value looks wrong, so a data defect surfaces as a data defect instead of a truncated ancestry. A lone parent is followed only when their sex is *unrecorded*; following one recorded as the opposite sex is how a paternal line silently becomes a maternal one.
 
 ### Both directions, and estimates from the data
 
 `get_ancestors` has a counterpart, `get_descendants` — without it the assistant reported a dead end for a person who had no recorded parents but 49 descendants across six generations, because the only way down the tree was repeated `get_person` calls.
 
-`estimate_life_period` answers "roughly when did this undated person live". It measures **this family's** median parent-child birth gap rather than assuming a textbook 25–30 years; a branch can run to a materially different rhythm, and the generic assumption put an ancestor's birth a century too late.
+`estimate_life_period` answers "roughly when did this undated person live". It measures **the family's own** median parent-child birth gap rather than assuming a textbook 25–30 years — a branch can run to a materially longer rhythm, and the generic figure multiplied by a few generations can misplace a birth by a century. The sample is taken from the subject's own blood line where at least five dated pairs exist, and falls back to the project as a whole below that, reporting which was used.
 
 Its anchors are found by two **one-directional** walks — pure ancestors, pure descendants. A single walk that may travel both ways drifts sideways through marriages (down to a shared child, back up to the other parent) and starts offering in-laws from unrelated branches as evidence: generationally correct, evidentially worthless.
 
@@ -374,6 +374,10 @@ For the same reason `get_person(include=['events'])` returns each event's attend
 Every list-returning tool goes through `_capped()`, which returns `count`, the true `total`, and a `truncated` flag with an explicit warning. This exists because a silent cap produced a confidently wrong answer: asked how many photos contained two people, the model called `list_photos_of` for each, got 50 of 340 and 50 of 67, intersected the two truncated lists and reported 15. The real answer is 45.
 
 A truncated list is indistinguishable from a complete one unless the tool says so — the same failure shape as an empty result reading as an absent fact. `find_shared_photos` then removes the need for that intersection altogether by computing it server-side.
+
+### Who the assistant thinks you are
+
+Nothing else in the prompt identifies the user, so a question like "who is my oldest ancestor" would otherwise be unanswerable. `build_asker_note()` resolves it from the project's stored `default_proband_id` — the same person the tree opens on — and states the id in the system prompt, at request time. It is never baked into prompt text, and with no proband set the model is told to ask rather than guess. The prompt also tells it to say who it took the asker to be, so a wrong pin surfaces immediately.
 
 ### Clickable references
 

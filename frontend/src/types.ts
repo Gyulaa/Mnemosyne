@@ -127,6 +127,8 @@ export interface Project {
   name: string
   created: string
   is_active: boolean
+  /** Person the tree opens on, and who the assistant treats as "I". */
+  default_proband_id?: number | null
 }
 
 export interface FsItem {

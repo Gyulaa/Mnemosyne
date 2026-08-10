@@ -237,6 +237,39 @@ class ProjectManager:
 
     # ── properties used by main.py and scanner ─────────────────────────────────
 
+    def set_default_proband(self, project_id: str, person_id: int | None) -> dict:
+        """Persist the tree's starting person in project.json.
+
+        Kept server-side rather than in localStorage: it is per project, not per
+        browser profile, it travels with `projects/` through an auto-update, and
+        the AI assistant needs it to know who "I" refers to in a question.
+        """
+        project_dir = PROJECTS_DIR / project_id
+        pj = project_dir / "project.json"
+        if not pj.exists():
+            raise FileNotFoundError(f"Project not found: {project_id}")
+        info = _read_project_json(pj)
+        if person_id is None:
+            info.pop("default_proband_id", None)
+        else:
+            info["default_proband_id"] = int(person_id)
+        pj.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+        info["is_active"] = project_id == self._active_id
+        return info
+
+    def get_default_proband(self, project_id: str | None = None) -> int | None:
+        pid = project_id or self._active_id
+        if not pid:
+            return None
+        pj = PROJECTS_DIR / pid / "project.json"
+        if not pj.exists():
+            return None
+        try:
+            value = _read_project_json(pj).get("default_proband_id")
+            return int(value) if value is not None else None
+        except Exception:
+            return None
+
     @property
     def session_factory(self):
         return self._SessionLocal

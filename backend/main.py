@@ -111,12 +111,23 @@ def activate_project(project_id: str):
 
 
 @app.patch("/api/projects/{project_id}")
-def rename_project(project_id: str, body: dict):
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise HTTPException(400, "Project name cannot be empty")
+def update_project(project_id: str, body: dict):
+    """Rename, and/or set the default proband. Both fields are optional."""
     try:
-        return project_manager.rename_project(project_id, name)
+        result = None
+        if "default_proband_id" in body:
+            value = body["default_proband_id"]
+            result = project_manager.set_default_proband(
+                project_id, None if value is None else int(value)
+            )
+        if "name" in body:
+            name = (body.get("name") or "").strip()
+            if not name:
+                raise HTTPException(400, "Project name cannot be empty")
+            result = project_manager.rename_project(project_id, name)
+        if result is None:
+            raise HTTPException(400, "Nothing to update")
+        return result
     except FileNotFoundError:
         raise HTTPException(404, "Project not found")
 
@@ -3534,6 +3545,9 @@ async def ai_stream(thread_id: int, body: ChatSendRequest):
                 docs_dir=docs_dir,
                 lang=body.lang,
                 name_order=body.name_order,
+                # Identity comes from the project's stored starting person, read
+                # per request — never from anything baked into the prompt.
+                proband_id=project_manager.get_default_proband(),
             ):
                 yield frame
         finally:

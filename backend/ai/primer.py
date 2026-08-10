@@ -3,8 +3,9 @@
 Why a primer at all. The genealogy data is small but *relational* — the value is
 in the edges, dates and counts. Putting the whole skeleton in the prompt means
 the model never has to search for who is who; it spends tool calls on detail
-instead of on orientation. For a tree of a few hundred people the skeleton is a few thousand tokens, which sits
-behind one `cache_control` breakpoint and is read back at ~0.1x cost.
+instead of on orientation. For a tree of a few hundred people the skeleton is a
+few thousand tokens, which sits behind one `cache_control` breakpoint and is
+read back at ~0.1x cost.
 
 **The serialisation must be byte-stable.** No timestamps, no dict iteration
 order, no `datetime.now()` — everything sorted by id. Get that right and cache
@@ -22,8 +23,8 @@ from sqlalchemy.orm import Session
 from ..database import Person as DBPerson, Relation as DBRelation
 
 NAME_ORDER_LABEL = {
-    "hu": "surname first (e.g. \"Kovács Mária\")",
-    "en": "given name first (e.g. \"Mária Kovács\")",
+    "hu": "surname first (e.g. \"Példa Anna\")",
+    "en": "given name first (e.g. \"Anna Példa\")",
 }
 
 LANG_LABEL = {"hu": "Hungarian", "en": "English"}
@@ -124,7 +125,7 @@ Every time you name a person from the tree, write them as a mention:
 
     @[Displayed Name](#pid-ID)
 
-for example `@[Kovács Mária](#pid-42)`. The app renders these as links straight \
+for example `@[Példa Anna](#pid-42)`. The app renders these as links straight \
 to the person's profile, which is how the user checks your work. A plain-text \
 name is a dead end for them, so always use the mention form, including inside \
 lists and tables.
@@ -210,12 +211,50 @@ your reason.
 """
 
 
+def build_asker_note(db: Session, proband_id: int | None) -> str:
+    """Tell the model who "I" is, from the tree's configured starting person.
+
+    Nothing else in the prompt identifies the user, so without this a question
+    like "who is my oldest ancestor" is unanswerable and the model either asks
+    or guesses. The identity is read from the project's stored proband at
+    request time — never baked into the prompt text.
+    """
+    if proband_id is None:
+        return (
+            "\n## Who is asking\n"
+            "Unknown — no starting person is set for this tree. If a question depends "
+            "on who the user is (\"my father\", \"my oldest ancestor\"), ask them which "
+            "person in the tree is them, and mention that they can set it on the "
+            "genealogy tab by pinning a person as the tree's starting point.\n"
+        )
+    person = db.get(DBPerson, int(proband_id))
+    if person is None:
+        return (
+            "\n## Who is asking\n"
+            "The tree's configured starting person no longer exists. Ask the user "
+            "which person in the tree is them.\n"
+        )
+    parts = " ".join(x for x in (
+        (person.last_name or "").strip(), (person.first_name or "").strip(),
+        (person.middle_name or "").strip(),
+    ) if x) or (person.name or "?")
+    born = f", born {person.birth_year}" if person.birth_year else ""
+    return (
+        "\n## Who is asking\n"
+        f"The user is the tree's starting person: id {person.id}, {parts}{born}. "
+        "Read \"I\", \"my father\", \"my ancestors\" and similar as relative to that id. "
+        "Say who you took them to be the first time it matters in a conversation, so "
+        "they can correct you if the tree opens on someone else.\n"
+    )
+
+
 def build_system_blocks(
     db: Session,
     *,
     lang: str = "en",
     name_order: str = "en",
     allow_private: bool = False,
+    proband_id: int | None = None,
 ) -> list[dict[str, Any]]:
     """System prompt as content blocks, with the cache breakpoint on the primer.
 
@@ -236,7 +275,7 @@ def build_system_blocks(
     vocabulary = build_vocabulary(db)
 
     return [
-        {"type": "text", "text": instructions + privacy_note},
+        {"type": "text", "text": instructions + privacy_note + build_asker_note(db, proband_id)},
         {
             "type": "text",
             "text": f"{vocabulary}\n\n{primer}",

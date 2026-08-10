@@ -1,16 +1,12 @@
 import { useState, useRef, useMemo, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { PersonFull, Relation } from '../types'
 import { api } from '../api'
 import TreeExportModal from './TreeExportModal'
 import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const NW = 148
-const NH = 82
-const HG = 30
-const VG = 96
-const PAD = 72
+import { NW, NH, HG, VG, PAD } from '../treeGeometry'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface LayoutNode {
@@ -885,6 +881,9 @@ function PersonCard({ person, selected, isProband }: {
   const span = person.birth_year
     ? person.death_year ? `${person.birth_year}–${person.death_year}` : `* ${person.birth_year}`
     : null
+  const fullName = displayPersonName(person, nameOrder)
+  const meta = [span, person.face_count > 0 ? t('treeView.photos', { n: person.face_count }) : null]
+    .filter(Boolean).join(' · ')
 
   return (
     <div className={[
@@ -905,16 +904,23 @@ function PersonCard({ person, selected, isProband }: {
           {displayInitials(person)}
         </div>
       )}
+      {/* Four text lines fit (see treeGeometry.ts). The name gets two of them,
+          clipped rather than allowed to push the rest out of the card; the full
+          name stays available in the tooltip. Life span and photo count share
+          the last line — separately they cost a row each and overflowed. */}
       <div className="min-w-0 flex-1 py-1.5">
-        <div className={`text-xs font-semibold leading-snug break-words ${selected ? 'text-white' : 'text-zinc-100'}`}>
-          {displayPersonName(person, nameOrder)}
+        <div
+          title={fullName}
+          className={`text-xs font-semibold leading-snug break-words line-clamp-2 ${selected ? 'text-white' : 'text-zinc-100'}`}
+        >
+          {fullName}
         </div>
         {person.nickname && (
-          <div className={`text-xs leading-snug italic ${selected ? 'text-brand-200/80' : 'text-zinc-400'}`}>„{person.nickname}"</div>
+          <div className={`text-xs leading-snug italic truncate ${selected ? 'text-brand-200/80' : 'text-zinc-400'}`}
+               title={person.nickname}>„{person.nickname}"</div>
         )}
-        {span && <div className={`text-xs leading-snug ${selected ? 'text-brand-200' : 'text-zinc-500'}`}>{span}</div>}
-        {person.face_count > 0 && (
-          <div className={`text-xs leading-snug ${selected ? 'text-brand-300' : 'text-zinc-600'}`}>{t('treeView.photos', { n: person.face_count })}</div>
+        {meta && (
+          <div className={`text-xs leading-snug truncate ${selected ? 'text-brand-200' : 'text-zinc-500'}`}>{meta}</div>
         )}
       </div>
     </div>
@@ -966,11 +972,25 @@ export default function TreeView({
   const pinKey = activeProject ? `mnemosyne_default_proband_${activeProject.id}` : null
   const [pinnedProbandId, setPinnedProbandId] = useState<number | null>(null)
 
+  // The pin lives in project.json, not localStorage: it belongs to the project
+  // rather than to one browser profile, it survives an auto-update with the
+  // rest of `projects/`, and the AI assistant reads it server-side to know who
+  // "I" refers to. Any value left in localStorage is migrated once, then dropped.
   useEffect(() => {
-    if (!pinKey) return
-    const raw = localStorage.getItem(pinKey)
-    setPinnedProbandId(raw ? Number(raw) : null)
-  }, [pinKey])
+    if (!activeProject || !pinKey) return
+    const stored = activeProject.default_proband_id ?? null
+    const legacy = localStorage.getItem(pinKey)
+    if (stored == null && legacy) {
+      const id = Number(legacy)
+      setPinnedProbandId(id)
+      api.project.setDefaultProband(activeProject.id, id)
+        .then(() => localStorage.removeItem(pinKey))
+        .catch(() => { /* keep the local value so the next load retries */ })
+      return
+    }
+    if (legacy) localStorage.removeItem(pinKey)
+    setPinnedProbandId(stored)
+  }, [activeProject?.id, activeProject?.default_proband_id, pinKey])
 
   // Auto-set proband when selection changes
   useEffect(() => {
@@ -1042,14 +1062,17 @@ export default function TreeView({
 
   const probandIsPinned = effectiveProbandId != null && effectiveProbandId === pinnedProbandId
 
-  function toggleProbandPin() {
-    if (!pinKey || effectiveProbandId == null) return
-    if (probandIsPinned) {
-      localStorage.removeItem(pinKey)
-      setPinnedProbandId(null)
-    } else {
-      localStorage.setItem(pinKey, String(effectiveProbandId))
-      setPinnedProbandId(effectiveProbandId)
+  const qc = useQueryClient()
+
+  async function toggleProbandPin() {
+    if (!activeProject || effectiveProbandId == null) return
+    const next = probandIsPinned ? null : effectiveProbandId
+    setPinnedProbandId(next)              // optimistic — the pin should feel instant
+    try {
+      await api.project.setDefaultProband(activeProject.id, next)
+      qc.invalidateQueries({ queryKey: ['projects'] })
+    } catch {
+      setPinnedProbandId(probandIsPinned ? effectiveProbandId : null)   // roll back
     }
   }
 
