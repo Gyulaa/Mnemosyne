@@ -50,6 +50,7 @@ function AppInner() {
   const [exportCancel, setExportCancel] = useState<(() => void) | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
+  const [personPanelOpen, setPersonPanelOpen] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<PersonDocument | null>(null)
   const [aboutOpen,    setAboutOpen]    = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -353,7 +354,7 @@ function AppInner() {
             : 'overflow-auto',
         ].join(' ')}>
           {tab === 'genealogy' ? (
-            <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} onNavToEvent={navToEvent} onNavToDocument={navToDocument} />
+            <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} onNavToEvent={navToEvent} onNavToDocument={navToDocument} onPersonPanelOpenChange={setPersonPanelOpen} />
           ) : tab === 'events' ? (
             <EventsTab navTarget={eventNavTarget} onNavConsumed={() => setEventNavTarget(null)} onNavToCluster={navToCluster} onExportStart={onExportStart} onExportEnd={onExportEnd} />
           ) : tab === 'documents' ? (
@@ -388,14 +389,20 @@ function AppInner() {
           the tree view's control bar, which sits at bottom-3 with 28px buttons
           and wraps to a second row in a narrow window, reaching ~74px. The
           right inset matches it so the widget sits in an even corner rather
-          than hugging one edge. */}
+          than hugging one edge.
+
+          On the genealogy tab, the person panel is 440px wide and docks to
+          the same right edge, so while it's open the launcher shifts left by
+          that width — keeping the same 80px inset from the panel's edge that
+          it normally keeps from the viewport edge. */}
       {aiEnabled && !assistantOpen && (
         <button
           onClick={() => setAssistantOpen(true)}
           title={`${t('chat.title')} (Ctrl+J)`}
           aria-label={t('chat.title')}
-          className="ai-fab fixed bottom-20 right-20 z-40 rounded-2xl flex items-center justify-center text-white"
+          className="ai-fab fixed bottom-20 z-40 rounded-2xl flex items-center justify-center text-white transition-[right] duration-200 ease-out"
           style={{
+            right: tab === 'genealogy' && personPanelOpen ? '520px' : '80px',
             width: '52px',
             height: '52px',
             background: 'linear-gradient(135deg, #9333ea 0%, #7e22ce 100%)',

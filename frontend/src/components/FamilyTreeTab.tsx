@@ -423,6 +423,7 @@ export default function FamilyTreeTab({
   onNavConsumed,
   onNavToEvent,
   onNavToDocument,
+  onPersonPanelOpenChange,
 }: {
   onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
@@ -430,6 +431,7 @@ export default function FamilyTreeTab({
   onNavConsumed?: () => void
   onNavToEvent?: (eventId: number) => void
   onNavToDocument?: (docId: number, editMode?: boolean) => void
+  onPersonPanelOpenChange?: (open: boolean) => void
 }) {
   const { nameOrder } = useSettings()
   const t = useT()
@@ -498,6 +500,12 @@ export default function FamilyTreeTab({
     .filter(p => (p.name ?? '').toLowerCase().includes(search.toLowerCase()))
 
   const selected = persons.find(p => p.id === selectedId) ?? null
+
+  // Lets App.tsx know when the person panel covers the right edge of the
+  // tree, so it can slide the floating assistant launcher out of the way.
+  useEffect(() => {
+    onPersonPanelOpenChange?.(activeView === 'tree' && !!selectedId && !!selected)
+  }, [activeView, selectedId, selected, onPersonPanelOpenChange])
 
   function renameGroup(key: string, name: string) {
     const next = { ...groupNames, [key]: name }
