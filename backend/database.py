@@ -257,6 +257,7 @@ class Source(Base):
     event_id = Column(Integer, ForeignKey("events.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(String, nullable=True)
     document = relationship("Document", back_populates="source")
+    event = relationship("Event", back_populates="source")
     citations = relationship("Citation", back_populates="source", cascade="all, delete-orphan")
 
 
@@ -286,6 +287,7 @@ class Event(Base):
     is_private = Column(Boolean, nullable=False, default=False, server_default="0")
     event_persons = relationship("EventPerson", back_populates="event", cascade="all, delete-orphan")
     event_images = relationship("EventImage", back_populates="event", cascade="all, delete-orphan")
+    source = relationship("Source", back_populates="event", uselist=False)
 
 
 class EventPerson(Base):

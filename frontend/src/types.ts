@@ -479,6 +479,7 @@ export interface PersonEvent {
   created_at: string | null
   updated_at: string | null
   is_private: boolean
+  source_id: number | null
   persons: EventPerson[]
   images: EventImage[]
 }

@@ -271,6 +271,7 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 - Fields: title, type, author, year, publisher, location, URL, description
 - Linkable to a document or event
 - Only sources with at least one citation (or linked to a document/event) appear in the citation picker
+- An event's "use as source" control in `EventDetailView` is a real on/off toggle, not a one-shot button: it reflects `PersonEvent.source_id` (null when the event has no linked `Source`) and calls `POST /api/events/{id}/promote-to-source` to turn on — idempotent like the document version, reusing the existing `Source` via `Event.source` if one is already linked — or `DELETE /api/sources/{id}` to turn off, which cascades to any citations already made from it
 
 **GEDCOM interoperability**
 - **Import**: `.ged` file → persons (including occupation, education, religion, nationality, cause of death), relations, events, notes, sources, documents; preview wizard for merge/create/skip decisions per person

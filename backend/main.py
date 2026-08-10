@@ -2757,6 +2757,27 @@ def promote_document_to_source(doc_id: int, body: PromoteToSourceRequest, db: Se
     return _source_dict(s)
 
 
+@app.post("/api/events/{event_id}/promote-to-source", status_code=201)
+def promote_event_to_source(event_id: int, body: PromoteToSourceRequest, db: Session = Depends(get_db)):
+    ev = db.get(DBEvent, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    if ev.source:
+        return _source_dict(ev.source)
+    s = DBSource(
+        title=body.title or ev.title or ev.event_type,
+        source_type=body.source_type or "event",
+        year=ev.year,
+        description=" · ".join(filter(None, [ev.date, ev.place, ev.description])) or None,
+        event_id=event_id,
+        created_at=datetime.now().isoformat(),
+    )
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return _source_dict(s)
+
+
 # ── Citations ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/persons/{person_id}/citations")
@@ -3165,6 +3186,7 @@ def _event_dict(ev: DBEvent) -> dict:
         "created_at": ev.created_at,
         "updated_at": ev.updated_at,
         "is_private": bool(ev.is_private),
+        "source_id": ev.source.id if ev.source else None,
         "persons": [_event_person_dict(ep, face_map) for ep in ev.event_persons],
         "images": [_event_image_dict(ei) for ei in ev.event_images],
     }

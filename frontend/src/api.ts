@@ -508,6 +508,8 @@ export const api = {
       if (!res.ok) throw new Error(await res.text())
       return res.blob()
     },
+    promoteToSource: (eventId: number, title?: string, sourceType?: string) =>
+      post<Source>(`${BASE}/events/${eventId}/promote-to-source`, { title, source_type: sourceType }),
   },
   faceThumbnailUrl: (id: number, size = 160) =>
     `${BASE}/faces/${id}/thumbnail?size=${size}`,

@@ -73,8 +73,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
   const [editingDesc, setEditingDesc] = useState(false)
   const [descDraft, setDescDraft] = useState('')
   const [savingDesc, setSavingDesc] = useState(false)
-  const [creatingSource, setCreatingSource] = useState(false)
-  const [sourceCreated, setSourceCreated] = useState(false)
+  const [togglingSource, setTogglingSource] = useState(false)
   const descRef = useRef<HTMLTextAreaElement>(null)
 
   const typeLabel = t(EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.key ?? ev.event_type)
@@ -124,21 +123,20 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
     }
   }
 
-  async function handleCreateSource() {
-    if (creatingSource || sourceCreated) return
-    setCreatingSource(true)
+  async function handleToggleSource() {
+    if (togglingSource) return
+    setTogglingSource(true)
     try {
-      await api.sources.create({
-        title: ev.title ?? typeLabel,
-        source_type: 'event',
-        year: ev.year ?? undefined,
-        description: [dateStr, ev.place, ev.description].filter(Boolean).join(' · ') || undefined,
-        event_id: ev.id,
-      })
+      if (ev.source_id) {
+        await api.sources.delete(ev.source_id)
+        onEventUpdated({ ...ev, source_id: null })
+      } else {
+        const source = await api.events.promoteToSource(ev.id, ev.title ?? typeLabel, 'event')
+        onEventUpdated({ ...ev, source_id: source.id })
+      }
       qc.invalidateQueries({ queryKey: ['sources'] })
-      setSourceCreated(true)
     } finally {
-      setCreatingSource(false)
+      setTogglingSource(false)
     }
   }
 
@@ -216,15 +214,21 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
-                onClick={handleCreateSource}
-                disabled={creatingSource || sourceCreated}
-                className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-                  sourceCreated
-                    ? 'text-green-400 bg-green-900/30 cursor-default'
-                    : 'text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50'
+                onClick={handleToggleSource}
+                disabled={togglingSource}
+                title={ev.source_id ? t('events.sourceOnTip') : t('events.sourceOffTip')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors disabled:opacity-50 ${
+                  ev.source_id
+                    ? 'text-green-400 bg-green-900/30 hover:bg-green-900/50'
+                    : 'text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700'
                 }`}
               >
-                {sourceCreated ? t('events.sourceCreated') : creatingSource ? '…' : t('events.useAsSource')}
+                {ev.source_id && (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+                {togglingSource ? '…' : ev.source_id ? t('events.usedAsSource') : t('events.useAsSource')}
               </button>
               <button
                 onClick={async () => {
