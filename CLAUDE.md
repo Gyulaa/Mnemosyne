@@ -18,6 +18,8 @@ Types in use: `feat`, `fix`, `style`, `refactor`, `docs`, `chore`. Add a body on
 
 Commit only when asked. Never push, force-push, amend, or skip hooks unless asked.
 
+**Solo project — work on `main`.** Only one person develops this right now, so commit straight to `main`; no feature branches unless asked for one.
+
 ## Where things are documented
 
 `README.md` is the reference — read the relevant section before changing that area rather than re-deriving it.
