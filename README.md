@@ -2,7 +2,7 @@
 
 A private app that runs on your computer to organize family photos and build a family tree — complete with face recognition, documents, notes, and a fully interactive tree view.
 
-No account, no cloud, no subscription. Everything stays on your machine.
+No account, no cloud, no subscription. Everything stays on your machine — unless you switch on the optional AI assistant, which is off until you add your own API key.
 
 ---
 
@@ -14,7 +14,16 @@ Mnemosyne (pronounced *"m·neh-MO-zin"* — the *m* is lightly voiced, the stres
 
 You point it at a folder of photos, and it automatically finds and groups faces. You then name the people it found, connect them to your family tree, attach documents (birth certificates, letters, old photos), write notes, and build a complete family history.
 
-**Nothing is ever uploaded anywhere.** The app works entirely offline.
+**Out of the box, nothing is uploaded anywhere.** Your photos, names, dates and notes stay on your computer, and the app works entirely offline. The face recognition runs locally — nothing is sent away to identify anyone.
+
+Two features can reach the internet, and both are yours to control:
+
+| Feature | What leaves your computer | Default |
+|---|---|---|
+| **Update check** | A request to GitHub asking whether a newer version exists. No data about you or your family. | On — switch it off in Settings |
+| **AI assistant** | Your question, plus the family data needed to answer it, goes to the AI provider you choose (Anthropic or OpenAI). | **Off** — it does nothing until you add your own API key |
+
+The assistant is the only feature that sends your family data anywhere. It is opt-in, it can be switched off entirely in Settings, and anything you marked **private** stays hidden from it unless you explicitly allow it. Your API key is stored on your own computer and never leaves it.
 
 ---
 
@@ -127,7 +136,7 @@ Text documents behave like any other document everywhere else: they can be linke
 - Interactive force-directed graph showing social connections within your family
 
 ### Privacy
-Any item can be marked **private**. Private items are **never exported** — not in ZIP archives, not in GEDCOM files — regardless of all other export settings.
+Any item can be marked **private**. Private items are **never exported** — not in ZIP archives, not in GEDCOM files — regardless of all other export settings. The AI assistant cannot see them either, unless you explicitly allow it in its settings.
 
 | What | How to mark |
 |---|---|
@@ -162,12 +171,17 @@ Four relatives can easily share a name. Wherever you pick a person from a list �
 - Export the chain as a PNG image
 
 ### AI assistant (optional)
-- Press **Ctrl+J** (or the sparkle icon in the header) to open the assistant beside whatever tab you are on — ask questions about your tree in plain language and the tree stays visible while it answers
+
+This is the one feature that sends your family data off your computer, so it is off until you decide otherwise.
+
+- **Off until you turn it on.** It needs an API key — either [Anthropic](https://console.anthropic.com) or [OpenAI](https://platform.openai.com/api-keys) — stored on your own computer and never sent anywhere except to that provider. You can save both keys and switch between them
+- **Switch it off any time** in Settings → *Enable assistant*. The floating button and the Ctrl+J shortcut disappear with it, and nothing is sent anywhere
+- Click the sparkle button in the bottom-right corner (or press **Ctrl+J**) to open it beside whatever tab you are on — ask about your tree in plain language and the tree stays visible while it answers
 - It can **only read** your data. It cannot create, edit or delete anything
-- Every person it mentions becomes a link straight to their profile, so you can check any claim it makes
+- Every person and photo it mentions becomes a link — to the profile, or to the gallery filtered to exactly those pictures — so you can check any claim it makes
 - You see each lookup it performs, and can expand any of them to read the raw result
-- **Off until you turn it on.** It needs an API key — either [Anthropic](https://console.anthropic.com) or [OpenAI](https://platform.openai.com/api-keys) — stored on your own computer. You can save both and switch between them at any time
 - Anything you marked **private** stays hidden from it unless you explicitly allow it
+- It knows who *you* are from the person the family tree opens on, so "my grandfather" means yours. Pin that person with the pin button on the genealogy tab
 - Conversations are saved with the project and are **never included in any export**
 
 ---
@@ -191,7 +205,9 @@ If you prefer to check for updates manually, go to **Settings** (gear icon, top 
 ## Your data
 
 - **Your source photos are never modified.** Mnemosyne only reads them; it never moves, renames, or changes the original files.
-- **Nothing leaves your computer.** The app works fully offline. The only network connection it makes is to check for updates on GitHub (and that can be turned off).
+- **By default, nothing leaves your computer.** The app works fully offline. Two features can reach the internet, both under your control:
+  - the **update check** against GitHub (turn it off in Settings) — it sends no data about you;
+  - the **AI assistant**, which is off until you add an API key. While it is on, your questions and the family data needed to answer them go to the provider you picked. Switch it off in Settings and the widget, the shortcut and the network traffic all go with it.
 - All your data (family tree, notes, documents) is stored in a folder called `projects/` next to the app. You can back it up by simply copying that folder.
 
 ---
@@ -750,10 +766,16 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 - The server binds exclusively to `127.0.0.1` — not reachable from the network
 - CORS restricted to `http://localhost` and `http://127.0.0.1`
 - ZIP imports are path-validated (Zip Slip protection)
-- **Outbound connections.** With default settings the app sends nothing anywhere; the only outbound request is the optional GitHub update check. Two features change that, both opt-in and both off until the user acts:
-  - the update check itself (toggleable in settings)
-  - the **AI assistant** — once an API key is stored, questions and the data needed to answer them go to the configured provider. See *AI assistant* below
-- The API key lives in `config.json`. It is write-only over HTTP: `GET /api/ai/settings` returns it masked (`sk-ant-api…9f2a`), and no other endpoint returns it at all
+- **Outbound connections — exactly two, and neither sends family data by default:**
+
+  | | Sends | Default | Off switch |
+  |---|---|---|---|
+  | GitHub update check | Version query only, nothing about the user | **On** | Settings → auto-check |
+  | AI assistant | Questions plus the tree data needed to answer them | **Off** — inert without an API key | Settings → *Enable assistant* (`ai.enabled` in `config.json`) |
+
+  The assistant is the only path by which project data leaves the machine. Disabling it hides the widget and the Ctrl+J shortcut and stops the traffic; it does not discard the stored key or model.
+- The API key lives in `config.json`, per provider. It is write-only over HTTP: `GET /api/ai/settings` returns it masked (`sk-ant-api…9f2a`), and no other endpoint returns it at all
+- Private records are withheld from the assistant unless `allow_private` is set — a third enforcement layer alongside ZIP and GEDCOM export (see *Privacy*)
 
 ---
 
@@ -775,6 +797,7 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 - **New chat table** → add an unconditional `DELETE FROM <table>` to the chat block at the top of `build_export_db` in `export_utils.py`, children first. The export copies the whole database and then filters, so a table you forget here is silently exported — this is the one mistake in this area with a real privacy cost
 - **New model** → usually *nothing to do*: the list is fetched from the provider and new ids appear on the next refresh. Add an entry to `backend/ai/models.json` only to give it a friendly label, a note or a price (omit `pricing` rather than guessing — a missing block just hides the cost estimate, a wrong one misinforms). Never add a model-id branch in code; if you want one, the missing thing belongs in `caps`
 - **New non-chat model type appearing in the picker** → add a substring to `_NON_CHAT_MARKERS` in `ai/config.py`. Keep it conservative — over-filtering silently hides usable models, which is the worse failure
+- **Change to family tree node size or card content** → edit `frontend/src/treeGeometry.ts`, never a component. `TreeView` computes node positions from those constants and `TreeExportModal` draws cards at those positions; a second copy makes the exported PNG place correctly-sized cards wrongly, or wrongly-sized cards correctly. Adding a line to the card also means re-checking the four-line budget documented there
 - **New provider** → add an entry to `providers` in `models.json`, and either reuse `OpenAICompatProvider` with a `base_url` (correct for anything OpenAI-compatible) or add an adapter implementing `LLMProvider`. Wire it into `build_provider` and `discover_models` in `ai/provider.py`. Nothing above the protocol should need to change; if it does, the abstraction has sprung a leak
 - **New bundled AI data file** → spec `datas` **and** read it via `MNEMOSYNE_BUNDLE_DIR` in `ai/config.py`, never `MNEMOSYNE_APP_DIR`
 - **New `is_private` on a table** → (1) add `ALTER TABLE … ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0` to the v4→v5 migration block in `database.py`; (2) include `is_private` in the relevant `_xxx_dict` serialiser in `main.py`; (3) add the privacy-filter DELETE block for that table inside `build_export_db` in `export_utils.py`; (4) add `WHERE COALESCE(is_private,0)=0` to the relevant query in `build_gedcom_zip` in `gedcom_export.py` if applicable; (5) add `togglePrivacy` call to `api.ts`; (6) update the TypeScript interface in `types.ts`; (7) add the padlock button to the relevant component
