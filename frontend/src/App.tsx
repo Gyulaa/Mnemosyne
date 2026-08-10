@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import ScanTab from './components/ScanTab'
 import ClustersTab from './components/ClustersTab'
 import ConnectionsTab from './components/ConnectionsTab'
@@ -11,7 +11,9 @@ import ProjectSwitcher from './components/ProjectSwitcher'
 import SearchPalette from './components/SearchPalette'
 import DocumentViewer from './components/DocumentViewer'
 import UpdateBanner from './components/UpdateBanner'
-import type { PersonDocument } from './types'
+import AssistantPanel from './components/AssistantPanel'
+import { api } from './api'
+import type { PersonDocument, AiSettings } from './types'
 import { SettingsProvider, useSettings, useT, displayPersonName } from './SettingsContext'
 
 // Author credit in the About popover. Stored structured rather than as one
@@ -47,6 +49,7 @@ function AppInner() {
   const [exportError, setExportError] = useState<string | null>(null)
   const [exportCancel, setExportCancel] = useState<(() => void) | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [assistantOpen, setAssistantOpen] = useState(false)
   const [viewingDoc, setViewingDoc] = useState<PersonDocument | null>(null)
   const [aboutOpen,    setAboutOpen]    = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -54,6 +57,29 @@ function AppInner() {
   const settingsRef = useRef<HTMLDivElement>(null)
   const { nameOrder, setNameOrder, autoCheckUpdates, setAutoCheckUpdates, lang, setLang } = useSettings()
   const t = useT()
+
+  // The assistant's on/off state lives in config.json rather than localStorage:
+  // it belongs with the API key, is per-installation rather than per-browser,
+  // and survives auto-updates.
+  const qc = useQueryClient()
+  const { data: aiSettings } = useQuery<AiSettings>({
+    queryKey: ['ai-settings'],
+    queryFn: api.ai.getSettings,
+  })
+  const aiEnabled = aiSettings?.enabled !== false
+  const toggleAi = useMutation({
+    mutationFn: (v: boolean) => api.ai.saveSettings({ enabled: v }),
+    onSuccess: s => {
+      qc.setQueryData(['ai-settings'], s)
+      qc.invalidateQueries({ queryKey: ['ai-settings'] })
+    },
+  })
+
+  // Turning it off closes the panel too — otherwise the feature stays on screen
+  // after being disabled.
+  useEffect(() => {
+    if (!aiEnabled) setAssistantOpen(false)
+  }, [aiEnabled])
 
   useEffect(() => {
     if (!aboutOpen) return
@@ -79,10 +105,16 @@ function AppInner() {
         e.preventDefault()
         setSearchOpen(o => !o)
       }
+      // Ctrl/Cmd+J toggles the assistant — K is already the search palette.
+      // Disabled means disabled: the shortcut goes away with the widget.
+      if ((e.metaKey || e.ctrlKey) && e.key === 'j' && aiEnabled) {
+        e.preventDefault()
+        setAssistantOpen(o => !o)
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [aiEnabled])
 
   function navToImages(personIds: number[]) {
     setTab('images')
@@ -127,7 +159,7 @@ function AppInner() {
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <>
       <div className="h-screen flex flex-col text-zinc-100 overflow-hidden" style={{ background: '#09090b' }}>
         <header className="shrink-0 border-b px-6 py-4 z-40 relative" style={{ background: '#111117', borderColor: 'rgba(255,255,255,0.06)' }}>
           <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-500/50 to-transparent" />
@@ -228,6 +260,31 @@ function AppInner() {
                         </button>
                       </div>
                     </div>
+                    {/* AI assistant */}
+                    <div className="mt-3 pt-3 border-t border-zinc-800">
+                      <p className="text-[11px] text-zinc-500 mb-2">{t('chat.title')}</p>
+                      <label className="flex items-center justify-between cursor-pointer gap-3">
+                        <span className="text-xs text-zinc-300">{t('app.aiEnabled')}</span>
+                        <button
+                          role="switch"
+                          aria-checked={aiEnabled}
+                          onClick={() => toggleAi.mutate(!aiEnabled)}
+                          className={`inline-flex items-center rounded-full transition-colors shrink-0 ${aiEnabled ? 'bg-brand-500' : 'bg-zinc-700'}`}
+                          style={{ width: '32px', height: '18px' }}
+                        >
+                          <span
+                            className="inline-block w-3.5 h-3.5 rounded-full bg-white shadow transition-transform"
+                            style={{ transform: aiEnabled ? 'translateX(16px)' : 'translateX(2px)' }}
+                          />
+                        </button>
+                      </label>
+                      {!aiEnabled && (
+                        <p className="text-[10px] text-zinc-600 mt-1.5 leading-snug">
+                          {t('app.aiEnabled.off')}
+                        </p>
+                      )}
+                    </div>
+
                     {/* Updates */}
                     <div className="mt-3 pt-3 border-t border-zinc-800">
                       <p className="text-[11px] text-zinc-500 mb-2">{t('app.updates')}</p>
@@ -284,10 +341,13 @@ function AppInner() {
           </div>
         </header>
 
+        {/* The assistant sits beside the main area rather than over it, so the
+            tree stays visible while it answers. */}
+        <div className="flex-1 min-h-0 flex">
         {/* Tabs that manage their own scrolling must not also scroll the main
             area, otherwise their full-height panes overflow it. */}
         <main className={[
-          'flex-1 min-h-0',
+          'flex-1 min-w-0 min-h-0',
           tab === 'genealogy' || tab === 'documents' || tab === 'connections'
             ? 'overflow-hidden'
             : 'overflow-auto',
@@ -307,7 +367,47 @@ function AppInner() {
             </div>
           )}
         </main>
+
+        {aiEnabled && assistantOpen && (
+          <AssistantPanel
+            onClose={() => setAssistantOpen(false)}
+            onNavToPerson={navToGenealogy}
+            onNavToImage={id => navToImage(id, [])}
+            onNavToImages={navToImages}
+          />
+        )}
+        </div>
       </div>
+
+      {/* Floating assistant launcher.
+          z-40 is deliberate: every modal backdrop in the app starts at z-50, so
+          the widget dims behind a photo viewer or document editor on its own,
+          with no open-modal state to track.
+
+          The 80px inset is set by the tallest bottom-anchored UI in the app —
+          the tree view's control bar, which sits at bottom-3 with 28px buttons
+          and wraps to a second row in a narrow window, reaching ~74px. The
+          right inset matches it so the widget sits in an even corner rather
+          than hugging one edge. */}
+      {aiEnabled && !assistantOpen && (
+        <button
+          onClick={() => setAssistantOpen(true)}
+          title={`${t('chat.title')} (Ctrl+J)`}
+          aria-label={t('chat.title')}
+          className="ai-fab fixed bottom-20 right-20 z-40 rounded-2xl flex items-center justify-center text-white"
+          style={{
+            width: '52px',
+            height: '52px',
+            background: 'linear-gradient(135deg, #9333ea 0%, #7e22ce 100%)',
+            boxShadow: '0 0 0 1px rgba(147,51,234,0.5), 0 8px 24px -6px rgba(147,51,234,0.55), 0 4px 12px rgba(0,0,0,0.4)',
+          }}
+        >
+          <svg className="w-6 h-6" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2l1.9 5.6L19.5 9.5l-5.6 1.9L12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2z" />
+            <path d="M18.5 15l.8 2.3 2.2.8-2.2.8-.8 2.3-.8-2.3-2.2-.8 2.2-.8.8-2.3z" opacity="0.75" />
+          </svg>
+        </button>
+      )}
 
       {/* Global export progress — persists across tab switches */}
       {exportBusy && (
@@ -352,14 +452,19 @@ function AppInner() {
           onNavToPerson={id => { setViewingDoc(null); navToGenealogy(id) }}
         />
       )}
-    </QueryClientProvider>
+    </>
   )
 }
 
+// QueryClientProvider must sit *above* AppInner, not inside its return value:
+// AppInner itself calls useQuery/useQueryClient, and a provider it renders is
+// not in scope for its own hooks.
 export default function App() {
   return (
-    <SettingsProvider>
-      <AppInner />
-    </SettingsProvider>
+    <QueryClientProvider client={queryClient}>
+      <SettingsProvider>
+        <AppInner />
+      </SettingsProvider>
+    </QueryClientProvider>
   )
 }

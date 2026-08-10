@@ -4,7 +4,7 @@ import { api } from '../api'
 import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 import type { NameOrder } from '../SettingsContext'
 
-const NW = 148, NH = 82
+import { NW, NH } from '../treeGeometry'
 
 interface ExportNode { id: number; person: PersonFull; x: number; y: number }
 interface ExportEdge {

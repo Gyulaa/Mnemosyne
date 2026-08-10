@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup } from './types'
+import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, ChatThread, ChatMessage, ChatStreamEvent } from './types'
 
 const BASE = '/api'
 
@@ -144,6 +144,8 @@ export const api = {
     create:   (name: string) => post<Project>(`${BASE}/projects`, { name }),
     activate: (id: string) => post<Project>(`${BASE}/projects/${encodeURIComponent(id)}/activate`),
     rename:   (id: string, name: string) => patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { name }),
+    setDefaultProband: (id: string, personId: number | null) =>
+      patch<Project>(`${BASE}/projects/${encodeURIComponent(id)}`, { default_proband_id: personId }),
     delete:   (id: string) =>
       fetchJson<{ ok: boolean; new_active: import('./types').Project | null }>(`${BASE}/projects/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     exportZip: async (
@@ -516,5 +518,69 @@ export const api = {
     check:     () => post<{ ok: boolean }>(`${BASE}/update/check`),
     download:  () => post<{ ok: boolean }>(`${BASE}/update/download`),
     apply:     () => post<{ ok: boolean }>(`${BASE}/update/apply`),
+  },
+  ai: {
+    getSettings: () => fetchJson<AiSettings>(`${BASE}/ai/settings`),
+    saveSettings: (fields: Partial<{ provider: string; model: string; api_key: string; allow_private: boolean; enabled: boolean; base_url: string }>) =>
+      put<AiSettings>(`${BASE}/ai/settings`, fields),
+    /**
+     * Models for the picker. The list comes from the provider itself (cached
+     * server-side for a week); the bundled manifest only adds labels and
+     * prices. `refresh` forces a live fetch.
+     */
+    listModels: (provider?: string, refresh = false) => {
+      const q = new URLSearchParams()
+      if (provider) q.set('provider', provider)
+      if (refresh) q.set('refresh', 'true')
+      const qs = q.toString()
+      return fetchJson<AiModelCatalog>(`${BASE}/ai/models${qs ? `?${qs}` : ''}`)
+    },
+
+    listThreads: () => fetchJson<ChatThread[]>(`${BASE}/ai/threads`),
+    createThread: (title?: string) => post<ChatThread>(`${BASE}/ai/threads`, { title: title ?? null }),
+    renameThread: (id: number, title: string) => patch<ChatThread>(`${BASE}/ai/threads/${id}`, { title }),
+    deleteThread: (id: number) => fetchJson<{ ok: boolean }>(`${BASE}/ai/threads/${id}`, { method: 'DELETE' }),
+    listMessages: (threadId: number) => fetchJson<ChatMessage[]>(`${BASE}/ai/threads/${threadId}/messages`),
+
+    /**
+     * Stream one turn. Deliberately not react-query: this is a long-lived
+     * SSE body read with a ReadableStream, not a request/response cache entry.
+     * `onEvent` fires per frame; the promise settles when the stream ends.
+     */
+    stream: async (
+      threadId: number,
+      body: { message: string; lang: string; name_order: string },
+      onEvent: (ev: ChatStreamEvent) => void,
+      signal?: AbortSignal,
+    ): Promise<void> => {
+      const res = await fetch(`${BASE}/ai/threads/${threadId}/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      })
+      if (!res.ok || !res.body) throw new Error((await res.text()) || `HTTP ${res.status}`)
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        // Frames are separated by a blank line; the last chunk may be partial.
+        const frames = buffer.split('\n\n')
+        buffer = frames.pop() ?? ''
+        for (const frame of frames) {
+          const line = frame.trim()
+          if (!line.startsWith('data: ')) continue
+          try {
+            onEvent(JSON.parse(line.slice(6)) as ChatStreamEvent)
+          } catch {
+            /* ignore a malformed frame rather than killing the stream */
+          }
+        }
+      }
+    },
   },
 }

@@ -11,7 +11,7 @@ from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from .database import configure_engine, init_db_schema
+from .database import configure_engine, configure_readonly_engine, init_db_schema
 
 ROOT_DIR = Path(os.environ.get('MNEMOSYNE_APP_DIR') or str(Path(__file__).parent.parent))
 PROJECTS_DIR = ROOT_DIR / "projects"
@@ -42,6 +42,10 @@ class ProjectManager:
     def __init__(self):
         self._engine = None
         self._SessionLocal = None
+        # Separate connection pool with PRAGMA query_only=ON — the AI assistant's
+        # only data path. See ai/tools.py.
+        self._ro_engine = None
+        self._ROSessionLocal = None
         self._active_id: str | None = None
         PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
         self._boot()
@@ -80,10 +84,12 @@ class ProjectManager:
     # ── internal helpers ───────────────────────────────────────────────────────
 
     def _activate(self, project_id: str):
-        # Dispose the previous engine before switching so Windows releases file handles.
-        if self._engine is not None:
-            self._engine.dispose()
-            self._engine = None
+        # Dispose the previous engines before switching so Windows releases file handles.
+        for attr in ("_engine", "_ro_engine"):
+            eng = getattr(self, attr, None)
+            if eng is not None:
+                eng.dispose()
+                setattr(self, attr, None)
         gc.collect()
 
         db_path = PROJECTS_DIR / project_id / "photo_organizer.db"
@@ -95,6 +101,17 @@ class ProjectManager:
         init_db_schema(engine)
         self._engine = engine
         self._SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+        # Read-only pool. Created after init_db_schema so the schema is already
+        # migrated — a query_only connection could not create anything itself.
+        ro_engine = create_engine(
+            f"sqlite:///{db_path}",
+            connect_args={"check_same_thread": False},
+        )
+        configure_readonly_engine(ro_engine)
+        self._ro_engine = ro_engine
+        self._ROSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=ro_engine)
+
         self._active_id = project_id
 
     def _create_project_internal(self, name: str) -> dict:
@@ -114,7 +131,11 @@ class ProjectManager:
         return {}
 
     def _write_config(self, active_id: str):
-        CONFIG_FILE.write_text(json.dumps({"active_project": active_id}), encoding="utf-8")
+        # Merge rather than replace: config.json also carries the `ai` block
+        # (assistant provider + API key), and a project switch must not wipe it.
+        cfg = self._read_config()
+        cfg["active_project"] = active_id
+        CONFIG_FILE.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # ── public API ─────────────────────────────────────────────────────────────
 
@@ -162,6 +183,10 @@ class ProjectManager:
             self._engine.dispose()
             self._engine = None
             self._SessionLocal = None
+            if self._ro_engine is not None:
+                self._ro_engine.dispose()
+                self._ro_engine = None
+            self._ROSessionLocal = None
             self._active_id = None
             gc.collect()
 
@@ -212,6 +237,39 @@ class ProjectManager:
 
     # ── properties used by main.py and scanner ─────────────────────────────────
 
+    def set_default_proband(self, project_id: str, person_id: int | None) -> dict:
+        """Persist the tree's starting person in project.json.
+
+        Kept server-side rather than in localStorage: it is per project, not per
+        browser profile, it travels with `projects/` through an auto-update, and
+        the AI assistant needs it to know who "I" refers to in a question.
+        """
+        project_dir = PROJECTS_DIR / project_id
+        pj = project_dir / "project.json"
+        if not pj.exists():
+            raise FileNotFoundError(f"Project not found: {project_id}")
+        info = _read_project_json(pj)
+        if person_id is None:
+            info.pop("default_proband_id", None)
+        else:
+            info["default_proband_id"] = int(person_id)
+        pj.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+        info["is_active"] = project_id == self._active_id
+        return info
+
+    def get_default_proband(self, project_id: str | None = None) -> int | None:
+        pid = project_id or self._active_id
+        if not pid:
+            return None
+        pj = PROJECTS_DIR / pid / "project.json"
+        if not pj.exists():
+            return None
+        try:
+            value = _read_project_json(pj).get("default_proband_id")
+            return int(value) if value is not None else None
+        except Exception:
+            return None
+
     @property
     def session_factory(self):
         return self._SessionLocal
@@ -222,6 +280,18 @@ class ProjectManager:
 
     def get_db(self):
         db = self._SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    def get_readonly_db(self):
+        """Session on the `query_only` pool — writes fail with SQLITE_READONLY.
+
+        This is the structural half of the assistant's read-only guarantee; the
+        other half is the `mutates` guard in the tool registry.
+        """
+        db = self._ROSessionLocal()
         try:
             yield db
         finally:

@@ -127,6 +127,8 @@ export interface Project {
   name: string
   created: string
   is_active: boolean
+  /** Person the tree opens on, and who the assistant treats as "I". */
+  default_proband_id?: number | null
 }
 
 export interface FsItem {
@@ -494,3 +496,100 @@ export interface UpdateStatus {
   error: string | null
 }
 
+
+// ── AI assistant ──────────────────────────────────────────────────────────────
+
+export interface AiModel {
+  id: string
+  provider: string
+  label: string
+  note?: string
+  /** True for models the bundled manifest describes; false for ones only the
+   *  provider reported, which carry fallback capabilities. */
+  curated?: boolean
+  caps: {
+    tools: boolean
+    vision: boolean
+    streaming: boolean
+    prompt_cache: boolean
+    context: number
+    max_output: number
+  }
+  pricing?: { in: number; out: number; cache_read?: number; cache_write?: number }
+}
+
+export interface AiModelCatalog {
+  provider: string
+  models: AiModel[]
+  providers: AiProvider[]
+  default: string
+  /** When the live list was last fetched from the provider; null if never. */
+  fetched_at: string | null
+  /** True once a live list exists — false means these are manifest defaults. */
+  live: boolean
+  /** Set when a refresh was attempted and failed; the cached list still shows. */
+  error: string | null
+}
+
+export interface AiProvider {
+  id: string
+  label: string
+  default_model: string
+  key_hint?: string
+  console?: string
+}
+
+export interface AiSettings {
+  provider: string
+  model: string
+  /** Masked for display only — the raw key never leaves the backend. */
+  api_key_masked: string
+  configured: boolean
+  /** Which providers already have a key stored, so switching is one click. */
+  configured_providers: Record<string, boolean>
+  providers: AiProvider[]
+  allow_private: boolean
+  enabled: boolean
+  caps: AiModel['caps']
+}
+
+export interface ChatThread {
+  id: number
+  title: string | null
+  provider: string | null
+  model: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface ChatToolCall {
+  id: number | string
+  name: string
+  input: Record<string, unknown>
+  result: unknown
+  duration_ms: number | null
+  is_error: boolean
+}
+
+export interface ChatMessage {
+  id: number
+  thread_id: number
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string | null
+  input_tokens: number | null
+  output_tokens: number | null
+  cache_read_tokens: number | null
+  tool_calls: ChatToolCall[]
+}
+
+/** One SSE frame from POST /api/ai/threads/{id}/stream. */
+export type ChatStreamEvent =
+  | { type: 'user_saved'; message_id: number; title: string | null }
+  | { type: 'text'; text: string }
+  | { type: 'tool_start'; id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_end'; id: string; name: string; result: unknown; duration_ms: number; is_error: boolean }
+  | { type: 'notice'; message: string }
+  | { type: 'error'; message: string; kind: string; retryable: boolean }
+  | { type: 'saved'; message_id: number }
+  | { type: 'done'; usage: { input: number; output: number; cache_read: number; cache_write: number }; failed: boolean; estimated_cost_usd: number | null }
