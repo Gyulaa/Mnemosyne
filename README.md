@@ -137,7 +137,11 @@ Text documents behave like any other document everywhere else: they can be linke
 
 ### Connections
 - See who appears in photos together most often
-- Interactive force-directed graph showing social connections within your family
+- An interactive graph of who appears with whom. It is arranged to be read, not just displayed:
+  - People who **hold the network together** — the ones who link otherwise separate circles — are drawn into the middle and ringed in amber. This is not simply "who is in the most photos": someone who appears rarely but is the only link between two families still lands in the centre, which is exactly the person worth noticing
+  - **Separate groups are drawn apart**, each in its own frame with its own middle, instead of being pushed into one pile
+  - Thicker, brighter lines mean a stronger connection. Hover a person to isolate their links, drag anyone to rearrange, and **Reset view** puts the computed arrangement back
+- A ranked list view, if you would rather read the numbers than the picture
 
 ### Privacy
 Any item can be marked **private**. Private items are **never exported** — not in ZIP archives, not in GEDCOM files — regardless of all other export settings. The AI assistant cannot see them either, unless you explicitly allow it in its settings.
@@ -252,7 +256,7 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 | ZIP export, project import, merge import | [ZIP export](#zip-export) | `export_utils.py`, `merge_import.py`, `ExportModal.tsx`, `MergeModal.tsx` |
 | GEDCOM in or out | [GEDCOM export](#gedcom-export) | `gedcom_export.py`, `gedcom_import.py`, `GedcomImportModal.tsx` |
 | The AI assistant — tools, prompt, providers, models | [AI assistant (implementation detail)](#ai-assistant-implementation-detail) | `backend/ai/`, `AssistantPanel.tsx`, `AssistantSetup.tsx` |
-| Connections between people from shared photos | [Connections graph](#connections-graph) | `ConnectionsTab.tsx`, connection endpoints in `main.py` |
+| Connections between people from shared photos | [Connections graph](#connections-graph) | `ConnectionsTab.tsx`, `graphLayout.ts`, connection endpoints in `main.py` |
 | Global search, or the relationship finder | [Global Search](#global-search), [Relationship Path Finder](#relationship-path-finder) | `SearchPalette.tsx`, `RelationPathModal.tsx` |
 | Updating, packaging, bundled files | [Auto-update](#auto-update-implementation-detail) | `updater.py`, `launcher.py`, `mnemosyne.spec`, `UpdateBanner.tsx` |
 | A user-visible string, a date, a language issue | [Keeping this document up to date](#keeping-this-document-up-to-date) | `i18n/translations.ts`, `SettingsContext.tsx` |
@@ -289,9 +293,29 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 
 ### Connections graph
 - Connection strength between people: **shared photos** count and **weighted** score (Σ 1/n for group photos)
-- Force-directed graph view (interactive: zoom, pan, drag)
-- Ranked list view sorted by strength
+- Interactive graph view (zoom, pan, drag) and a ranked list view sorted by strength
 - Click a connection line to filter the Images tab to those two people's shared photos
+
+**The layout lives in `frontend/src/graphLayout.ts`** — pure geometry, no React, in its own module for the same reason `treeGeometry.ts` is: it is the arithmetic that decides where everything goes, and it is worth checking on its own.
+
+A photo graph is genuinely dense. People who appear together appear together a lot, so the edge count runs several times the node count and the graph is nowhere near a tree. The original layout ran one force simulation over every node with a single gravity well at the centre of the canvas, and at that density it produced one hairball: separate groups were pulled into the same heap, and the few people actually holding the network together were buried inside it. The current layout is built around the three questions the picture should answer.
+
+**Who holds it together → betweenness decides the radius.** `betweenness()` is Brandes' algorithm on the unweighted graph: how often someone lies on the shortest path between two other people. That is the measure that finds the person joining two friend groups *even when they appear in far fewer photos than anyone inside either group* — degree alone ranks that person as marginal. The score sets each node's target distance from its group's middle, so connectors are drawn into the centre and the periphery is pushed out. Anyone at or above `CONNECTOR_CUTOFF` gets the amber ring and a legend entry.
+
+The radius is a **blend of betweenness and degree**, not betweenness alone, and the blend is not cosmetic: in a near-complete graph — everyone photographed with everyone — nobody lies on anyone else's shortest path, every betweenness is zero, and a pure-betweenness radius would flatten the whole group onto one ring. Degree keeps that case readable, and a dense blob genuinely has no bridge to point at, so the amber ring correctly disappears rather than picking someone arbitrary.
+
+**How many separate groups → components are laid out and packed separately.** Each connected component gets its own force run around its own origin, and `packGroups()` then places them as discs so no two overlap. Nothing shares a gravity well, which is what the old single-well version got wrong. Betweenness is normalised *within* each component, so a small group still has its own middle instead of being rim-only because a larger group out-scores it. Groups are framed and labelled only when there is more than one — a frame around the only group is ink that says nothing.
+
+The packing spiral is **stretched sideways** (`PACK_ASPECT`). On a round spiral a single small offshoot parked above the main group made the drawing taller than wide, and fitting that into a landscape pane halved the scale of everything — one satellite decided the zoom for the whole picture.
+
+**Who stands next to whom → springs plus a hard collision pass.** Forces alone leave discs overlapping at this density, and an overlapping disc means an unreadable name.
+
+Two properties worth preserving:
+
+- **It is deterministic.** Nothing is randomly seeded — the seed is a golden-angle spiral ordered by centrality — so the same data always draws the same picture instead of reshuffling on every visit. This is also what makes the layout checkable outside the browser.
+- **It runs synchronously in a `useMemo`, not as an animation.** Watching a hairball wobble into place was part of what made the old view feel chaotic. Every pass is O(k²) and blocks paint, so the iteration count and the number of collision passes step down as the group grows; a large group is a blob whose exact settling nobody can read anyway, while a frozen tab is noticed at once.
+
+The view opens **fitted** rather than at 1:1, because the graph deliberately spreads wider than the canvas. The fit is measured off the computed layout rather than off the live dragged positions — those are React state, and on a data change the fitting effect runs before the new positions have landed, so reading them fits the view to the *previous* graph.
 
 ### Genealogy
 
@@ -677,6 +701,7 @@ Image-Organizer/
 │       ├── docTypes.ts                # Built-in document type keys + translated labels
 │       ├── familyContext.tsx          # Close-relative lookup + lines shown in person pickers
 │       ├── markdown.ts                # Shared Markdown renderer (@ mentions, [n] citations)
+│       ├── graphLayout.ts             # Connections graph layout (components, betweenness, packing)
 │       ├── caretPopup.ts              # Caret coordinates in a textarea + viewport-safe popup placement
 │       ├── i18n/
 │       │   └── translations.ts        # EN/HU translation strings (flat dot-notation keys)

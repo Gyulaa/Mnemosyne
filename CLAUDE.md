@@ -28,7 +28,7 @@ Two facts shape everything below: **there is no automated test suite**, so "done
 | Assistant | `backend/ai/` | Read-only tool use over SQL, opt-in, off without an API key |
 | API client | `frontend/src/api.ts` | The only place that knows URL strings |
 | UI | `frontend/src/components/*.tsx` | One large component per tab, react-query for data, Tailwind v4, no component library |
-| Shared frontend logic | `treeGeometry.ts`, `familyContext.tsx`, `markdown.ts`, `caretPopup.ts`, `docTypes.ts`, `SettingsContext.tsx` | Extracted precisely because copies of them drifted. Reuse instead of re-rolling |
+| Shared frontend logic | `treeGeometry.ts`, `familyContext.tsx`, `markdown.ts`, `caretPopup.ts`, `docTypes.ts`, `graphLayout.ts`, `SettingsContext.tsx` | Extracted precisely because copies of them drifted. Reuse instead of re-rolling |
 
 ---
 
@@ -95,7 +95,8 @@ Test data: copy a project directory into the scratchpad and point the app at tha
 - **All URLs live in `api.ts`.** Components call `api.x.y()`; a `fetch` in a component is a smell (the two deliberate exceptions are the streaming assistant read and browser-driven downloads).
 - **react-query keys are `['name', id]` arrays.** After a mutation, invalidate *every* key that shows the changed thing — the list, the detail, and the counts. A stale sibling list is the most common bug in this codebase.
 - **Tabs talk through `App.tsx`.** Cross-tab jumps are the `navTo*` callbacks passed down as props (`navToImages`, `navToGenealogy`, `navToEvent`, …) plus a `navTarget` the child consumes. There is no global store; don't add one for a single jump.
-- **Components are big on purpose.** Keep new UI inside the tab that owns it and lift only what a second caller genuinely needs. What is already shared: pickers (`PersonSelect.tsx`), relative context lines (`familyContext.tsx`), tree geometry (`treeGeometry.ts`), Markdown rendering (`markdown.ts`), caret popups (`caretPopup.ts`).
+- **Components are big on purpose.** Keep new UI inside the tab that owns it and lift only what a second caller genuinely needs. What is already shared: pickers (`PersonSelect.tsx`), relative context lines (`familyContext.tsx`), tree geometry (`treeGeometry.ts`), Markdown rendering (`markdown.ts`), caret popups (`caretPopup.ts`), connections-graph layout (`graphLayout.ts`).
+- **Layout maths is the exception to "keep it in the tab".** `treeGeometry.ts` and `graphLayout.ts` have one caller each and still live outside their component, because a pure function taking data and returning coordinates can be *run and measured* — against a copy of a real project, outside the browser — and in a repo with no test suite that is the only way to check a layout beyond looking at it. If you write one, keep it free of React and of `api.ts` imports so it can be imported by a plain Node script.
 - **Three renderings are never done by hand:** strings through `useT()`, dates through `formatPartialDate()` / `monthNames()` with `useDateLocale()`, names through `displayPersonName(person, nameOrder)`.
 - **Markdown bodies** render through `renderMarkdown()` into a container classed `note-content` (reading rhythm) or `note-preview` (clamped card excerpt). Those two classes carry the spacing; don't add margins on the container instead.
 - **Styling is Tailwind v4 utilities on a dark palette**, matching the surrounding component. No CSS files per component, no UI kit.

@@ -719,6 +719,11 @@ const en: Record<string, string> = {
   'conn.hideAll': 'Hide all',
   'conn.connection': 'connection',
   'conn.connections': 'connections',
+  'conn.connector': 'connector',
+  'conn.nodeStats': '{photos} photos · {links} connections',
+  'conn.groupLabel': 'Group {n} · {count} people',
+  'conn.legendConnector': 'Holds groups together — drawn in the middle',
+  'conn.legendGroups': '{n} separate groups',
   // SEARCH PALETTE
   'search.placeholder': 'Search persons, events, notes…',
   'search.hint': 'Search across persons, events, documents and notes.',
@@ -1983,6 +1988,11 @@ const hu: Record<string, string> = {
   'conn.hideAll': 'Összes elrejtése',
   'conn.connection': 'kapcsolat',
   'conn.connections': 'kapcsolat',
+  'conn.connector': 'összekötő',
+  'conn.nodeStats': '{photos} fotó · {links} kapcsolat',
+  'conn.groupLabel': '{n}. csoport · {count} fő',
+  'conn.legendConnector': 'Csoportokat köt össze — középre kerül',
+  'conn.legendGroups': '{n} különálló csoport',
   // SEARCH PALETTE
   'search.placeholder': 'Személyek, események, megjegyzések keresése…',
   'search.hint': 'Keresés személyek, események, dokumentumok és megjegyzések között.',

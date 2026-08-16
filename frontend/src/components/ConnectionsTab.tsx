@@ -1,17 +1,9 @@
-﻿import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { ConnectionsData, GraphEdge, GraphNode } from '../types'
 import { useT } from '../SettingsContext'
-
-// ── Simulation types ───────────────────────────────────────────────────────────
-
-interface SimNode extends GraphNode {
-  x: number; y: number
-  vx: number; vy: number
-  fx: number; fy: number
-  pinned: boolean
-}
+import { computeLayout, nodeRadius, CONNECTOR_CUTOFF } from '../graphLayout'
 
 // ── Visual helpers ─────────────────────────────────────────────────────────────
 
@@ -21,64 +13,6 @@ const PALETTE = [
   '#2dd4bf', '#fb7185',
 ]
 const nodeColor = (id: number) => PALETTE[id % PALETTE.length]
-
-function nodeRadius(n: GraphNode, degree: number): number {
-  return Math.min(26, 12 + Math.sqrt(n.photo_count) * 0.55 + degree * 1.6)
-}
-
-// ── Force simulation tick ──────────────────────────────────────────────────────
-
-function simTick(
-  nodes: SimNode[],
-  edges: GraphEdge[],
-  nodeMap: Map<number, SimNode>,
-  W: number,
-  H: number,
-) {
-  const REP = 9000
-  const SPR = 0.035
-  const GRA = 0.018
-  const DAMP = 0.72
-
-  for (const n of nodes) { n.fx = 0; n.fy = 0 }
-
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) {
-      const a = nodes[i], b = nodes[j]
-      const dx = b.x - a.x, dy = b.y - a.y
-      const d2 = Math.max(1, dx * dx + dy * dy)
-      const d = Math.sqrt(d2)
-      const f = REP / d2
-      a.fx -= f * dx / d; a.fy -= f * dy / d
-      b.fx += f * dx / d; b.fy += f * dy / d
-    }
-  }
-
-  for (const e of edges) {
-    const a = nodeMap.get(e.source), b = nodeMap.get(e.target)
-    if (!a || !b) continue
-    const dx = b.x - a.x, dy = b.y - a.y
-    const d = Math.sqrt(dx * dx + dy * dy) || 0.1
-    const ideal = Math.max(110, 260 - Math.log(e.weight + 1) * 24)
-    const f = SPR * (d - ideal)
-    a.fx += f * dx / d; a.fy += f * dy / d
-    b.fx -= f * dx / d; b.fy -= f * dy / d
-  }
-
-  const cx = W / 2, cy = H / 2
-  for (const n of nodes) {
-    n.fx += GRA * (cx - n.x)
-    n.fy += GRA * (cy - n.y)
-  }
-
-  for (const n of nodes) {
-    if (n.pinned) continue
-    n.vx = (n.vx + n.fx) * DAMP
-    n.vy = (n.vy + n.fy) * DAMP
-    n.x += n.vx
-    n.y += n.vy
-  }
-}
 
 // ── ForceGraph ─────────────────────────────────────────────────────────────────
 
@@ -101,15 +35,12 @@ function ForceGraph({
 }) {
   const t = useT()
   const svgRef = useRef<SVGSVGElement>(null)
-  const nodesRef = useRef<SimNode[]>([])
-  const [display, setDisplay] = useState<SimNode[]>([])
   const [dragId, setDragId] = useState<number | null>(null)
   const [hoveredNode, setHoveredNode] = useState<number | null>(null)
   const [edgeTip, setEdgeTip] = useState<{
     x: number; y: number
     sourceId: number; targetId: number; weight: number; intimacy_score: number
   } | null>(null)
-  const rafRef = useRef<number | null>(null)
   const nodeDownPos = useRef<{ id: number; x: number; y: number } | null>(null)
 
   // Pan/zoom state — use refs so wheel handler (non-React event listener) always sees fresh values
@@ -126,15 +57,21 @@ function ForceGraph({
 
   const nameMap = useMemo(() => new Map(nodes.map(n => [n.id, n.name])), [nodes])
 
-  // Degree (number of connections per node)
-  const degreeMap = useMemo(() => {
-    const deg = new Map<number, number>()
-    for (const e of edges) {
-      deg.set(e.source, (deg.get(e.source) ?? 0) + 1)
-      deg.set(e.target, (deg.get(e.target) ?? 0) + 1)
-    }
-    return deg
-  }, [edges])
+  // The layout is deterministic and settles in one synchronous pass, so it is a
+  // memo rather than an animation: no frame loop, and the same data always
+  // draws the same picture. It depends on structure only — resizing the pane
+  // re-fits the view instead of re-running the forces.
+  const layout = useMemo(() => computeLayout(nodes, edges), [nodes, edges])
+  const degreeMap = layout.degree
+
+  /** Live positions: the layout, plus whatever the user has dragged since. */
+  const [positions, setPositions] = useState<Map<number, { x: number; y: number }>>(new Map())
+
+  useEffect(() => {
+    const next = new Map<number, { x: number; y: number }>()
+    for (const [id, p] of layout.placement) next.set(id, { x: p.x, y: p.y })
+    setPositions(next)
+  }, [layout])
 
   // Non-passive wheel listener for zoom
   useEffect(() => {
@@ -155,40 +92,33 @@ function ForceGraph({
     return () => svg.removeEventListener('wheel', onWheel)
   }, [])
 
-  // Initialize positions and run simulation
-  useEffect(() => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current)
-    if (!nodes.length || !width || !height) { setDisplay([]); return }
-
-    // Reset view on new data
-    applyTransform(0, 0, 1)
-
-    const R = Math.min(width, height) * 0.3
-    const cx = width / 2, cy = height / 2
-    nodesRef.current = nodes.map((n, i) => ({
-      ...n,
-      x: cx + R * Math.cos((2 * Math.PI * i) / nodes.length) + (Math.random() - 0.5) * 20,
-      y: cy + R * Math.sin((2 * Math.PI * i) / nodes.length) + (Math.random() - 0.5) * 20,
-      vx: 0, vy: 0, fx: 0, fy: 0, pinned: false,
-    }))
-    const nodeMap = new Map(nodesRef.current.map(n => [n.id, n]))
-
-    let frame = 0
-    function animate() {
-      simTick(nodesRef.current, edges, nodeMap, width, height)
-      frame++
-      if (frame % 5 === 0 || frame <= 10) {
-        setDisplay(nodesRef.current.map(n => ({ ...n })))
-      }
-      if (frame < 300) {
-        rafRef.current = requestAnimationFrame(animate)
-      } else {
-        setDisplay(nodesRef.current.map(n => ({ ...n })))
-      }
+  /**
+   * Fit the whole layout into the pane. The graph now spreads far wider than
+   * the canvas on purpose, so opening at 1:1 would drop most of it off-screen —
+   * fitting is the default view, not a convenience.
+   */
+  // Measured off `layout`, not off the live positions: those are state, and on a
+  // data change the effect below runs before the new positions have landed, so
+  // reading them would fit the view to the *previous* graph.
+  const fitToView = useCallback(() => {
+    if (!layout.placement.size || !width || !height) { applyTransform(0, 0, 1); return }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const p of layout.placement.values()) {
+      const r = p.r + 34   // room for the name printed under the disc
+      minX = Math.min(minX, p.x - r); maxX = Math.max(maxX, p.x + r)
+      minY = Math.min(minY, p.y - r); maxY = Math.max(maxY, p.y + r)
     }
-    rafRef.current = requestAnimationFrame(animate)
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
-  }, [nodes.length, edges.length, width, height])
+    const w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY)
+    const scale = Math.min(5, Math.max(0.15, Math.min(width / w, height / h) * 0.92))
+    applyTransform(
+      width / 2 - ((minX + maxX) / 2) * scale,
+      height / 2 - ((minY + maxY) / 2) * scale,
+      scale,
+    )
+  }, [layout, width, height])
+
+  // Fit whenever the layout or the pane changes.
+  useEffect(() => { fitToView() }, [fitToView])
 
   // Convert screen → content coordinates (undoes pan/zoom)
   function screenToContent(clientX: number, clientY: number) {
@@ -204,13 +134,9 @@ function ForceGraph({
     ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
     setDragId(id)
     nodeDownPos.current = { id, x: e.clientX, y: e.clientY }
-    const node = nodesRef.current.find(n => n.id === id)
-    if (node) { node.pinned = true; node.vx = 0; node.vy = 0 }
   }
 
   function onNodeUp(e: React.PointerEvent, id: number) {
-    const node = nodesRef.current.find(n => n.id === id)
-    if (node) node.pinned = false
     if (nodeDownPos.current && nodeDownPos.current.id === id && onNodeClick) {
       const dx = e.clientX - nodeDownPos.current.x
       const dy = e.clientY - nodeDownPos.current.y
@@ -236,11 +162,7 @@ function ForceGraph({
   function onSVGMove(e: React.PointerEvent) {
     if (dragId != null && svgRef.current) {
       const pt = screenToContent(e.clientX, e.clientY)
-      const node = nodesRef.current.find(n => n.id === dragId)
-      if (!node) return
-      node.x = pt.x; node.y = pt.y
-      node.vx = 0; node.vy = 0
-      setDisplay(nodesRef.current.map(n => ({ ...n })))
+      setPositions(prev => new Map(prev).set(dragId, { x: pt.x, y: pt.y }))
     } else if (panDragRef.current) {
       const dx = e.clientX - panDragRef.current.startX
       const dy = e.clientY - panDragRef.current.startY
@@ -249,19 +171,27 @@ function ForceGraph({
   }
 
   function onSVGUp() {
-    if (dragId != null) {
-      const node = nodesRef.current.find(n => n.id === dragId)
-      if (node) node.pinned = false
-      setDragId(null)
-    }
+    if (dragId != null) setDragId(null)
     panDragRef.current = null
   }
 
+  /** Undo any dragging and re-fit — "reset" means back to the computed picture. */
   function resetView() {
-    applyTransform(0, 0, 1)
+    const next = new Map<number, { x: number; y: number }>()
+    for (const [id, p] of layout.placement) next.set(id, { x: p.x, y: p.y })
+    setPositions(next)
+    fitToView()
   }
 
-  const displayMap = new Map(display.map(n => [n.id, n]))
+  const displayMap = positions
+  const maxEdgeVal = useMemo(
+    () => Math.max(1, ...edges.map(e => (scoring === 'weighted' ? e.intimacy_score * 2 : e.weight))),
+    [edges, scoring],
+  )
+  const connectorCount = useMemo(
+    () => [...layout.placement.values()].filter(p => p.bridge >= CONNECTOR_CUTOFF).length,
+    [layout],
+  )
   const connectedTo = hoveredNode != null
     ? new Set<number>(edges.flatMap(e =>
         e.source === hoveredNode ? [e.target] :
@@ -282,6 +212,25 @@ function ForceGraph({
         {t('conn.resetView')}
       </button>
 
+      {/* What the layout is saying — without it the amber ring and the dashed
+          frames are decoration the reader has to guess at. */}
+      {(connectorCount > 0 || layout.groups.length > 1) && (
+        <div className="absolute top-3 left-3 z-10 flex flex-col gap-1 pointer-events-none">
+          {connectorCount > 0 && (
+            <div className="flex items-center gap-1.5 bg-zinc-900/85 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-400">
+              <span className="w-2.5 h-2.5 rounded-full border border-dashed border-amber-500 shrink-0" />
+              {t('conn.legendConnector')}
+            </div>
+          )}
+          {layout.groups.length > 1 && (
+            <div className="flex items-center gap-1.5 bg-zinc-900/85 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-400">
+              <span className="w-2.5 h-2.5 rounded border border-dashed border-zinc-500 shrink-0" />
+              {t('conn.legendGroups', { n: layout.groups.length })}
+            </div>
+          )}
+        </div>
+      )}
+
       <svg
         ref={svgRef}
         width={width}
@@ -299,30 +248,63 @@ function ForceGraph({
             With userSpaceOnUse, the clip coords are interpreted in the referencing
             element's coordinate system (content space), so we use n.x/n.y directly. */}
         <defs>
-          {display.map(n => {
-            const deg = degreeMap.get(n.id) ?? 0
-            const r = nodeRadius(n, deg)
+          {nodes.map(n => {
+            const p = displayMap.get(n.id)
+            if (!p) return null
+            const r = layout.placement.get(n.id)?.r ?? nodeRadius(n, degreeMap.get(n.id) ?? 0)
             return (
               <clipPath key={n.id} id={`gc-${n.id}`}>
-                <circle cx={n.x} cy={n.y} r={r - 2} />
+                <circle cx={p.x} cy={p.y} r={r - 2} />
               </clipPath>
             )
           })}
         </defs>
-          {/* ── Edges ── */}
+
+          {/* ── Group boundaries ──
+              Only worth drawing when there is more than one: with a single
+              group the frame says nothing and only adds ink. */}
+          {layout.groups.length > 1 && layout.groups.map(g => {
+            const pad = 26
+            return (
+              <g key={`group-${g.index}`} style={{ pointerEvents: 'none' }}>
+                <rect
+                  x={g.minX - pad} y={g.minY - pad}
+                  width={(g.maxX - g.minX) + pad * 2}
+                  height={(g.maxY - g.minY) + pad * 2}
+                  rx={34}
+                  fill="#a1a1aa" fillOpacity={0.028}
+                  stroke="#52525b" strokeOpacity={0.5} strokeWidth={1.25}
+                  strokeDasharray="7 7"
+                />
+                <text
+                  x={g.minX - pad + 16} y={g.minY - pad - 9}
+                  fontSize={11} fill="#71717a" fontWeight="600"
+                >
+                  {t('conn.groupLabel', { n: g.index + 1, count: g.size })}
+                </text>
+              </g>
+            )
+          })}
+
+          {/* ── Edges ──
+              Opacity tracks strength as well as width. At this density a flat
+              opacity turns the mesh into a grey wash where the strong ties are
+              no more visible than the incidental ones. */}
           {edges.map(e => {
             const a = displayMap.get(e.source), b = displayMap.get(e.target)
             if (!a || !b) return null
             const active = hoveredNode === e.source || hoveredNode === e.target
             const edgeVal = scoring === 'weighted' ? e.intimacy_score * 2 : e.weight
             const w = Math.log(edgeVal + 1) * 2.2
+            const strength = Math.min(1, Math.log(edgeVal + 1) / Math.log(maxEdgeVal + 1))
+            const faded = hoveredNode != null && !active
             return (
               <g key={`${e.source}-${e.target}`}>
                 <line
                   x1={a.x} y1={a.y} x2={b.x} y2={b.y}
                   stroke={active ? '#94a3b8' : '#3f3f46'}
                   strokeWidth={w}
-                  strokeOpacity={active ? 0.9 : 0.4}
+                  strokeOpacity={active ? 0.9 : faded ? 0.06 : 0.16 + strength * 0.42}
                   strokeLinecap="round"
                 />
                 <line
@@ -344,12 +326,16 @@ function ForceGraph({
           })}
 
           {/* ── Nodes ── */}
-          {display.map(n => {
+          {nodes.map(n => {
+            const p = displayMap.get(n.id)
+            if (!p) return null
+            const place = layout.placement.get(n.id)
             const deg = degreeMap.get(n.id) ?? 0
-            const r = nodeRadius(n, deg)
+            const r = place?.r ?? nodeRadius(n, deg)
             const color = nodeColor(n.id)
             const isHov = hoveredNode === n.id
             const dimmed = hoveredNode != null && !isHov && !connectedTo?.has(n.id)
+            const isConnector = (place?.bridge ?? 0) >= CONNECTOR_CUTOFF
 
             return (
               <g
@@ -365,12 +351,22 @@ function ForceGraph({
                 onMouseEnter={() => setHoveredNode(n.id)}
                 onMouseLeave={() => setHoveredNode(null)}
               >
-                <circle cx={n.x} cy={n.y} r={r + 5} fill={color} opacity={isHov ? 0.4 : 0.12} />
-                <circle cx={n.x} cy={n.y} r={r} fill="#111113" />
+                {/* A connector wears the same amber the app uses elsewhere for
+                    "this one matters", so the eye finds them without a legend. */}
+                {isConnector && (
+                  <circle
+                    cx={p.x} cy={p.y} r={r + 9}
+                    fill="none" stroke="#f59e0b"
+                    strokeOpacity={isHov ? 0.85 : 0.5}
+                    strokeWidth={1.5} strokeDasharray="3 4"
+                  />
+                )}
+                <circle cx={p.x} cy={p.y} r={r + 5} fill={color} opacity={isHov ? 0.4 : 0.12} />
+                <circle cx={p.x} cy={p.y} r={r} fill="#111113" />
                 {n.thumbnail_face_id != null ? (
                   <image
                     href={api.faceThumbnailUrl(n.thumbnail_face_id)}
-                    x={n.x - r} y={n.y - r}
+                    x={p.x - r} y={p.y - r}
                     width={r * 2} height={r * 2}
                     clipPath={`url(#gc-${n.id})`}
                     preserveAspectRatio="xMidYMid slice"
@@ -378,7 +374,7 @@ function ForceGraph({
                   />
                 ) : (
                   <text
-                    x={n.x} y={n.y + r * 0.32}
+                    x={p.x} y={p.y + r * 0.32}
                     textAnchor="middle"
                     fontSize={r * 0.85}
                     fill={color}
@@ -388,10 +384,10 @@ function ForceGraph({
                     {n.name.charAt(0).toUpperCase()}
                   </text>
                 )}
-                <circle cx={n.x} cy={n.y} r={r} fill="none" stroke={color} strokeWidth={isHov ? 2.5 : 1.5} strokeOpacity={isHov ? 0.9 : 0.5} />
+                <circle cx={p.x} cy={p.y} r={r} fill="none" stroke={color} strokeWidth={isHov ? 2.5 : 1.5} strokeOpacity={isHov ? 0.9 : 0.5} />
 
                 <text
-                  x={n.x} y={n.y + r + 15}
+                  x={p.x} y={p.y + r + 15}
                   textAnchor="middle"
                   fontSize={11}
                   fill={isHov ? '#e4e4e7' : '#71717a'}
@@ -401,15 +397,28 @@ function ForceGraph({
                   {n.name.length > 16 ? n.name.slice(0, 14) + '…' : n.name}
                 </text>
 
+                {isConnector && !isHov && (
+                  <text
+                    x={p.x} y={p.y + r + 27}
+                    textAnchor="middle"
+                    fontSize={9.5}
+                    fill="#b45309"
+                    fontWeight="600"
+                    style={{ pointerEvents: 'none' }}
+                  >
+                    {t('conn.connector')}
+                  </text>
+                )}
+
                 {isHov && (
                   <text
-                    x={n.x} y={n.y + r + 28}
+                    x={p.x} y={p.y + r + 28}
                     textAnchor="middle"
                     fontSize={10}
                     fill="#52525b"
                     style={{ pointerEvents: 'none' }}
                   >
-                    {n.photo_count} photo{n.photo_count !== 1 ? 's' : ''} · {deg} connection{deg !== 1 ? 's' : ''}
+                    {t('conn.nodeStats', { photos: n.photo_count, links: deg })}
                   </text>
                 )}
               </g>
