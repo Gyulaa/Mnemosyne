@@ -4,7 +4,7 @@ import { api, downloadViaBrowser } from '../api'
 import type { Cluster, ClusterConnection, FaceInfo, ImageItem, ImagePerson, PersonEvent, PersonFull, Relation, SimilarFaceInfo } from '../types'
 import ExportModal from './ExportModal'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
-import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
+import { useSettings, displayPersonName, displayInitials, useT, useDateLocale } from '../SettingsContext'
 
 type ModalTab = 'faces' | 'photos' | 'merge' | 'connections' | 'genealogy'
 
@@ -898,12 +898,13 @@ function ConnectionsPanel({ connections, onNavigate }: {
 }) {
   const [scoring, setScoring] = useState<ScoringMode>('count')
   const [showTooltip, setShowTooltip] = useState(false)
+  const t = useT()
 
   if (!connections.length) {
     return (
       <div className="py-12 text-center space-y-1">
-        <p className="text-zinc-500 text-sm">No shared photos with other named persons yet.</p>
-        <p className="text-zinc-600 text-xs">Name more clusters to see connections appear here.</p>
+        <p className="text-zinc-500 text-sm">{t('clusters.noShared')}</p>
+        <p className="text-zinc-600 text-xs">{t('clusters.noSharedSub')}</p>
       </div>
     )
   }
@@ -1080,6 +1081,7 @@ function GenealogyTab({
   onOpenCluster?: (cluster: Cluster) => void
   onNavToGenealogy?: (personId: number) => void
 }) {
+  const t = useT()
   const { data: persons = [], isLoading: personsLoading } = useQuery<PersonFull[]>({
     queryKey: ['persons'],
     queryFn: api.persons.list,
@@ -1224,8 +1226,8 @@ function GenealogyTab({
 
       {!hasAny ? (
         <div className="py-8 text-center space-y-1">
-          <p className="text-zinc-500 text-sm">No relatives found.</p>
-          <p className="text-zinc-600 text-xs">Add relationships on the Genealogy tab.</p>
+          <p className="text-zinc-500 text-sm">{t('clusters.noRelatives')}</p>
+          <p className="text-zinc-600 text-xs">{t('clusters.noRelativesSub')}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -1263,6 +1265,8 @@ function FaceGrid({
   onViewOriginal?: (imageId: number) => void
   onFacesChanged?: () => void
 }) {
+  const t = useT()
+  const dateLocale = useDateLocale()
   const [enlarged, setEnlarged] = useState<FaceInfo | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [assigning, setAssigning] = useState(false)
@@ -1304,26 +1308,26 @@ function FaceGrid({
           -top-4 counteracts the container's pt-4 so no gap appears when sticky triggers. */}
       {selected.size > 0 && (
         <div className="sticky -top-4 z-10 -mx-4 -mt-4 px-4 pt-3 pb-2.5 mb-3 bg-zinc-900 border-b border-zinc-800 flex items-center gap-3">
-          <span className="text-xs text-zinc-300 font-semibold tabular-nums">{selected.size} selected</span>
+          <span className="text-xs text-zinc-300 font-semibold tabular-nums">{t('clusters.selected', { n: selected.size })}</span>
           <button
             onClick={() => setAssigning(true)}
             disabled={busy}
             className="px-3 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
           >
-            Assign to…
+            {t('clusters.assignTo')}
           </button>
           <button
             onClick={unclassifySelected}
             disabled={busy}
             className="px-3 py-1.5 bg-zinc-700 hover:bg-amber-800/70 disabled:opacity-50 text-zinc-300 hover:text-amber-200 text-xs font-medium rounded-lg transition-colors"
           >
-            Unclassify
+            {t('clusters.unclassify')}
           </button>
           <button
             onClick={() => setSelected(new Set())}
             className="ml-auto text-xs text-zinc-600 hover:text-zinc-300 transition-colors"
           >
-            Deselect all
+            {t('clusters.deselectAll')}
           </button>
         </div>
       )}
@@ -1365,7 +1369,7 @@ function FaceGrid({
               {f.exif_date && (
                 <div className="absolute bottom-0 left-0 right-0 bg-black/70 px-1 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                   <p className="text-[8px] text-zinc-300 text-center leading-tight tabular-nums">
-                    {new Date(f.exif_date).toLocaleDateString('hu-HU')}
+                    {new Date(f.exif_date).toLocaleDateString(dateLocale)}
                   </p>
                 </div>
               )}
@@ -1388,7 +1392,7 @@ function FaceGrid({
             />
             {enlarged.exif_date && (
               <p className="text-sm text-zinc-300 font-medium text-center">
-                {new Date(enlarged.exif_date).toLocaleDateString('hu-HU', { year: 'numeric', month: 'long', day: 'numeric' })}
+                {new Date(enlarged.exif_date).toLocaleDateString(dateLocale, { year: 'numeric', month: 'long', day: 'numeric' })}
               </p>
             )}
             <p className="text-xs text-zinc-500 font-mono break-all text-center">
@@ -1409,7 +1413,7 @@ function FaceGrid({
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
-                View original photo
+                {t('clusters.viewOriginal')}
               </button>
             )}
           </div>
@@ -1443,6 +1447,8 @@ function NoiseFaceGrid({
   onViewOriginal?: (imageId: number) => void
 }) {
   const queryClient = useQueryClient()
+  const t = useT()
+  const dateLocale = useDateLocale()
   const [selected, setSelected]     = useState<Set<number>>(new Set())
   const [assigning, setAssigning]   = useState(false)
   const [showHidden, setShowHidden] = useState(false)
@@ -1525,7 +1531,7 @@ function NoiseFaceGrid({
   const selHasVisible    = selectedFaces.some(f => !f.dismissed)
 
   if (!faces.length) {
-    return <p className="text-center text-zinc-600 py-10 text-sm">No unclassified faces.</p>
+    return <p className="text-center text-zinc-600 py-10 text-sm">{t('clusters.noUnclassified')}</p>
   }
 
   return (
@@ -1569,48 +1575,48 @@ function NoiseFaceGrid({
               onClick={() => setAssigning(true)}
               className="px-2.5 py-1.5 bg-brand-500 hover:bg-brand-400 text-white text-xs font-medium rounded-lg transition-colors shrink-0"
             >
-              Assign {selected.size} →
+              {t('clusters.assignN', { n: selected.size })}
             </button>
             {selHasVisible && (
               <button
                 onClick={handleDismiss}
                 className="flex items-center gap-1 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs font-medium rounded-lg border border-zinc-700 transition-colors shrink-0"
-                title="Hide selected faces"
+                title={t('clusters.hideSelected')}
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
                 </svg>
-                Hide
+                {t('clusters.hide')}
               </button>
             )}
             {selHasDismissed && (
               <button
                 onClick={handleRestore}
                 className="flex items-center gap-1 px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-amber-400 hover:text-amber-300 text-xs font-medium rounded-lg border border-zinc-700 transition-colors shrink-0"
-                title="Restore hidden faces"
+                title={t('clusters.restoreHidden')}
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                 </svg>
-                Restore
+                {t('clusters.restore')}
               </button>
             )}
             <button
               onClick={() => setDeleteConfirm(true)}
               className="flex items-center gap-1 px-2.5 py-1.5 bg-zinc-800 hover:bg-red-900/60 text-red-400 hover:text-red-300 text-xs font-medium rounded-lg border border-zinc-700 hover:border-red-800 transition-colors shrink-0"
-              title="Permanently delete selected faces"
+              title={t('clusters.deleteSelectedTitle')}
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
-              Delete
+              {t('clusters.delete')}
             </button>
             <button
               onClick={() => setSelected(new Set())}
               className="ml-auto text-xs text-zinc-600 hover:text-zinc-300 transition-colors shrink-0"
             >
-              Deselect all
+              {t('clusters.deselectAll')}
             </button>
           </>
         )}
@@ -1627,8 +1633,8 @@ function NoiseFaceGrid({
                 </svg>
               </div>
               <div>
-                <p className="text-sm font-semibold text-zinc-100">Delete {selected.size} face{selected.size !== 1 ? 's' : ''}?</p>
-                <p className="text-xs text-zinc-500 mt-0.5">This cannot be undone.</p>
+                <p className="text-sm font-semibold text-zinc-100">{t('clusters.deleteFacesQ', { n: selected.size })}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">{t('clusters.cannotUndo')}</p>
               </div>
             </div>
             <div className="flex gap-2 justify-end mt-5">
@@ -1636,13 +1642,13 @@ function NoiseFaceGrid({
                 onClick={() => setDeleteConfirm(false)}
                 className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 rounded-lg transition-colors"
               >
-                Cancel
+                {t('clusters.cancel')}
               </button>
               <button
                 onClick={handleDelete}
                 className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-xs font-medium rounded-lg transition-colors"
               >
-                Delete permanently
+                {t('clusters.deletePermanently')}
               </button>
             </div>
           </div>
@@ -1743,7 +1749,7 @@ function NoiseFaceGrid({
             />
             {enlarged.exif_date && (
               <p className="text-sm text-zinc-300 font-medium text-center">
-                {new Date(enlarged.exif_date).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                {new Date(enlarged.exif_date).toLocaleDateString(dateLocale, { year: 'numeric', month: 'long', day: 'numeric' })}
               </p>
             )}
             <p className="text-xs text-zinc-500 font-mono break-all text-center">{enlarged.image_path}</p>
@@ -1757,7 +1763,7 @@ function NoiseFaceGrid({
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
-                Full photo
+                {t('clusters.fullPhoto')}
               </button>
               {onViewOriginal && (
                 <button
@@ -1767,7 +1773,7 @@ function NoiseFaceGrid({
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                   </svg>
-                  Open in Photos
+                  {t('clusters.openInPhotos')}
                 </button>
               )}
             </div>
@@ -1809,6 +1815,7 @@ function NoiseImageModal({ imageId, onBack, onClose, onNavToCluster }: {
   onClose: () => void
   onNavToCluster?: (clusterId: number) => void
 }) {
+  const dateLocale = useDateLocale()
   const { data: img } = useQuery<ImageItem>({
     queryKey: ['image', imageId],
     queryFn: () => api.images.get(imageId),
@@ -1867,7 +1874,7 @@ function NoiseImageModal({ imageId, onBack, onClose, onNavToCluster }: {
                       <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                       </svg>
-                      {new Date(img.exif_date).toLocaleString()}
+                      {new Date(img.exif_date).toLocaleString(dateLocale)}
                     </span>
                   )}
                   {(exifMeta.make || exifMeta.model) && (
@@ -1959,6 +1966,7 @@ function ClusterPersonPickerModal({ persons, relations, nameOrder, linking, onSe
   onSelect: (p: PersonFull) => void
   onClose: () => void
 }) {
+  const t = useT()
   const [search, setSearch] = useState('')
 
   const personById = useMemo(() => new Map(persons.map(p => [p.id, p])), [persons])
@@ -2001,13 +2009,13 @@ function ClusterPersonPickerModal({ persons, relations, nameOrder, linking, onSe
       <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-96 flex flex-col overflow-hidden"
         style={{ maxHeight: 520 }} onClick={e => e.stopPropagation()}>
         <div className="px-4 pt-3 pb-2 border-b border-zinc-700">
-          <p className="text-xs font-semibold text-zinc-300 mb-2">Assign to person</p>
+          <p className="text-xs font-semibold text-zinc-300 mb-2">{t('clusters.assignToPerson')}</p>
           <input
             autoFocus
             type="search"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search…"
+            placeholder={t('clusters.searchShort')}
             className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
           />
         </div>
@@ -2073,6 +2081,7 @@ function AssignFacesOverlay({
   onAssigned: () => void
 }) {
   const { nameOrder } = useSettings()
+  const t = useT()
   const [tab, setTab] = useState<'cluster' | 'person'>('cluster')
   const [nameParts, setNameParts] = useState<NameParts>({ title: '', last_name: '', first_name: '', middle_name: '', nickname: '' })
   const [busy, setBusy] = useState(false)
@@ -2259,13 +2268,13 @@ function AssignFacesOverlay({
               onClick={() => setTab('cluster')}
               className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${tab === 'cluster' ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
             >
-              Cluster
+              {t('clusters.tabCluster')}
             </button>
             <button
               onClick={() => { setTab('person'); setShowNewCluster(false) }}
               className={`px-4 py-1.5 rounded-md text-xs font-medium transition-colors ${tab === 'person' ? 'bg-zinc-700 text-zinc-100 shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
             >
-              Genealogy person
+              {t('clusters.tabPerson')}
             </button>
           </div>
         </div>
@@ -2282,18 +2291,18 @@ function AssignFacesOverlay({
                   onClick={() => setShowNewCluster(true)}
                   className="w-full flex items-center justify-center gap-2 border border-dashed border-zinc-600 hover:border-brand-400 hover:text-brand-400 rounded-xl py-3 text-sm text-zinc-400 transition-colors"
                 >
-                  <span className="text-lg leading-none">+</span> New cluster
+                  <span className="text-lg leading-none">+</span> {t('clusters.newCluster')}
                 </button>
               ) : (
                 <div className="bg-zinc-800/60 border border-zinc-700 rounded-xl p-4 space-y-3">
-                  <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">New cluster</p>
+                  <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">{t('clusters.newCluster')}</p>
                   <NameEditor value={nameParts} onChange={setNameParts} autoFocus size="md" />
                   <div className="flex justify-end gap-2">
                     <button
                       onClick={() => { setShowNewCluster(false); setNameParts({ title: '', last_name: '', first_name: '', middle_name: '', nickname: '' }) }}
                       className="px-4 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-sm font-medium rounded-lg transition-colors"
                     >
-                      Cancel
+                      {t('clusters.cancel')}
                     </button>
                     <button
                       onClick={createAndAssign}
@@ -2310,13 +2319,13 @@ function AssignFacesOverlay({
               {allClusters.length > 0 && (
                 <div className="space-y-2.5">
                   <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                    Or assign to existing cluster
+                    {t('clusters.orExisting')}
                   </p>
                   <input
                     type="search"
                     value={clusterSearch}
                     onChange={e => setClusterSearch(e.target.value)}
-                    placeholder="Search by name…"
+                    placeholder={t('clusters.searchByName')}
                     className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400"
                   />
                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
@@ -2364,11 +2373,11 @@ function AssignFacesOverlay({
                   value={personSearch}
                   onChange={e => setPersonSearch(e.target.value)}
                   autoFocus
-                  placeholder="Search by name…"
+                  placeholder={t('clusters.searchByName')}
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3.5 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-brand-400"
                 />
                 {filteredPersons.length === 0 && (
-                  <p className="text-sm text-zinc-600 italic text-center py-6">No persons found.</p>
+                  <p className="text-sm text-zinc-600 italic text-center py-6">{t('clusters.noPersons')}</p>
                 )}
               </div>
               <div className="overflow-y-auto flex-1 px-3 pb-4">
@@ -2432,7 +2441,7 @@ function AssignFacesOverlay({
                             <svg className="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 20 20">
                               <circle cx="10" cy="10" r="4" />
                             </svg>
-                            Has cluster
+                            {t('clusters.hasCluster')}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-xs font-medium bg-zinc-800 text-zinc-500 border border-zinc-700/50 rounded-full px-2 py-0.5">
@@ -2440,7 +2449,7 @@ function AssignFacesOverlay({
                               <circle cx="10" cy="10" r="4" />
                               <path strokeLinecap="round" d="M10 6v8M6 10h8" />
                             </svg>
-                            New cluster
+                            {t('clusters.newCluster')}
                           </span>
                         )}
                       </div>
@@ -2471,6 +2480,7 @@ function SuggestionsPanel({
     new Set(suggestions.faces.map(f => f.id)),
   )
   const [busy, setBusy] = useState(false)
+  const t = useT()
 
   function toggle(id: number) {
     setSelected(prev => {
@@ -2554,16 +2564,16 @@ function SuggestionsPanel({
               disabled={selected.size === 0 || busy}
               className="px-5 py-2 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
             >
-              {busy ? '…' : `Add ${selected.size} face${selected.size !== 1 ? 's' : ''}`}
+              {busy ? '…' : t('clusters.addNFaces', { n: selected.size })}
             </button>
             <button
               onClick={onSkip}
               className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
             >
-              Skip
+              {t('clusters.skip')}
             </button>
             <span className="ml-auto text-xs text-zinc-600">
-              Click faces to toggle selection
+              {t('clusters.toggleHint')}
             </span>
           </div>
         </div>
@@ -2589,6 +2599,7 @@ function PhotoGallery({
 }) {
   const uniqueImages = [...new Map(faces.map(f => [f.image_id, f])).values()]
   const [lightboxIdx, setLightboxIdx] = useState<number | null>(null)
+  const t = useT()
 
   // Jump to a specific image when requested from FaceGrid
   useEffect(() => {
@@ -2611,7 +2622,7 @@ function PhotoGallery({
   }, [lightboxIdx, uniqueImages.length])
 
   if (!uniqueImages.length) {
-    return <p className="text-center text-zinc-600 py-10 text-sm">No photos found.</p>
+    return <p className="text-center text-zinc-600 py-10 text-sm">{t('clusters.noPhotos')}</p>
   }
 
   const currentImage = lightboxIdx != null ? uniqueImages[lightboxIdx] : null
@@ -2667,7 +2678,7 @@ function PhotoGallery({
             <button
               onClick={e => { e.stopPropagation(); setLightboxIdx(i => (i != null ? i - 1 : i)) }}
               className="absolute left-4 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-black/60 hover:bg-black/85 text-white flex items-center justify-center transition-colors"
-              aria-label="Previous"
+              aria-label={t('clusters.prev')}
             >
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -2689,7 +2700,7 @@ function PhotoGallery({
             <button
               onClick={e => { e.stopPropagation(); setLightboxIdx(i => (i != null ? i + 1 : i)) }}
               className="absolute right-4 top-1/2 -translate-y-1/2 z-10 w-11 h-11 rounded-full bg-black/60 hover:bg-black/85 text-white flex items-center justify-center transition-colors"
-              aria-label="Next"
+              aria-label={t('clusters.next')}
             >
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -2713,7 +2724,7 @@ function PhotoGallery({
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
-                Open in Images
+                {t('clusters.modal.openInImages')}
               </button>
             )}
           </div>
@@ -2722,7 +2733,7 @@ function PhotoGallery({
           <button
             onClick={() => setLightboxIdx(null)}
             className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/60 hover:bg-black/85 text-zinc-300 hover:text-white flex items-center justify-center transition-colors"
-            aria-label="Close"
+            aria-label={t('common.close')}
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -2778,21 +2789,21 @@ function MergePanel({
           ?
         </p>
         <p className="text-zinc-500 text-sm text-center -mt-4">
-          {cluster.face_count} faces will move to the target. This cannot be undone.
+          {t('clusters.mergeWarn', { n: cluster.face_count })}
         </p>
         <div className="flex gap-3">
           <button
             onClick={() => setTarget(null)}
             className="px-5 py-2 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-sm font-medium rounded-lg transition-colors"
           >
-            Cancel
+            {t('clusters.cancel')}
           </button>
           <button
             onClick={doMerge}
             disabled={merging}
             className="px-5 py-2 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
           >
-            {merging ? 'Merging…' : 'Confirm merge'}
+            {merging ? t('clusters.merging') : t('clusters.confirmMerge')}
           </button>
         </div>
       </div>
@@ -2801,7 +2812,7 @@ function MergePanel({
 
   if (!otherClusters.length) {
     return (
-      <p className="text-center text-zinc-600 py-10 text-sm">No other clusters to merge into.</p>
+      <p className="text-center text-zinc-600 py-10 text-sm">{t('clusters.noOtherClusters')}</p>
     )
   }
 
@@ -2816,18 +2827,18 @@ function MergePanel({
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-3">
-        <p className="text-sm text-zinc-500 shrink-0">Merge into:</p>
+        <p className="text-sm text-zinc-500 shrink-0">{t('clusters.mergeInto')}</p>
         <input
           type="search"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search by name…"
+          placeholder={t('clusters.searchByName')}
           autoFocus
           className="flex-1 max-w-xs bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
         />
         {q && (
           <span className="text-xs text-zinc-600 shrink-0">
-            {filtered.length} result{filtered.length !== 1 ? 's' : ''}
+            {t('clusters.resultsN', { n: filtered.length })}
           </span>
         )}
       </div>

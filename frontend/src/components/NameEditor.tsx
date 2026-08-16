@@ -1,3 +1,5 @@
+import { useT } from '../SettingsContext'
+
 export interface NameParts {
   title: string
   last_name: string
@@ -58,6 +60,7 @@ export default function NameEditor({
   size?: 'sm' | 'md'
 }) {
   const s = SIZES[size]
+  const t = useT()
 
   function set(field: keyof NameParts) {
     return (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -68,50 +71,50 @@ export default function NameEditor({
     <div className={s.gap}>
       <div className={s.grid}>
         <div>
-          <label className={s.label}>First name</label>
+          <label className={s.label}>{t('nameEditor.firstName')}</label>
           <input
             autoFocus={autoFocus}
             value={value.first_name}
             onChange={set('first_name')}
-            placeholder="First name"
+            placeholder={t('nameEditor.firstName')}
             className={s.input}
           />
         </div>
         <div>
-          <label className={s.label}>Last name</label>
+          <label className={s.label}>{t('nameEditor.lastName')}</label>
           <input
             value={value.last_name}
             onChange={set('last_name')}
-            placeholder="Last name"
+            placeholder={t('nameEditor.lastName')}
             className={s.input}
           />
         </div>
         <div>
-          <label className={s.label}>Middle name(s)</label>
+          <label className={s.label}>{t('nameEditor.middleName')}</label>
           <input
             value={value.middle_name}
             onChange={set('middle_name')}
-            placeholder="Middle name(s)"
+            placeholder={t('nameEditor.middleName')}
             className={s.input}
           />
         </div>
         <div>
-          <label className={s.label}>Nickname</label>
+          <label className={s.label}>{t('nameEditor.nickname')}</label>
           <input
             value={value.nickname}
             onChange={set('nickname')}
-            placeholder='"Billy"'
+            placeholder={t('nameEditor.nicknamePh')}
             className={s.input}
           />
         </div>
       </div>
       <div>
-        <label className={s.label}>Title / Suffix</label>
+        <label className={s.label}>{t('nameEditor.titleSuffix')}</label>
         <input
           list="name-editor-titles"
           value={value.title}
           onChange={set('title')}
-          placeholder="e.g. Dr., Prof., Jr."
+          placeholder={t('nameEditor.titlePh')}
           className={s.input}
         />
         <datalist id="name-editor-titles">

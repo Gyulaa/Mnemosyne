@@ -184,26 +184,21 @@ body::after {
 .note-content a.note-people-ref::before,
 .note-preview a.note-people-ref::before { content: '🖼'; font-size: 0.9em; }
 
-/* Markdown element styles inside note-content and note-preview */
-.note-content p, .note-preview p { margin: 0.5em 0; }
-.note-content p:first-child, .note-preview p:first-child { margin-top: 0; }
-.note-content p:last-child, .note-preview p:last-child { margin-bottom: 0; }
+/* Markdown element styles inside note-content and note-preview.
+   Colours and sizes are shared; vertical rhythm deliberately is not. See the
+   two spacing blocks below. */
 .note-content h1, .note-preview h1,
 .note-content h2, .note-preview h2,
 .note-content h3, .note-preview h3 {
   color: #e4e4e7; /* zinc-200 */
   font-weight: 600;
-  margin: 1em 0 0.4em;
   line-height: 1.3;
 }
 .note-content h1, .note-preview h1 { font-size: 1.15em; }
 .note-content h2, .note-preview h2 { font-size: 1.05em; }
 .note-content h3, .note-preview h3 { font-size: 0.95em; }
 .note-content ul, .note-preview ul,
-.note-content ol, .note-preview ol {
-  padding-left: 1.4em;
-  margin: 0.5em 0;
-}
+.note-content ol, .note-preview ol { padding-left: 1.4em; }
 .note-content li, .note-preview li { margin: 0.15em 0; }
 .note-content ul, .note-preview ul { list-style-type: disc; }
 .note-content ol, .note-preview ol { list-style-type: decimal; }
@@ -213,7 +208,6 @@ body::after {
   border-left: 3px solid #52525b; /* zinc-600 */
   padding-left: 0.75em;
   color: #a1a1aa; /* zinc-400 */
-  margin: 0.5em 0;
 }
 .note-content code, .note-preview code {
   background: #27272a; /* zinc-800 */
@@ -227,7 +221,6 @@ body::after {
   border-radius: 6px;
   padding: 0.75em 1em;
   overflow-x: auto;
-  margin: 0.5em 0;
 }
 .note-content pre code, .note-preview pre code {
   background: none;
@@ -240,3 +233,42 @@ body::after {
   color: #a855f7;
   text-decoration: underline;
 }
+
+/* Reading rhythm — a blank line the writer typed has to read as a blank line.
+   `breaks: true` in markdown.ts already turns a single newline into a <br>, so
+   a paragraph break only registers as one if the extra gap is a decent share of
+   a line. At the 0.5em these once shared it was not, and prose written in
+   paragraphs came out as one block. Adjacent margins collapse, so each value
+   below is the whole gap, not twice it. */
+.note-content p,
+.note-content ul,
+.note-content ol,
+.note-content blockquote,
+.note-content pre { margin: 1em 0; }
+.note-content li { margin: 0.25em 0; }
+.note-content h1,
+.note-content h2,
+.note-content h3 { margin: 1.8em 0 0.6em; }
+.note-content hr {
+  border: 0;
+  border-top: 1px solid #3f3f46; /* zinc-700 */
+  margin: 1.8em 0;
+}
+/* Edges belong to the container's own padding. Specificity puts these above the
+   element rules above, so headings and lists lose their outer margin too. */
+.note-content > :first-child { margin-top: 0; }
+.note-content > :last-child { margin-bottom: 0; }
+
+/* Teaser rhythm — .note-preview is the four-line clamped excerpt on a note
+   card, where the reading rhythm above would spend half the visible lines on
+   whitespace. It stays compact on purpose. */
+.note-preview p,
+.note-preview ul,
+.note-preview ol,
+.note-preview blockquote,
+.note-preview pre { margin: 0.5em 0; }
+.note-preview h1,
+.note-preview h2,
+.note-preview h3 { margin: 1em 0 0.4em; }
+.note-preview > :first-child { margin-top: 0; }
+.note-preview > :last-child { margin-bottom: 0; }

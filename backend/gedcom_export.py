@@ -197,7 +197,12 @@ def build_gedcom_zip(
     try:
         persons       = conn.execute("SELECT * FROM persons").fetchall()
         relations     = conn.execute("SELECT * FROM relations WHERE COALESCE(is_private,0)=0").fetchall()
-        documents     = conn.execute("SELECT * FROM documents WHERE COALESCE(is_private,0)=0").fetchall() if include_documents else []
+        # A GEDCOM attaches documents to an INDI, so one that belongs to nobody
+        # has nowhere to go — including its file would put media in the ZIP that
+        # family.ged never references.
+        documents     = conn.execute(
+            "SELECT * FROM documents WHERE COALESCE(is_private,0)=0 AND person_id IS NOT NULL"
+        ).fetchall() if include_documents else []
         sources       = conn.execute("SELECT * FROM sources").fetchall() if include_sources else []
         notes         = conn.execute("SELECT * FROM person_notes WHERE COALESCE(is_private,0)=0").fetchall() if include_notes else []
         note_cites    = conn.execute("SELECT * FROM note_citations").fetchall() if include_notes else []

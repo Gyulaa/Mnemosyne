@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument, DocumentType, Source, Citation } from '../types'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
-import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
+import { useSettings, displayPersonName, displayInitials, useT, useDateLocale, formatPartialDate, monthNames } from '../SettingsContext'
 import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
 import EventTimeline from './EventTimeline'
@@ -15,28 +15,22 @@ import { docTypeLabel, builtinDocTypeOptions } from '../docTypes'
 
 const PHOTOS_CAP = 6
 
-const MONTHS_EN = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString('hu-HU', { year: 'numeric', month: 'short', day: 'numeric' })
+function fmtDate(iso: string, locale: string) {
+  return new Date(iso).toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-function formatDate(date: string | null | undefined, fallbackYear?: number | null): string | null {
-  if (date) {
-    const parts = date.split('-')
-    if (parts.length === 3) return `${parseInt(parts[2])} ${MONTHS_EN[parseInt(parts[1]) - 1]} ${parts[0]}`
-    if (parts.length === 2) return `${MONTHS_EN[parseInt(parts[1]) - 1]} ${parts[0]}`
-    return parts[0]
-  }
+function formatDate(date: string | null | undefined, fallbackYear: number | null | undefined, locale: string): string | null {
+  if (date) return formatPartialDate(date, locale)
   return fallbackYear != null ? String(fallbackYear) : null
 }
 
-function lifespan(p: PersonFull) {
-  const b = [formatDate(p.birth_date, p.birth_year), p.birth_place].filter(Boolean).join(', ')
-  const d = [formatDate(p.death_date, p.death_year), p.death_place].filter(Boolean).join(', ')
+function lifespan(p: PersonFull, locale: string) {
+  const b = [formatDate(p.birth_date, p.birth_year, locale), p.birth_place].filter(Boolean).join(', ')
+  const d = [formatDate(p.death_date, p.death_year, locale), p.death_place].filter(Boolean).join(', ')
   if (!b && !d) return null
   if (p.death_year || p.death_place || p.death_date) return `${b || '?'} – ${d || '?'}`
   return b ? `* ${b}` : null
@@ -64,6 +58,7 @@ function DatePartPicker({ value, onChange, placeholder }: {
   placeholder?: string
 }) {
   const t = useT()
+  const dateLocale = useDateLocale()
   const parts = value ? value.split('-') : []
   const yr = parts[0] ?? ''
   const mo = parts[1] ?? ''
@@ -98,7 +93,7 @@ function DatePartPicker({ value, onChange, placeholder }: {
           className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-brand-400"
         >
           <option value="">{t('timeline.monthPh')}</option>
-          {MONTHS_EN.map((m, i) => (
+          {monthNames(dateLocale).map((m, i) => (
             <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>
           ))}
         </select>
@@ -175,6 +170,7 @@ function Lightbox({ images, idx, onClose, onChange, onNavigateTo }: {
   onNavigateTo: (id: number) => void
 }) {
   const t = useT()
+  const dateLocale = useDateLocale()
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -235,7 +231,7 @@ function Lightbox({ images, idx, onClose, onChange, onNavigateTo }: {
                   <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
-                  {new Date(img.exif_date).toLocaleString('hu-HU')}
+                  {new Date(img.exif_date).toLocaleString(dateLocale)}
                 </span>
               )}
               {(exifMeta.make || exifMeta.model) && (
@@ -276,6 +272,7 @@ function Lightbox({ images, idx, onClose, onChange, onNavigateTo }: {
 // ── PhotoGallery ──────────────────────────────────────────────────────────────
 
 function PhotoGallery({ images, onOpen }: { images: ImageItem[]; onOpen: (i: number) => void }) {
+  const dateLocale = useDateLocale()
   return (
     <div className="grid grid-cols-3 gap-1.5">
       {images.map((img, i) => (
@@ -285,7 +282,7 @@ function PhotoGallery({ images, onOpen }: { images: ImageItem[]; onOpen: (i: num
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
           {img.exif_date && (
             <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-              <p className="text-xs text-zinc-300 text-center leading-tight">{fmtDate(img.exif_date)}</p>
+              <p className="text-xs text-zinc-300 text-center leading-tight">{fmtDate(img.exif_date, dateLocale)}</p>
             </div>
           )}
         </button>
@@ -600,7 +597,7 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
     if (!file || uploading) return
     setUploading(true)
     try {
-      await api.documents.upload(personId, file, {
+      await api.documents.upload([personId], file, {
         title: title.trim() || undefined,
         doc_type: docType,
         year: year ? parseInt(year) : undefined,
@@ -1240,6 +1237,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   const t = useT()
   const qc = useQueryClient()
   const { nameOrder } = useSettings()
+  const dateLocale = useDateLocale()
   const [visible, setVisible] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -1596,7 +1594,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     setExpandedRelId(rel.id)
   }
 
-  const span = lifespan(person)
+  const span = lifespan(person, dateLocale)
   const ageInfo = calcAge(person)
 
   // Header action strip: relate + merge + [delete] + close, w-8 each with gap-1.5,
@@ -1922,7 +1920,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   <div>
                     <div className="flex gap-2 text-xs items-center">
                       <span className="text-zinc-500 w-20 shrink-0">{t('person.birth')}</span>
-                      <span className="text-zinc-300 flex-1">{[formatDate(person.birth_date, person.birth_year), person.birth_place].filter(Boolean).join(', ')}</span>
+                      <span className="text-zinc-300 flex-1">{[formatDate(person.birth_date, person.birth_year, dateLocale), person.birth_place].filter(Boolean).join(', ')}</span>
                       <button onClick={() => { setAutoPhotoEventType('birth'); setActiveTab('events') }} title={t('person.attachPhotoBirth')}
                         className="text-zinc-600 hover:text-brand-400 transition-colors shrink-0">
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1938,7 +1936,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   <div>
                     <div className="flex gap-2 text-xs items-center">
                       <span className="text-zinc-500 w-20 shrink-0">{t('person.death')}</span>
-                      <span className="text-zinc-300 flex-1">{[formatDate(person.death_date, person.death_year), person.death_place].filter(Boolean).join(', ')}</span>
+                      <span className="text-zinc-300 flex-1">{[formatDate(person.death_date, person.death_year, dateLocale), person.death_place].filter(Boolean).join(', ')}</span>
                       <button onClick={() => { setAutoPhotoEventType('death'); setActiveTab('events') }} title={t('person.attachPhotoDeath')}
                         className="text-zinc-600 hover:text-brand-400 transition-colors shrink-0">
                         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -2005,7 +2003,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   <div>
                     <div className="flex gap-2 text-xs">
                       <span className="text-zinc-500 w-20 shrink-0">{t('person.christening')}</span>
-                      <span className="text-zinc-300">{[formatDate(person.christening_date, person.christening_year), person.christening_place].filter(Boolean).join(', ')}</span>
+                      <span className="text-zinc-300">{[formatDate(person.christening_date, person.christening_year, dateLocale), person.christening_place].filter(Boolean).join(', ')}</span>
                     </div>
                     <div className="ml-0">
                       <CitationsInline personId={person.id} fact="christening" citations={citationsFor('christening')} sources={sources} onMutated={invalidateCitations} />
@@ -2016,7 +2014,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   <div>
                     <div className="flex gap-2 text-xs">
                       <span className="text-zinc-500 w-20 shrink-0">{t('person.burial')}</span>
-                      <span className="text-zinc-300">{[formatDate(person.burial_date, person.burial_year), person.burial_place].filter(Boolean).join(', ')}</span>
+                      <span className="text-zinc-300">{[formatDate(person.burial_date, person.burial_year, dateLocale), person.burial_place].filter(Boolean).join(', ')}</span>
                     </div>
                     <div className="ml-0">
                       <CitationsInline personId={person.id} fact="burial" citations={citationsFor('burial')} sources={sources} onMutated={invalidateCitations} />
@@ -2025,7 +2023,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 )}
               </div>
             ) : (
-              <p className="text-sm text-zinc-600 italic">No details yet</p>
+              <p className="text-sm text-zinc-600 italic">{t('person.noDetails')}</p>
             )}
           </section>
 

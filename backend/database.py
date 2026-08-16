@@ -1,3 +1,5 @@
+import re
+
 from sqlalchemy import (
     Column, Integer, String, Float, LargeBinary, Boolean,
     ForeignKey, DateTime, UniqueConstraint, event, text,
@@ -123,7 +125,10 @@ class Relation(Base):
 class Document(Base):
     __tablename__ = "documents"
     id = Column(Integer, primary_key=True, index=True)
-    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
+    # The original single owner, kept in step with `document_persons` by hand.
+    # NULL means the document belongs to the project rather than to a person —
+    # a chronicle or a research memo written before anyone is linked to it.
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=True, index=True)
     stored_name = Column(String, nullable=False)   # UUID-alapú fájlnév a lemezen
     filename = Column(String, nullable=False)       # eredeti fájlnév (megjelenítésre)
     mime_type = Column(String, nullable=True)
@@ -825,3 +830,70 @@ def init_db_schema(engine):
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_tool_calls_message_id ON chat_tool_calls(message_id)"))
             conn.execute(text("UPDATE schema_version SET version = 7"))
             conn.commit()
+
+        # v7 → v8: documents.person_id becomes nullable, so a document can exist
+        # without belonging to anybody. SQLite cannot drop a NOT NULL with
+        # ALTER TABLE, so this one needs a table rebuild — see the helper.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 8:
+            # PRAGMA foreign_keys is silently ignored inside a transaction, and
+            # the rebuild is wrong without it — so hand the work to the raw
+            # DBAPI connection with nothing open on it.
+            conn.commit()
+            _drop_document_owner_not_null(conn.connection.dbapi_connection)
+            conn.execute(text("UPDATE schema_version SET version = 8"))
+            conn.commit()
+
+
+def _drop_document_owner_not_null(raw) -> None:
+    """Rebuild `documents` with a nullable `person_id`. Idempotent.
+
+    SQLite has no ALTER COLUMN, so the only way to relax the constraint is the
+    documented create-copy-drop-rename dance. Two details are load-bearing:
+
+    * Foreign keys must be **off**. `document_persons.document_id` cascades, so
+      dropping the old table with them on would delete every person link in the
+      project instead of just the table.
+    * The new DDL is derived from the stored one rather than written out here,
+      so a column added to the model later is carried over instead of silently
+      dropped by a hardcoded column list.
+    """
+    cols = raw.execute("PRAGMA table_info(documents)").fetchall()
+    if not cols:
+        return                                  # fresh database — create_all already made it nullable
+    owner = next((c for c in cols if c[1] == "person_id"), None)
+    if owner is None or not owner[3]:
+        return                                  # already nullable
+
+    ddl = raw.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='documents'"
+    ).fetchone()[0]
+    new_ddl = re.sub(r"(\bperson_id\s+INTEGER)\s+NOT\s+NULL", r"\1", ddl, count=1, flags=re.IGNORECASE)
+    if new_ddl == ddl:
+        return                                  # unrecognised DDL — leave the table alone rather than guess
+    new_ddl = re.sub(r"^\s*CREATE\s+TABLE\s+[\"'`\[]?documents[\"'`\]]?",
+                     "CREATE TABLE documents_rebuild", new_ddl, count=1, flags=re.IGNORECASE)
+
+    col_list = ", ".join(f'"{c[1]}"' for c in cols)
+    raw.execute("PRAGMA foreign_keys=OFF")
+    # A plain RENAME would try to rewrite references to the old name across the
+    # whole schema; legacy mode keeps it a rename and nothing more.
+    raw.execute("PRAGMA legacy_alter_table=ON")
+    try:
+        raw.execute("BEGIN")
+        raw.execute(new_ddl)
+        raw.execute(f"INSERT INTO documents_rebuild ({col_list}) SELECT {col_list} FROM documents")
+        raw.execute("DROP TABLE documents")
+        raw.execute("ALTER TABLE documents_rebuild RENAME TO documents")
+        raw.execute("CREATE INDEX IF NOT EXISTS ix_documents_id ON documents (id)")
+        raw.execute("CREATE INDEX IF NOT EXISTS ix_documents_person_id ON documents (person_id)")
+        violations = raw.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"documents rebuild would orphan {len(violations)} row(s)")
+        raw.commit()
+    except Exception:
+        raw.rollback()
+        raise
+    finally:
+        raw.execute("PRAGMA legacy_alter_table=OFF")
+        raw.execute("PRAGMA foreign_keys=ON")

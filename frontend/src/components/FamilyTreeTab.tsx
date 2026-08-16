@@ -590,20 +590,20 @@ export default function FamilyTreeTab({
       {/* ── Rollback banner ── */}
       {gedcomRollbackExpiry && gedcomRollbackExpiry > Date.now() && (
         <div className="shrink-0 flex items-center gap-3 px-4 py-2 bg-amber-950/60 border-b border-amber-800/50 text-xs">
-          <span className="text-amber-300 font-medium">Import visszavonható</span>
-          <span className="text-amber-500">– az utolsó GEDCOM importálás visszavonható az adatok törlésével</span>
+          <span className="text-amber-300 font-medium">{t('tree.rollbackTitle')}</span>
+          <span className="text-amber-500">{t('tree.rollbackDesc')}</span>
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={handleRollback}
               disabled={rollingBack}
               className="px-3 py-1 rounded-md bg-amber-700 hover:bg-amber-600 text-white font-medium disabled:opacity-50 transition-colors"
             >
-              {rollingBack ? 'Visszavonás…' : 'Visszavon'}
+              {rollingBack ? t('tree.rollingBack') : t('tree.rollback')}
             </button>
             <button
               onClick={() => setRollbackExpiry(null)}
               className="text-amber-600 hover:text-amber-400 transition-colors"
-              title="Bezár"
+              title={t('common.close')}
             >✕</button>
           </div>
         </div>

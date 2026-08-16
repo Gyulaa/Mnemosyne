@@ -215,7 +215,8 @@ export interface DocumentImageRef {
 
 export interface PersonDocument {
   id: number
-  person_id: number
+  /** Original single owner; null when the document belongs to no one. See `persons`. */
+  person_id: number | null
   stored_name: string
   filename: string
   mime_type: string | null

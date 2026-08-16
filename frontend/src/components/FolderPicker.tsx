@@ -2,6 +2,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { FsItem } from '../types'
+import { useT } from '../SettingsContext'
 
 interface Props {
   value: string
@@ -10,6 +11,7 @@ interface Props {
 
 export default function FolderPicker({ value, onChange }: Props) {
   const [open, setOpen] = useState(false)
+  const t = useT()
 
   return (
     <>
@@ -18,13 +20,13 @@ export default function FolderPicker({ value, onChange }: Props) {
           type="text"
           value={value}
           onChange={e => onChange(e.target.value)}
-          placeholder="D:\Photos\Family"
+          placeholder={t('folder.pathPh')}
           className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm font-mono text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-brand-400 transition-colors"
         />
         <button
           onClick={() => setOpen(true)}
           className="px-3 py-2.5 bg-zinc-800 border border-zinc-700 hover:border-zinc-500 rounded-lg text-zinc-400 hover:text-zinc-200 transition-colors text-base"
-          title="Browse folders"
+          title={t('folder.browse')}
         >
           📁
         </button>
@@ -51,6 +53,7 @@ function FsBrowserModal({
   onClose: () => void
 }) {
   const [path, setPath] = useState(initialPath)
+  const t = useT()
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['fs', path],
@@ -78,10 +81,10 @@ function FsBrowserModal({
             disabled={!path}
             className="px-2 py-1 rounded text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 disabled:opacity-30 transition-colors"
           >
-            ← Up
+            {t('folder.up')}
           </button>
           <span className="flex-1 text-xs font-mono text-zinc-400 truncate min-w-0">
-            {path || 'My Computer'}
+            {path || t('folder.myComputer')}
           </span>
           <button
             onClick={onClose}
@@ -94,21 +97,21 @@ function FsBrowserModal({
         {/* Listing */}
         <div className="overflow-y-auto flex-1 p-2">
           {isLoading && (
-            <p className="text-center text-zinc-600 py-10 text-sm">Loading…</p>
+            <p className="text-center text-zinc-600 py-10 text-sm">{t('common.loading')}</p>
           )}
           {isError && (
             <div className="text-center py-10 space-y-2">
-              <p className="text-red-400 text-sm">Cannot read directory</p>
+              <p className="text-red-400 text-sm">{t('folder.cannotRead')}</p>
               <button
                 onClick={() => setPath('')}
                 className="text-xs text-zinc-500 hover:text-zinc-300 underline"
               >
-                Go to My Computer
+                {t('folder.goToMyComputer')}
               </button>
             </div>
           )}
           {!isLoading && !isError && data?.items.length === 0 && (
-            <p className="text-center text-zinc-600 py-10 text-sm">No subdirectories</p>
+            <p className="text-center text-zinc-600 py-10 text-sm">{t('folder.noSubdirs')}</p>
           )}
           {data?.items.map(item => (
             <button
@@ -127,14 +130,14 @@ function FsBrowserModal({
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800 gap-3">
           <span className="text-xs text-zinc-500 font-mono truncate min-w-0">
-            {path || 'Select a drive'}
+            {path || t('folder.selectDrive')}
           </span>
           <button
             onClick={() => path && onSelect(path)}
             disabled={!path}
             className="flex-shrink-0 px-4 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
           >
-            Select folder
+            {t('folder.select')}
           </button>
         </div>
       </div>

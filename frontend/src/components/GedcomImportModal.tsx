@@ -260,7 +260,7 @@ function PersonRow({ person, action, mergeWithId, existingPersons, parentsOf, sp
       {/* Confidence badge */}
       <td className="py-3 px-2 text-center">
         {person.suggested_match ? <ConfBadge conf={person.suggested_match.confidence} /> : (
-          <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-brand-900/40 text-brand-300">New</span>
+          <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-brand-900/40 text-brand-300">{t('gedcom.new')}</span>
         )}
       </td>
 

@@ -6,7 +6,7 @@ import DOMPurify from 'dompurify'
 import type { PersonEvent, PersonFull, EventImage } from '../types'
 import { api } from '../api'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
-import { useT } from '../SettingsContext'
+import { useT, useDateLocale } from '../SettingsContext'
 import { ImagePreviewModal } from './ImagePreviewModal'
 
 marked.setOptions({ breaks: true, gfm: true })
@@ -41,6 +41,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
   onExportEnd?: (error?: string) => void
 }) {
   const t = useT()
+  const dateLocale = useDateLocale()
   const qc = useQueryClient()
   const [previewIdx, setPreviewIdx] = useState<number | null>(null)
   const [exportingZip, setExportingZip] = useState(false)
@@ -77,7 +78,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
   const descRef = useRef<HTMLTextAreaElement>(null)
 
   const typeLabel = t(EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.key ?? ev.event_type)
-  const dateStr = formatEventDate(ev.date, ev.year)
+  const dateStr = formatEventDate(ev.date, ev.year, dateLocale)
 
   function startEditDesc() {
     setDescDraft(ev.description ?? '')
@@ -284,13 +285,13 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
               <div>
                 {/* Markdown toolbar */}
                 <div className="flex items-center gap-0.5 px-3 py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.02)' }}>
-                  <TBtn onClick={() => wrapDesc('**', '**')} title="Bold"><strong>B</strong></TBtn>
-                  <TBtn onClick={() => wrapDesc('*', '*')} title="Italic"><em>I</em></TBtn>
-                  <TBtn onClick={() => wrapDesc('~~', '~~')} title="Strikethrough"><span className="line-through">S</span></TBtn>
+                  <TBtn onClick={() => wrapDesc('**', '**')} title={t('notes.bold')}><strong>B</strong></TBtn>
+                  <TBtn onClick={() => wrapDesc('*', '*')} title={t('notes.italic')}><em>I</em></TBtn>
+                  <TBtn onClick={() => wrapDesc('~~', '~~')} title={t('notes.strikethrough')}><span className="line-through">S</span></TBtn>
                   <span className="w-px h-4 bg-zinc-700 mx-1" />
-                  <TBtn onClick={() => prefixDesc('## ')} title="Heading">H</TBtn>
-                  <TBtn onClick={() => prefixDesc('- ')} title="Bullet list">• —</TBtn>
-                  <TBtn onClick={() => prefixDesc('> ')} title="Blockquote">"</TBtn>
+                  <TBtn onClick={() => prefixDesc('## ')} title={t('notes.heading')}>H</TBtn>
+                  <TBtn onClick={() => prefixDesc('- ')} title={t('notes.list')}>• —</TBtn>
+                  <TBtn onClick={() => prefixDesc('> ')} title={t('notes.quote')}>"</TBtn>
                 </div>
                 <textarea
                   ref={descRef}
@@ -454,8 +455,9 @@ function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
   onTogglePrivacy: (evId: number, isPrivate: boolean) => void
 }) {
   const t = useT()
+  const dateLocale = useDateLocale()
   const typeLabel = t(EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.key ?? ev.event_type)
-  const dateStr = formatEventDate(ev.date, ev.year)
+  const dateStr = formatEventDate(ev.date, ev.year, dateLocale)
 
   const imgs = ev.images.slice(0, 4)
   const extra = ev.images.length - 4

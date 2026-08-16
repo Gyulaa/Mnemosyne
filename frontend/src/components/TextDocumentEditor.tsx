@@ -19,6 +19,7 @@ import type {
 } from '../types'
 import { useT, useSettings, displayPersonName } from '../SettingsContext'
 import { personMatches, FamilyContextLines, personLifeSummary } from '../familyContext'
+import { caretAnchor, useCaretPopup, type CaretAnchor } from '../caretPopup'
 import { usePersonDirectory, PersonMultiSelect } from './PersonSelect'
 import { renderMarkdown } from '../markdown'
 import { docTypeLabel } from '../docTypes'
@@ -169,7 +170,8 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
   // @ mention
   const [mentionCtx, setMentionCtx] = useState<{ query: string; atStart: number } | null>(null)
   const [mentionCursor, setMentionCursor] = useState(0)
-  const [mentionPos, setMentionPos] = useState<{ top: number; left: number } | null>(null)
+  const [mentionPos, setMentionPos] = useState<CaretAnchor | null>(null)
+  const mentionPopup = useCaretPopup(mentionPos)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -206,14 +208,10 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
   function handleContentChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     const val = e.target.value
     setContent(val)
-    const ctx = getAtMentionContext(val, e.target.selectionStart ?? val.length)
+    const pos = e.target.selectionStart ?? val.length
+    const ctx = getAtMentionContext(val, pos)
     setMentionCtx(ctx)
-    if (ctx && textareaRef.current) {
-      const rect = textareaRef.current.getBoundingClientRect()
-      setMentionPos({ top: rect.top, left: rect.left })
-    } else if (!ctx) {
-      setMentionPos(null)
-    }
+    setMentionPos(ctx ? caretAnchor(e.target, pos) : null)
   }
 
   function insertMention(person: PersonFull) {
@@ -223,6 +221,10 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
     const link = `@[${name}](#pid-${person.id})`
     const next = content.slice(0, mentionCtx.atStart) + link + content.slice(ta.selectionStart)
     setContent(next)
+    // Mentioning someone is the same statement as linking them, so the sidebar
+    // follows along. Deliberately one-way: removing the mention from the text
+    // leaves the link, which is what an X in the picker is for.
+    setPersonIds(prev => prev.has(person.id) ? prev : new Set(prev).add(person.id))
     setMentionCtx(null)
     requestAnimationFrame(() => {
       const pos = mentionCtx.atStart + link.length
@@ -354,7 +356,9 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
 
   // ── save ───────────────────────────────────────────────────────────────────
 
-  const canSave = personIds.size > 0 && !saving
+  // A document with nobody linked is a valid document — a chronicle can be
+  // written before anyone in it has a record.
+  const canSave = !saving
 
   async function save() {
     if (!canSave) return
@@ -641,9 +645,7 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
                   })}
                   maxHeight={240}
                 />
-                {personIds.size === 0 && (
-                  <p className="text-xs text-amber-500/80 mt-1.5">{t('docs.selectPerson')}</p>
-                )}
+                <p className="text-xs text-zinc-600 mt-1.5">{t('textDoc.mentionLinksHint')}</p>
               </div>
 
               <div>
@@ -703,10 +705,8 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
       {/* @ mention dropdown */}
       {mentionCtx !== null && mentionMatches.length > 0 && mentionPos !== null && createPortal(
         <div
-          style={{
-            position: 'fixed', top: mentionPos.top, left: mentionPos.left + 16,
-            zIndex: 9999, width: 288, transform: 'translateY(calc(-100% - 6px))',
-          }}
+          ref={mentionPopup.ref}
+          style={{ ...mentionPopup.style, zIndex: 9999, width: 288 }}
           className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl overflow-hidden"
         >
           <p className="px-3 pt-2 pb-1 text-xs font-semibold text-zinc-600 uppercase tracking-wider">

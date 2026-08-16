@@ -359,14 +359,16 @@ export const api = {
   documents: {
     listAll: () => fetchJson<PersonDocument[]>(`${BASE}/documents`),
     list: (personId: number) => fetchJson<PersonDocument[]>(`${BASE}/persons/${personId}/documents`),
-    upload: async (personId: number, file: File, meta: { title?: string; doc_type?: string; year?: number; description?: string }): Promise<PersonDocument> => {
+    /** Upload a file. An empty `personIds` stores it as a document of the project itself. */
+    upload: async (personIds: number[], file: File, meta: { title?: string; doc_type?: string; year?: number; description?: string }): Promise<PersonDocument> => {
       const fd = new FormData()
       fd.append('file', file)
+      fd.append('person_ids', personIds.join(','))
       if (meta.title) fd.append('title', meta.title)
       if (meta.doc_type) fd.append('doc_type', meta.doc_type)
       if (meta.year != null) fd.append('year', String(meta.year))
       if (meta.description) fd.append('description', meta.description)
-      const res = await fetch(`${BASE}/persons/${personId}/documents`, { method: 'POST', body: fd })
+      const res = await fetch(`${BASE}/documents/upload`, { method: 'POST', body: fd })
       if (!res.ok) throw new Error(await res.text())
       return res.json()
     },

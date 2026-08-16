@@ -121,6 +121,21 @@ def _delete_persons(conn: sqlite3.Connection, where_clause: str) -> None:
         conn, f"document_id IN (SELECT id FROM documents WHERE person_id IN (SELECT id FROM persons WHERE {where_clause}))"
     )
     conn.execute(f"DELETE FROM documents WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
+    # Documents nobody owns belong to the project as a whole, not to anyone in
+    # the narrowed selection, so an export scoped to a person or cluster set
+    # leaves them behind. `person_id IN (…)` above is never true of NULL, which
+    # is why this needs a statement of its own.
+    unowned = "person_id IS NULL AND id NOT IN (SELECT document_id FROM document_persons)"
+    try:
+        conn.execute(
+            f"DELETE FROM document_note_citations WHERE note_id IN "
+            f"(SELECT id FROM document_notes WHERE document_id IN (SELECT id FROM documents WHERE {unowned}))"
+        )
+        conn.execute(f"DELETE FROM document_notes WHERE document_id IN (SELECT id FROM documents WHERE {unowned})")
+    except sqlite3.OperationalError:
+        pass   # export input predates document notes
+    _delete_document_children(conn, f"document_id IN (SELECT id FROM documents WHERE {unowned})")
+    conn.execute(f"DELETE FROM documents WHERE {unowned}")
     conn.execute(f"""
         DELETE FROM relations
         WHERE person_a_id IN (SELECT id FROM persons WHERE {where_clause})

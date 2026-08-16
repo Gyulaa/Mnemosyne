@@ -4,6 +4,8 @@ A private app that runs on your computer to organize family photos and build a f
 
 No account, no cloud, no subscription. Everything stays on your machine — unless you switch on the optional AI assistant, which is off until you add your own API key.
 
+> **Working on the code?** Start at [Orientation](#orientation) — it maps a task to the sections that describe it and the files that implement it. Working rules, verification and conventions live in [`CLAUDE.md`](CLAUDE.md).
+
 ---
 
 # For users
@@ -50,7 +52,7 @@ No Python, no Node.js, no technical setup needed — just download and run.
 
 > **Mac note:** On first launch macOS may say the app "cannot be opened because the developer cannot be verified." If that happens, right-click (or Control-click) the app and choose **Open** — then click Open again in the dialog that appears. You only need to do this once.
 
-The app opens in your browser automatically (at `http://localhost:7842`). The browser tab is the user interface — don't close the terminal/icon that launched it.
+The app opens in your browser automatically (on a free local port it picks at startup). The browser tab is the user interface — don't close the terminal/icon that launched it.
 
 ---
 
@@ -111,7 +113,7 @@ From here you can also attach documents, write notes with citations, and find th
 
 ### Documents
 - Attach birth certificates, passports, letters, land records, wills, and more
-- Documents can be linked to multiple people at once
+- Documents can be linked to multiple people at once — or to nobody, if you don't want to decide yet
 - Preview images and PDFs right in the app
 - Select multiple documents and download them as a ZIP
 
@@ -120,9 +122,11 @@ When you click **New**, Mnemosyne asks whether you want to upload a file you alr
 **Writing a document in the app** is meant for the things that were never on paper — a family chronicle, a transcription of an old letter, notes from an afternoon of research:
 
 - Write in **Markdown**: headings, **bold**, *italic*, lists, quotes. A Preview tab shows how it will look
-- Type **@** to mention a person — the name becomes a link straight to their profile
+- Type **@** to mention a person — the name becomes a link straight to their profile, and that person is added to the document's linked people on the right. Remove one with the picker if you didn't want it; deleting the mention from the text leaves the link alone
 - Use **Cite** to add a `[1]`-style reference to another document, an existing source, or any free text you type ("Grandma's account, 1998"). References are listed at the bottom of the document
 - **Attach photos** from your library to illustrate the text
+
+**Linking people is optional.** Nothing stops you from saving a document with nobody attached — start writing, and let the links build up as you mention people. A document that belongs to no one still shows up in the list, in search and in a full backup; it is left out only where it has nowhere to go: a GEDCOM file, and an export narrowed to a particular family group.
 
 Text documents behave like any other document everywhere else: they can be linked to several people, filtered, searched, downloaded, and they travel with every export.
 
@@ -214,6 +218,53 @@ If you prefer to check for updates manually, go to **Settings** (gear icon, top 
 
 # For developers
 
+## Orientation
+
+*Start here — this section exists so a task can begin with a map instead of a search. It is written to be equally useful to a person new to the code and to an AI agent gathering context.*
+
+Mnemosyne is one FastAPI process serving a React single-page app and one SQLite database per project. Faces are detected and clustered locally, the clusters are linked to genealogy persons, and everything else — documents, events, notes, sources, exports — hangs off those persons. Nothing leaves the machine except an optional update check and the opt-in AI assistant.
+
+**At a glance**
+
+| | |
+|---|---|
+| Backend | FastAPI, ~130 REST endpoints in one module (`backend/main.py`), SQLAlchemy over SQLite |
+| Frontend | React 19 + TypeScript + Vite, Tailwind v4, react-query; one large component per tab in `frontend/src/components/` |
+| Data | one project directory per family archive: `projects/<id>/` with its own DB, documents and `project.json` |
+| Schema | version stamped in the DB, idempotent migrations at startup (currently v7) |
+| Packaging | PyInstaller onedir; `launcher.py` starts uvicorn on a free local port and opens the browser |
+| CI | `.github/workflows/build.yml` — a push to `main` builds and publishes the Windows and macOS bundles |
+| Tests | none; changes are verified by exercising the real endpoint or screen |
+| Working rules | [`CLAUDE.md`](CLAUDE.md) — commits, verification, conventions, data-handling rules |
+
+**Start here for a task**
+
+| If the task is about | Read | Then open |
+|---|---|---|
+| Scanning photos, face detection, clustering | [Scan](#scan), [Clusters](#clusters), [Sub-cluster centroid matching](#sub-cluster-centroid-matching) | `backend/scanner.py`, `backend/clusterer.py`, `ScanTab.tsx`, `ClustersTab.tsx` |
+| The family tree — layout, controls, PNG export | [Genealogy](#genealogy) | `frontend/src/treeGeometry.ts`, `TreeView.tsx`, `FamilyTreeTab.tsx`, `TreeExportModal.tsx` |
+| Person profile, relations, notes, sources | [Genealogy](#genealogy) | `PersonPanel.tsx`, `NoteEditor.tsx`, `_person_dict` / `_note_dict` in `main.py` |
+| Documents, in-app text documents, citations | [Documents and text documents](#documents-and-text-documents) | `DocumentsTab.tsx`, `TextDocumentEditor.tsx`, `DocumentViewer.tsx`, `_doc_dict` in `main.py` |
+| Events and the timeline | [Events and event faces](#events-and-event-faces) | `EventsTab.tsx`, `EventTimeline.tsx`, `_event_dict` in `main.py` |
+| Any person picker, or names shown under a name | [Person pickers](#person-pickers) | `familyContext.tsx`, `components/PersonSelect.tsx` |
+| Marking things private, or a new privacy-bearing table | [Privacy enforcement](#privacy-enforcement) | `database.py`, `export_utils.py`, `gedcom_export.py`, `ai/tools.py` |
+| A schema change or a new column | [Projects and database](#projects-and-database) | `database.py`, `project_manager.py`, `types.ts` |
+| ZIP export, project import, merge import | [ZIP export](#zip-export) | `export_utils.py`, `merge_import.py`, `ExportModal.tsx`, `MergeModal.tsx` |
+| GEDCOM in or out | [GEDCOM export](#gedcom-export) | `gedcom_export.py`, `gedcom_import.py`, `GedcomImportModal.tsx` |
+| The AI assistant — tools, prompt, providers, models | [AI assistant (implementation detail)](#ai-assistant-implementation-detail) | `backend/ai/`, `AssistantPanel.tsx`, `AssistantSetup.tsx` |
+| Connections between people from shared photos | [Connections graph](#connections-graph) | `ConnectionsTab.tsx`, connection endpoints in `main.py` |
+| Global search, or the relationship finder | [Global Search](#global-search), [Relationship Path Finder](#relationship-path-finder) | `SearchPalette.tsx`, `RelationPathModal.tsx` |
+| Updating, packaging, bundled files | [Auto-update](#auto-update-implementation-detail) | `updater.py`, `launcher.py`, `mnemosyne.spec`, `UpdateBanner.tsx` |
+| A user-visible string, a date, a language issue | [Keeping this document up to date](#keeping-this-document-up-to-date) | `i18n/translations.ts`, `SettingsContext.tsx` |
+| What a feature is *supposed* to do for the user | [What you can do](#what-you-can-do) | — |
+| Where a file lives at all | [Project structure](#project-structure) | — |
+
+**How to read this document.** It is long, and reading it end to end is not the intended use. Sections are self-contained: pick the rows above that match the task, read those sections, then open the files they name. Each section describes the mechanism *and* the reason behind it — most of them exist because a simpler implementation failed in a specific way, and that failure is documented so it is not repeated.
+
+**Before finishing any change**, walk [Keeping this document up to date](#keeping-this-document-up-to-date). It is a trigger → files checklist for the changes whose parts live in several places at once, and it is the fastest way to catch the half-finished version of a change.
+
+---
+
 ## Features (technical detail)
 
 ### Scan
@@ -236,7 +287,7 @@ For people whose photos span many years, a single average centroid drifts away f
 
 After each link, rename, or merge operation — and at the end of every `run_clustering` call — the app runs a secondary DBSCAN on all faces belonging to each named person (epsilon 0.30, minimum 5 faces per sub-cluster). The resulting per-age-range centroids are stored in the `person_subclusters` table. During the next clustering run, Phase 3 (centroid pre-assignment) compares each unclassified face against **all** sub-cluster centroids instead of a single averaged centroid, giving robust recall across decades of photos. Persons with fewer than 5 total faces fall back to the single-centroid approach.
 
-### Connections
+### Connections graph
 - Connection strength between people: **shared photos** count and **weighted** score (Σ 1/n for group photos)
 - Force-directed graph view (interactive: zoom, pan, drag)
 - Ranked list view sorted by strength
@@ -277,7 +328,7 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 - **Import**: `.ged` file → persons (including occupation, education, religion, nationality, cause of death), relations, events, notes, sources, documents; preview wizard for merge/create/skip decisions per person
 - **Export**: standards-compliant GEDCOM 5.5.1 with UTF-8 encoding; see [GEDCOM export](#gedcom-export) below
 
-### Privacy
+### Privacy enforcement
 
 `is_private BOOLEAN NOT NULL DEFAULT 0` is present on six tables: `images`, `clusters`, `relations`, `documents`, `person_notes`, `events`. Added by the v4→v5 schema migration.
 
@@ -302,13 +353,20 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 
 **Frontend**: amber padlock (always visible) when private, gray padlock (hover-only) when public. Implemented in `NoteEditor.tsx` (`NoteCard`), `PersonPanel.tsx` (`DocRow`, `RelRow`, spouse section), `EventsTab.tsx` (`EventCard`, `EventDetailView`), `ClustersTab.tsx` (`ClusterCard`), `ImagesTab.tsx` (bulk toolbar "Make private" button).
 
-### Events
+### Events and event faces
 - Types: birth, death, marriage, emigration, military, education, occupation, religious, travel, award, and custom
 - Any number of persons per event; date, place, description fields
 - Chronological timeline view
 - `EventPerson.event_face_id` carries a face cropped from the event's **own** photos, so chips show the person at the right age rather than their default portrait. Resolved in `_event_face_map()` (Face -> Cluster -> Person over the event's images, one query per event, earliest image wins) and attached in `_event_dict()`, which every event-returning endpoint funnels through. `null` when the person isn't recognised in any event photo - clients fall back to `thumbnail_face_id`
 
-### Documents
+**Photo strips are capped, and the caps live in one place.** An event can hold a whole afternoon's reel, and rendering every thumbnail turned a single event into a wall that pushed the rest of a person's life off the screen. `ROW_PHOTO_LIMIT` and `EDITOR_PHOTO_LIMIT` at the top of `EventTimeline.tsx` are the two limits; nothing else should hardcode a number. They differ in kind, not just in value:
+
+- The **timeline row** (`ManualEventRow`, the person's life in the genealogy panel) cuts to `ROW_PHOTO_LIMIT` and ends with a plain `+N` marker. It is a glance at what the event holds, and the Events tab is one click away for the whole set, so the cut is not expandable
+- The **editor** (`EventEditor`, shared by the genealogy timeline, the Events tab and the Images tab) cuts to `EDITOR_PHOTO_LIMIT` behind a button that expands and collapses. It has to be reversible: each thumbnail carries the ✕ that detaches that photo, so a photo hidden behind a permanent cut would be impossible to remove
+
+The event's own detail page in `EventsTab.tsx` is deliberately **not** capped — showing the whole set is what that page is for, and it is where the preview modal and the ZIP export hang off.
+
+### Documents and text documents
 - Types: birth/death/marriage certificates, passports, military records, land records, wills, letters, photographs, audio
 - Type labels live in the `document_types` table, seeded in English by the v2→v3 migration, so they cannot be localised at the source. `frontend/src/docTypes.ts` translates them by their stable `key` via `docType.<key>` translation keys — but only while the stored label still equals the original seed, otherwise a user rename in the type manager would be silently ignored. User-created types are never remapped
 - Image preview and PDF link in the document viewer modal
@@ -319,15 +377,28 @@ After each link, rename, or merge operation — and at the end of every `run_clu
 
 - `merge_persons` re-points `document_persons` rows at the target with `UPDATE OR IGNORE` (the plain `UPDATE` would collide when both people are linked to the same document), then deletes the leftovers. Without this the junction rows are FK-cascaded away with the source person and the document silently disappears from every listing while still existing in the table
 - `delete_person` hands ownership of that person's documents to a co-linked person before deleting them, because `Person.documents` cascades `all, delete-orphan` and would otherwise destroy documents shared with others. Only when nobody else is linked is the document dropped — and then its file is unlinked from disk, which the ORM cascade does not do
+- `link_person_to_document` fills a NULL `person_id` with the person being linked, and `unlink_person_from_document` hands the column to whoever is still linked — or clears it when the last link goes. A `person_id` left pointing at somebody no longer in the junction is not cosmetic: `delete_person` cascades on that column, so a stale owner takes the document down with them
+
+**A document may belong to no one** (schema v8, `documents.person_id` NULL and no `document_persons` row). Genealogy is not the only reason to write something down — a chronicle or a research memo often exists before anyone in it has a record, and forcing a link at save time makes the user invent one. Both creation paths accept an empty person set: `POST /api/documents/upload` with an empty `person_ids`, and `POST /api/documents/text` with an empty list. Such a document belongs to the *project*, which decides how each pipeline treats it:
+
+| Pipeline | Treatment |
+|---|---|
+| Listings, search, bulk download | Included; the person column simply reads empty |
+| Full project ZIP export | Included — the project is what is being exported |
+| ZIP export scoped to a person or cluster selection | **Excluded.** `_delete_persons` in `export_utils.py` deletes documents by owner, and `person_id IN (…)` is never true of NULL, so the unowned ones need their own DELETE — without it a project-level chronicle rides along in an export of one family group |
+| GEDCOM export | Excluded. A GEDCOM hangs documents off an `INDI`; exporting the file with no record referencing it would put unreferenced media in the ZIP |
+| Merge import | Included. It has no person decision to follow, so it comes across on its own and names itself in the rollback data — nothing else would remove it on an undo |
 
 **Text documents** (`documents.is_text = 1`, schema v6) are written in the app instead of uploaded. The Markdown body is stored as a `.md` file in `projects/<id>/documents/` under the usual UUID `stored_name`, so downloads, bulk ZIPs, project exports and GEDCOM media all handle them without special-casing. `filename` is a slug of the title and is re-derived whenever the title changes, so archives stay readable.
 
 | Concern | Table / endpoint |
 |---|---|
 | Body | `GET` / `PUT /api/documents/{id}/text` → `{ content }` |
-| Create | `POST /api/documents/text` — requires at least one `person_ids` entry |
+| Create | `POST /api/documents/text` — `person_ids` may be empty |
 | `[n]` references | `document_citations` · `POST /api/documents/{id}/citations`, `DELETE /api/document-citations/{id}` |
 | Attached photos | `document_images` · `POST /api/documents/{id}/images`, `DELETE /api/documents/{id}/images/{image_id}` |
+
+**An `@` mention also links the person.** Picking someone from the mention list in `TextDocumentEditor.tsx` inserts the `@[name](#pid-…)` link *and* adds them to the linked-person set in the sidebar, because naming somebody in the body and linking them to the document are the same statement — requiring both by hand meant the sidebar was reliably out of date. The coupling is deliberately one-way: deleting the mention from the text leaves the link in place, and the picker's own toggle is how a link is removed. Combined with an empty person set being valid, this is the intended flow — write first, and the links accumulate as people are named.
 
 `document_citations` mirrors `note_citations` exactly (`source_id` NULL means a free-text citation carried in `custom_label`), so the same renderer and References panel work for both. Citing a document from the editor calls `promote-to-source` first, which is idempotent — citing the same document twice reuses one `Source`.
 
@@ -478,7 +549,7 @@ Stored in the project database (v7) so they survive restarts and stay with the p
 
 The deletion happens on the **copy**, never on the project. Exporting does not clear the user's own history — `_vacuum_copy` writes a separate file and every filter in `build_export_db` operates on that. Verified end to end: a project with conversations exports a ZIP whose database contains zero chat rows while the original keeps all of them. History is replayed to the model as **text only**; tool calls are persisted for the UI but not fed back, which keeps history compact and makes each turn re-read the database (correct when the user edits the tree between questions).
 
-### Frontend
+### Assistant frontend
 
 `AssistantPanel.tsx` sits beside `<main>` rather than over it, so the tree stays visible while the assistant answers. Streaming is a `fetch` + `ReadableStream` read (`api.ai.stream`), deliberately not react-query — it is a long-lived body read, not a cache entry. Thread and message lists are ordinary react-query.
 
@@ -606,6 +677,7 @@ Image-Organizer/
 │       ├── docTypes.ts                # Built-in document type keys + translated labels
 │       ├── familyContext.tsx          # Close-relative lookup + lines shown in person pickers
 │       ├── markdown.ts                # Shared Markdown renderer (@ mentions, [n] citations)
+│       ├── caretPopup.ts              # Caret coordinates in a textarea + viewport-safe popup placement
 │       ├── i18n/
 │       │   └── translations.ts        # EN/HU translation strings (flat dot-notation keys)
 │       └── components/
@@ -658,8 +730,16 @@ Each project has its own directory (`projects/<id>/`) with its own SQLite databa
 | v4→v5 | `is_private` on six tables |
 | v5→v6 | `documents.is_text`, `document_citations`, `document_images` (in-app text documents) |
 | v6→v7 | `chat_threads`, `chat_messages`, `chat_tool_calls` (AI assistant conversations) |
+| v7→v8 | `documents.person_id` becomes nullable (documents that belong to no one) |
 
 `Base.metadata.create_all()` runs before the migration block, so new *tables* appear on their own; a new *column* on an existing table still needs an explicit `ALTER TABLE` in the version block.
+
+**Relaxing a constraint needs a table rebuild.** SQLite has no `ALTER COLUMN`, so v7→v8 goes through `_drop_document_owner_not_null()` in `database.py`: create a copy of the table with the constraint gone, copy the rows, drop the original, rename, recreate the indexes. Two things in there are load-bearing and easy to get wrong:
+
+- **Foreign keys must be off for the swap.** `document_persons.document_id` is `ON DELETE CASCADE`, so dropping the old `documents` table with them on deletes every person↔document link in the project rather than just the table. `PRAGMA foreign_keys` is also *silently ignored inside a transaction*, which is why the rebuild runs on the raw DBAPI connection with nothing open on it rather than through the SQLAlchemy `Connection` the rest of the block uses.
+- **The new DDL is derived from the stored one**, not written out in the migration. A hardcoded column list would silently drop any column added to the model after the migration was written.
+
+The block is idempotent the usual way: it reads `PRAGMA table_info(documents)` and returns immediately when `person_id` is already nullable.
 
 Database files (`*.db`) and `config.json` are not tracked by git.
 
@@ -782,18 +862,25 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 
 ## Keeping this document up to date
 
+Each entry below is **trigger → the files that must change together**. They exist because these changes have parts in several places at once, and a change that edits only one part compiles, runs, and is wrong. Read the entries matching your change before you start, and again before you call it done.
+
 - **New content toggle (ZIP)** → add row to *ZIP export* content table; update `build_export_db` in `export_utils.py`, endpoint in `main.py`, `api.ts`, `ExportModal.tsx`, and all three callers
 - **New content toggle (GEDCOM)** → update *GEDCOM export*; update `build_gedcom_zip` in `gedcom_export.py` and endpoint in `main.py`
 - **New note syntax** → update *Note serialisation* table; add entry to `_MD_PATTERNS` in `gedcom_export.py`
-- **New user-visible string** → add the key to **both** dictionaries in `i18n/translations.ts`. The EN and HU key sets must match exactly; a missing HU key silently falls back to English and is easy to miss
+- **New user-visible string** → add the key to **both** dictionaries in `i18n/translations.ts`. The EN and HU key sets must match exactly; a missing HU key silently falls back to English and is easy to miss. Render it through `useT()` — a component that never calls `t()` is the failure mode to look for, since a hardcoded literal is invisible to the key-parity check
+- **Any UI that shows a date or a month name** → take the locale from `useDateLocale()` and format through `formatPartialDate()` / `monthNames()` in `SettingsContext.tsx`. Never pass a literal `'hu-HU'` / `'en-GB'` to `toLocale*`, and never keep a local `MONTHS_EN` array: both pin the output to one language regardless of the user's setting, and Intl is what gets the part *order* right (`1950. március 12.` vs `12 March 1950`). Module-level helpers take `locale` as a parameter rather than reading it themselves
 - **New built-in document type** → add it to the migration seed in `database.py`, to `SEED_LABELS` in `docTypes.ts` (with the exact seeded English label), and add a `docType.<key>` entry to both dictionaries
 - **New file bundled into the build** → add it to `datas` in `mnemosyne.spec` **and** read it via `MNEMOSYNE_BUNDLE_DIR`, not `MNEMOSYNE_APP_DIR` — see *Auto-update* for why the two are not interchangeable
 - **New streaming ZIP endpoint** → wrap the pipe in `NonSeekableWriter` (see *ZIP export*), otherwise the archive is silently corrupt on Windows
 - **New data table with `person_id` FK** → update `_delete_persons` in `export_utils.py` with an explicit `DELETE FROM <table> WHERE person_id IN (...)` line before the `DELETE FROM persons` line. If the table has `ON DELETE CASCADE` (like `person_subclusters`) the cascade would handle it automatically, but being explicit is the established pattern here
 - **New data table with `document_id` FK** → add it to `_delete_document_children()` in `export_utils.py` (FKs are off in the export copy, so nothing cascades), include it in `_doc_dict` in `main.py`, and carry it through `read_zip_db` + `execute_merge` in `merge_import.py` — a merge import copies nothing it is not told about
+- **New surface that renders note or document Markdown** → render through `renderMarkdown()` and put one of two classes on the container: `note-content` for a body being read, `note-preview` for the clamped excerpt on a card. Both live in `index.css` and share every colour and size but deliberately not their vertical rhythm, so pick one rather than hand-rolling a third set of margins. The spacing is load-bearing, not decoration: `breaks: true` in `markdown.ts` already turns a single newline into a `<br>`, so the paragraph margin is the *only* thing that distinguishes a blank line the writer typed from a plain line break — at the tight teaser value the two are indistinguishable and paragraphed prose renders as one block
+- **New popup anchored to a textarea caret** (an `@` picker, a slash menu) → take the position from `caretAnchor()` and `useCaretPopup()` in `frontend/src/caretPopup.ts`. Pinning the popup to the field's own rect and pushing it upwards is what sent the mention list off the top of the screen in the document editor, where the textarea starts high in the viewport
 - **New person picker anywhere in the UI** → build it on `useFamilyContext` + `<FamilyContextLines>` from `familyContext.tsx`, or on `PersonMultiSelect` / `PersonFilterCombobox` from `components/PersonSelect.tsx`. Rolling a fourth hand-written relative lookup is how the pickers drifted apart last time
 - **Any UI that shows a person's name** → render it through `displayPersonName(person, nameOrder)`. The stored `persons.name` is always composed in one fixed order by `_derive_display_name()`, so printing it directly ignores the user's setting. If the payload is a stub rather than a full person, give the stub its name parts server-side (see `_doc_person_dict`)
 - **Schema change to `note_citations`** → add idempotent migration in `database.py` using the `PRAGMA table_info` + table-recreate pattern
+- **Relaxing or changing a column constraint (not adding a column)** → SQLite has no `ALTER COLUMN`, so follow `_drop_document_owner_not_null()` in `database.py`: guard on `PRAGMA table_info` for idempotency, derive the new DDL from `sqlite_master` instead of hardcoding a column list, and run it on the **raw DBAPI connection with no transaction open** — `PRAGMA foreign_keys=OFF` is silently ignored inside one, and with FKs on the `DROP TABLE` fires every child table's `ON DELETE CASCADE`. Verify by running the backend twice against a *copy* of a real project DB and comparing child-table row counts before and after
+- **A row shape that can now be NULL where it never was** (an owner column, a parent link) → the copy-then-filter export is the place it leaks: `x IN (SELECT …)` is never true of NULL, so a row the old filter caught now passes straight through into `build_export_db`'s output. Add the explicit `IS NULL` case to `_delete_persons` in `export_utils.py`, decide what `gedcom_export.py` and `merge_import.py` should do with it, and open the produced ZIP to check — the endpoint returns 200 either way
 - **New AI assistant tool** → register it in `build_registry()` in `ai/tools.py` with `mutates=False` (the registry rejects anything else); apply the `_priv_ok` privacy filter; return name *parts* rather than `persons.name`; add a `chat.tool.<name>` label to **both** dictionaries in `i18n/translations.ts`. Prefer one fat tool over several thin ones — push the computation into the tool, as `get_relationship_path` does with the BFS and `get_ancestors` does with the line walk. Two rules learned the hard way: an empty result must carry enough context that it cannot be read as an absent fact, and anything the model would otherwise have to *guess* (a stored enum value) belongs either in the tool's error path or in `build_vocabulary()`
 - **New chat table** → add an unconditional `DELETE FROM <table>` to the chat block at the top of `build_export_db` in `export_utils.py`, children first. The export copies the whole database and then filters, so a table you forget here is silently exported — this is the one mistake in this area with a real privacy cost
 - **New model** → usually *nothing to do*: the list is fetched from the provider and new ids appear on the next refresh. Add an entry to `backend/ai/models.json` only to give it a friendly label, a note or a price (omit `pricing` rather than guessing — a missing block just hides the cost estimate, a wrong one misinforms). Never add a model-id branch in code; if you want one, the missing thing belongs in `caps`
@@ -802,3 +889,25 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 - **New provider** → add an entry to `providers` in `models.json`, and either reuse `OpenAICompatProvider` with a `base_url` (correct for anything OpenAI-compatible) or add an adapter implementing `LLMProvider`. Wire it into `build_provider` and `discover_models` in `ai/provider.py`. Nothing above the protocol should need to change; if it does, the abstraction has sprung a leak
 - **New bundled AI data file** → spec `datas` **and** read it via `MNEMOSYNE_BUNDLE_DIR` in `ai/config.py`, never `MNEMOSYNE_APP_DIR`
 - **New `is_private` on a table** → (1) add `ALTER TABLE … ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0` to the v4→v5 migration block in `database.py`; (2) include `is_private` in the relevant `_xxx_dict` serialiser in `main.py`; (3) add the privacy-filter DELETE block for that table inside `build_export_db` in `export_utils.py`; (4) add `WHERE COALESCE(is_private,0)=0` to the relevant query in `build_gedcom_zip` in `gedcom_export.py` if applicable; (5) add `togglePrivacy` call to `api.ts`; (6) update the TypeScript interface in `types.ts`; (7) add the padlock button to the relevant component
+
+### Maintaining the documentation itself
+
+This file and `CLAUDE.md` are read at the start of the next task, so a change that leaves them stale costs more than it saved. They divide the work:
+
+| Kind of knowledge | Goes in |
+|---|---|
+| What a feature does for the user | this file → *For users* |
+| How a subsystem works, and *why* it is built that way | this file → the section for that area |
+| Which files must change together | this file → the checklist above |
+| How to work in this repo — workflow, verification, conventions, traps | `CLAUDE.md` |
+| Rules that override an AI assistant's default behaviour | `CLAUDE.md` → *Non-negotiables* |
+
+Rules for keeping them usable:
+
+- **A new subsystem needs three things**, not one: its own section here, a row in [Orientation](#orientation) → *Start here for a task* naming the section and the files, and — if it introduces a pattern that spans files — an entry in the checklist above. A subsystem that only the code knows about is one the next task re-derives from scratch.
+- **Headings are anchors.** The routing table and `CLAUDE.md` link to them by name, so renaming a heading means updating both. Keep developer-side headings distinct from the user-side ones (*Privacy enforcement* vs *Privacy*, *Connections graph* vs *Connections*) — duplicate headings collide as anchors and are ambiguous to grep.
+- **Correct in place.** When behaviour changes, rewrite the sentence that is now wrong instead of appending a newer one. Neither document is a changelog; git history is.
+- **Delete together with the feature** — section, routing row and checklist entry in the same change. A stale entry is worse than a missing one, because it is read as current.
+- **Sections stay self-contained.** Anyone arriving from the routing table reads that section alone; cross-reference by link rather than assuming the reader came from above.
+- **Explain the mechanism, and invent any example.** Real names, real dates and real measured statistics from a project database must never appear in this file — see *Non-negotiables* in `CLAUDE.md`. "Given names repeat within a family, sometimes between a father and his son" documents the problem completely and identifies nobody.
+- **Facts that go stale quietly**, worth a glance whenever you are editing nearby: the schema-version table, the *Project structure* tree, port and endpoint claims, and the file lists in the checklist above.

@@ -282,18 +282,15 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
   const selectedPersonIdSet = useMemo(() => new Set(selectedPersonIds), [selectedPersonIds])
 
   async function submit() {
-    if (!file || selectedPersonIds.length === 0 || uploading) return
+    if (!file || uploading) return
     setUploading(true); setErr(null)
     try {
-      // Upload using first person as primary; link additional persons via junction
-      const [firstId, ...restIds] = selectedPersonIds
-      const doc = await api.documents.upload(firstId, file, {
+      await api.documents.upload(selectedPersonIds, file, {
         title: title.trim() || undefined,
         doc_type: docType || undefined,
         year: year ? parseInt(year) : undefined,
         description: description.trim() || undefined,
       })
-      await Promise.all(restIds.map(pid => api.documents.linkPerson(doc.id, pid)))
       qc.invalidateQueries({ queryKey: ['docs-all'] })
       for (const pid of selectedPersonIds) qc.invalidateQueries({ queryKey: ['person-docs', pid] })
       onDone()
@@ -367,7 +364,7 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
               maxHeight={200}
             />
             {selectedPersonIds.length === 0 && (
-              <p className="text-xs text-zinc-600 mt-1">{t('docs.selectPerson')}</p>
+              <p className="text-xs text-zinc-600 mt-1">{t('docs.noPersonHint')}</p>
             )}
           </div>
 
@@ -375,7 +372,7 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
         </div>
 
         <div className="shrink-0 px-5 py-4 border-t border-zinc-800 flex gap-2">
-          <button onClick={submit} disabled={!file || selectedPersonIds.length === 0 || uploading}
+          <button onClick={submit} disabled={!file || uploading}
             className="flex-1 h-9 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2">
             {uploading ? (
               <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>{t('docs.uploading')}</>

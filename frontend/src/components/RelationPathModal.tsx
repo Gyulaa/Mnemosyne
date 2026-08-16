@@ -2,8 +2,10 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { api } from '../api'
 import type { PersonFull, Relation } from '../types'
-import { useSettings, displayPersonName, displayInitials } from '../SettingsContext'
+import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 import type { NameOrder } from '../SettingsContext'
+
+type TFn = (key: string, vars?: Record<string, string | number>) => string
 
 // ── BFS path finder ────────────────────────────────────────────────────────────
 
@@ -111,12 +113,14 @@ const CARD_W  = 88   // px — MiniCard width
 const EDGE_W  = 60   // px — EdgeConnector width
 const ROW_W   = ROW_SIZE * CARD_W + (ROW_SIZE - 1) * EDGE_W  // 680 px
 
-const LABEL_TEXT: Record<EdgeLabel, string> = {
-  parent:  'parent of',
-  child:   'child of',
-  sibling: 'sibling',
-  spouse:  'spouse',
+const LABEL_KEY: Record<EdgeLabel, string> = {
+  parent:  'relPath.parentOf',
+  child:   'relPath.childOf',
+  sibling: 'relPath.sibling',
+  spouse:  'relPath.spouse',
 }
+
+const labelText = (label: EdgeLabel, t: TFn) => t(LABEL_KEY[label])
 
 // Line colour per relation kind. Spouse edges get their own hue so a marriage
 // link never reads as a descent link.
@@ -163,6 +167,7 @@ function MiniCard({ person, highlightType, onClick }: {
 }) {
   const [err, setErr] = useState(false)
   const { nameOrder } = useSettings()
+  const t = useT()
   const initials = displayInitials(person)
   const by = person.birth_date ? person.birth_date.slice(0, 4) : person.birth_year != null ? String(person.birth_year) : null
   const dy = person.death_date ? person.death_date.slice(0, 4) : person.death_year != null ? String(person.death_year) : null
@@ -187,7 +192,7 @@ function MiniCard({ person, highlightType, onClick }: {
       <button
         onClick={onClick}
         disabled={!clickable}
-        title={clickable ? `Open ${person.name ?? 'person'}` : undefined}
+        title={clickable ? t('relPath.openPerson', { name: displayPersonName(person, nameOrder) }) : undefined}
         className={`w-10 h-10 rounded-full overflow-hidden flex items-center justify-center transition-all ${ringClass} ${hoverRing} ${clickable ? 'cursor-pointer' : 'cursor-default'}`}
       >
         {person.thumbnail_face_id && !err
@@ -205,7 +210,7 @@ function MiniCard({ person, highlightType, onClick }: {
         </button>
         {years && <p className="text-xs text-zinc-500 mt-0.5 tabular-nums">{years}</p>}
         {highlightType === 'lca' && (
-          <p className="text-[8px] text-rose-500/80 font-medium tracking-wide uppercase mt-0.5">LCA</p>
+          <p className="text-[8px] text-rose-500/80 font-medium tracking-wide uppercase mt-0.5">{t('relPath.lcaBadge')}</p>
         )}
       </div>
     </div>
@@ -217,6 +222,7 @@ function MiniCard({ person, highlightType, onClick }: {
 function EdgeConnector({ label, blood, highlight, rtl = false }: {
   label: EdgeLabel; blood: boolean; highlight?: boolean; rtl?: boolean
 }) {
+  const t      = useT()
   const H      = 12
   const mid    = H / 2
   const stroke = edgeStroke(label, highlight)
@@ -249,7 +255,7 @@ function EdgeConnector({ label, blood, highlight, rtl = false }: {
         )}
       </svg>
       <span className={`mt-1 ${labelPillClass(blood, highlight)}`}>
-        {LABEL_TEXT[label]}
+        {labelText(label, t)}
       </span>
     </div>
   )
@@ -258,6 +264,7 @@ function EdgeConnector({ label, blood, highlight, rtl = false }: {
 // ── Turn connector (vertical, between snake rows) ──────────────────────────────
 
 function TurnConnector({ edge, side, highlight }: { edge: PathEdge; side: 'right' | 'left'; highlight?: boolean }) {
+  const t = useT()
   const W = 16, SEG = 14, cx = W / 2
   const stroke = edgeStroke(edge.label, highlight)
   const spouse = isSpouse(edge.label)
@@ -288,7 +295,7 @@ function TurnConnector({ edge, side, highlight }: { edge: PathEdge; side: 'right
         </svg>
 
         <span className={labelPillClass(edge.blood, highlight)}>
-          {LABEL_TEXT[edge.label]}
+          {labelText(edge.label, t)}
         </span>
 
         <svg width={W} height={SEG} aria-hidden>
@@ -329,6 +336,7 @@ async function exportRelationPathPNG(
   byId: Map<number, PersonFull>,
   isBloodOnly: boolean,
   steps: number,
+  t: TFn,
 ) {
   const DPR = 2
   const CCARD_W = 120
@@ -390,13 +398,13 @@ async function exportRelationPathPNG(
   ctx.fillRect(0, 0, canvasW, canvasH)
 
   // Header
-  const nameA = displayPersonName(personA, nameOrder) || '(unnamed)'
-  const nameB = displayPersonName(personB, nameOrder) || '(unnamed)'
+  const nameA = displayPersonName(personA, nameOrder) || t('relPath.unnamed')
+  const nameB = displayPersonName(personB, nameOrder) || t('relPath.unnamed')
   ctx.textAlign    = 'center'
   ctx.textBaseline = 'alphabetic'
   ctx.fillStyle = '#3f3f46'
   ctx.font = '600 10px system-ui,-apple-system,sans-serif'
-  ctx.fillText('RELATIONSHIP', canvasW / 2, CPAD + 14)
+  ctx.fillText(t('relPath.heading').toUpperCase(), canvasW / 2, CPAD + 14)
   ctx.fillStyle = '#e4e4e7'
   ctx.font = '700 15px system-ui,-apple-system,sans-serif'
   ctx.fillText(`${nameA}  ·  ${nameB}`, canvasW / 2, CPAD + 38)
@@ -447,7 +455,7 @@ async function exportRelationPathPNG(
       ctx.stroke()
     }
 
-    const fullName = displayPersonName(person, nameOrder) || '(unnamed)'
+    const fullName = displayPersonName(person, nameOrder) || t('relPath.unnamed')
     ctx.font         = '600 11px system-ui,-apple-system,sans-serif'
     ctx.textAlign    = 'center'
     ctx.textBaseline = 'alphabetic'
@@ -461,7 +469,7 @@ async function exportRelationPathPNG(
     if (ht === 'lca') {
       ctx.fillStyle = '#f87171'
       ctx.font      = '700 7px system-ui,-apple-system,sans-serif'
-      ctx.fillText('LCA', cx, cy + AVATAR_R + 30)
+      ctx.fillText(t('relPath.lcaBadge'), cx, cy + AVATAR_R + 30)
     }
 
     const by = person.birth_date ? person.birth_date.slice(0, 4) : person.birth_year != null ? String(person.birth_year) : null
@@ -511,7 +519,7 @@ async function exportRelationPathPNG(
     }
     if (arrow) drawArrowHead(fwd ? ex : sx, lineY, fwd ? 'right' : 'left', color)
 
-    const label = LABEL_TEXT[edge.label].toUpperCase()
+    const label = labelText(edge.label, t).toUpperCase()
     ctx.font     = '600 7px system-ui,-apple-system,sans-serif'
     const tw = ctx.measureText(label).width
     const bw = tw + 10, bh = 14, mx = (sx + ex) / 2
@@ -533,7 +541,7 @@ async function exportRelationPathPNG(
   }
 
   function drawVEdge(turnX: number, topY: number, botY: number, edge: PathEdge) {
-    const label = LABEL_TEXT[edge.label].toUpperCase()
+    const label = labelText(edge.label, t).toUpperCase()
     ctx.font     = '600 7px system-ui,-apple-system,sans-serif'
     const tw = ctx.measureText(label).width
     const bw = tw + 10, bh = 14
@@ -618,12 +626,12 @@ async function exportRelationPathPNG(
     ctx.textAlign    = 'left'
     ctx.font         = '600 11px system-ui,-apple-system,sans-serif'
     ctx.fillStyle    = isBloodOnly ? '#fda4af' : '#93c5fd'
-    ctx.fillText(isBloodOnly ? '♥ Blood relatives' : '♥ Related by marriage', CPAD, fy + 10)
+    ctx.fillText(`♥ ${isBloodOnly ? t('relPath.blood') : t('relPath.marriage')}`, CPAD, fy + 10)
 
     ctx.textAlign = 'right'
     ctx.fillStyle = '#3f3f46'
     ctx.font      = '400 11px system-ui,-apple-system,sans-serif'
-    ctx.fillText(`${steps} ${steps === 1 ? 'step' : 'steps'}`, canvasW - CPAD, fy + 10)
+    ctx.fillText(steps === 1 ? t('relPath.stepOne') : t('relPath.stepMany', { n: steps }), canvasW - CPAD, fy + 10)
 
     if (lcaId) {
       const lcaP = byId.get(lcaId)
@@ -631,7 +639,7 @@ async function exportRelationPathPNG(
         ctx.textAlign = 'left'
         ctx.fillStyle = '#fca5a5'
         ctx.font      = '400 9px system-ui,-apple-system,sans-serif'
-        ctx.fillText(`LCA: ${displayPersonName(lcaP, nameOrder)}`, CPAD, fy + 28)
+        ctx.fillText(`${t('relPath.lcaLabel')} ${displayPersonName(lcaP, nameOrder)}`, CPAD, fy + 28)
       }
     }
     ctx.textBaseline = 'alphabetic'
@@ -672,6 +680,7 @@ interface Props {
 
 export default function RelationPathModal({ personA, personB, persons, relations, onClose, onNavigate }: Props) {
   const { nameOrder } = useSettings()
+  const t = useT()
   const [exporting, setExporting] = useState(false)
   const byId = new Map(persons.map(p => [p.id, p]))
 
@@ -742,10 +751,10 @@ export default function RelationPathModal({ personA, personB, persons, relations
         {/* Header */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800">
           <div>
-            <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-1">Relationship</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold mb-1">{t('relPath.heading')}</p>
             <h2 className="text-sm font-semibold text-zinc-100">
               {displayPersonName(personA, nameOrder)}
-              <span className="text-zinc-500 font-normal mx-2">and</span>
+              <span className="text-zinc-500 font-normal mx-2">{t('relPath.and')}</span>
               {displayPersonName(personB, nameOrder)}
             </h2>
           </div>
@@ -763,12 +772,12 @@ export default function RelationPathModal({ personA, personB, persons, relations
         <div className="px-5 py-5">
           {!hasPath && (
             <p className="text-sm text-zinc-500 text-center py-4 px-8">
-              No relationship found between these two persons.
+              {t('relPath.none')}
             </p>
           )}
 
           {hasPath && chainPersons.length === 1 && (
-            <p className="text-sm text-zinc-400 text-center py-2">Same person.</p>
+            <p className="text-sm text-zinc-400 text-center py-2">{t('relPath.samePerson')}</p>
           )}
 
           {hasPath && rows.length > 0 && (
@@ -833,14 +842,14 @@ export default function RelationPathModal({ personA, personB, persons, relations
                       <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                         <path d="M10 3C7 7 4 10 4 13a6 6 0 0012 0c0-3-3-6-6-10z" />
                       </svg>
-                      Blood relatives
+                      {t('relPath.blood')}
                     </>
                   ) : (
                     <>
                       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
                       </svg>
-                      Related by marriage
+                      {t('relPath.marriage')}
                     </>
                   )}
                 </div>
@@ -851,22 +860,22 @@ export default function RelationPathModal({ personA, personB, persons, relations
                       <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m8-9h1M3 12H2m15.07-6.07l.707.707M5.636 18.364l-.707.707M18.364 18.364l.707-.707M5.636 5.636l-.707-.707" />
                       </svg>
-                      <span className="text-rose-500/70 mr-0.5">LCA:</span>
+                      <span className="text-rose-500/70 mr-0.5">{t('relPath.lcaLabel')}</span>
                       {displayPersonName(byId.get(lcaId) ?? {}, nameOrder)}
                       {!lcaInChain && (
-                        <span className="text-rose-600/60 ml-0.5">(not in path)</span>
+                        <span className="text-rose-600/60 ml-0.5">{t('relPath.notInPath')}</span>
                       )}
                     </div>
                     {/* Tooltip */}
                     <div className="pointer-events-none absolute bottom-full left-0 mb-2 w-64 opacity-0 group-hover/lca:opacity-100 transition-opacity duration-150 z-10">
                       <div className="bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl p-3">
-                        <p className="text-xs font-semibold text-zinc-100 mb-1">Lowest Common Ancestor</p>
+                        <p className="text-xs font-semibold text-zinc-100 mb-1">{t('relPath.lcaTitle')}</p>
                         <p className="text-xs text-zinc-400 leading-relaxed">
-                          The nearest ancestor from whom both persons directly descend. Among equidistant candidates, a male ancestor is preferred.
+                          {t('relPath.lcaDesc')}
                         </p>
                         {!lcaInChain && (
                           <p className="text-xs text-rose-400/80 mt-1.5 leading-relaxed">
-                            This ancestor is not shown in the path above because the connection was found via a sibling relation.
+                            {t('relPath.lcaNotShown')}
                           </p>
                         )}
                       </div>
@@ -876,7 +885,7 @@ export default function RelationPathModal({ personA, personB, persons, relations
                 )}
 
                 <span className="text-xs text-zinc-600">
-                  {steps} {steps === 1 ? 'step' : 'steps'}
+                  {steps === 1 ? t('relPath.stepOne') : t('relPath.stepMany', { n: steps })}
                 </span>
               </>
             )}
@@ -885,7 +894,7 @@ export default function RelationPathModal({ personA, personB, persons, relations
               onClick={async () => {
                 setExporting(true)
                 try {
-                  await exportRelationPathPNG(chainPersons, path!, highlightMap, personA, personB, nameOrder, lcaId, byId, isBloodOnly, steps)
+                  await exportRelationPathPNG(chainPersons, path!, highlightMap, personA, personB, nameOrder, lcaId, byId, isBloodOnly, steps, t)
                 } finally {
                   setExporting(false)
                 }
@@ -903,7 +912,7 @@ export default function RelationPathModal({ personA, personB, persons, relations
                   <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
               )}
-              {exporting ? 'Exporting…' : 'Export PNG'}
+              {exporting ? t('relPath.exporting') : t('relPath.exportPng')}
             </button>
           </div>
         )}

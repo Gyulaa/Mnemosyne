@@ -751,8 +751,12 @@ def execute_merge(
             with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
                 zip_names = set(zf.namelist())
                 for doc in incoming_data['documents']:
-                    local_pid = id_remap.get(doc['person_id'])
-                    if local_pid is None:
+                    # A document with no owner belongs to the project, not to a
+                    # person, so it has no decision to follow and comes across
+                    # on its own. One with an owner we did not import does not.
+                    unowned = doc['person_id'] is None
+                    local_pid = None if unowned else id_remap.get(doc['person_id'])
+                    if local_pid is None and not unowned:
                         continue
                     arc = f"documents/{doc['stored_name']}"
                     if arc not in zip_names:
@@ -775,7 +779,9 @@ def execute_merge(
                     new_doc_id = cur.lastrowid
                     doc_id_remap[doc['id']] = new_doc_id
                     conn.commit()
-                    if dec_map.get(doc['person_id'], {}).get('action') == 'merge':
+                    # Documents of newly created persons go away with the person;
+                    # these two cases have to name themselves for an undo.
+                    if unowned or dec_map.get(doc['person_id'], {}).get('action') == 'merge':
                         rollback['added_documents'].append({'id': new_doc_id, 'stored_name': new_stored})
                     stats['documents_added'] += 1
 

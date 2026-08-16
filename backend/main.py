@@ -2216,18 +2216,18 @@ def list_documents(person_id: int, db: Session = Depends(get_db)):
     return [_doc_dict(d) for d in docs]
 
 
-@app.post("/api/persons/{person_id}/documents", status_code=201)
+@app.post("/api/documents/upload", status_code=201)
 async def upload_document(
-    person_id: int,
     file: UploadFile = File(...),
+    person_ids: str = Form(default=""),   # comma-separated; empty means the document belongs to nobody
     title: Optional[str] = Form(default=None),
     doc_type: Optional[str] = Form(default="other"),
     year: Optional[int] = Form(default=None),
     description: Optional[str] = Form(default=None),
     db: Session = Depends(get_db),
 ):
-    p = db.get(DBPerson, person_id)
-    if not p:
+    pids = list(dict.fromkeys(int(x) for x in person_ids.split(",") if x.strip().isdigit()))
+    if pids and db.query(DBPerson).filter(DBPerson.id.in_(pids)).count() != len(pids):
         raise HTTPException(404, "Person not found")
     docs_dir = _docs_dir()
     ext = Path(file.filename or "file").suffix or ""
@@ -2237,7 +2237,7 @@ async def upload_document(
     dest.write_bytes(data)
     mime = file.content_type or mimetypes.guess_type(file.filename or "")[0]
     doc = DBDocument(
-        person_id=person_id,
+        person_id=pids[0] if pids else None,
         stored_name=stored_name,
         filename=file.filename or stored_name,
         mime_type=mime,
@@ -2250,7 +2250,8 @@ async def upload_document(
     db.add(doc)
     db.flush()
     # Also insert into junction table
-    db.add(DBDocumentPerson(document_id=doc.id, person_id=person_id))
+    for pid in pids:
+        db.add(DBDocumentPerson(document_id=doc.id, person_id=pid))
     db.commit()
     db.refresh(doc)
     return _doc_dict(doc)
@@ -2266,6 +2267,9 @@ def link_person_to_document(doc_id: int, person_id: int, db: Session = Depends(g
     existing = db.get(DBDocumentPerson, (doc_id, person_id))
     if not existing:
         db.add(DBDocumentPerson(document_id=doc_id, person_id=person_id))
+        # An ownerless document gets its owner column back — the two must agree.
+        if d.person_id is None:
+            d.person_id = person_id
         db.commit()
         db.refresh(d)
     return _doc_dict(d)
@@ -2279,6 +2283,19 @@ def unlink_person_from_document(doc_id: int, person_id: int, db: Session = Depen
     dp = db.get(DBDocumentPerson, (doc_id, person_id))
     if dp:
         db.delete(dp)
+        db.flush()
+        # `documents.person_id` must not keep pointing at someone who is no
+        # longer linked: delete_person cascades on that column, so a stale owner
+        # takes the document down with them. Hand it to whoever is left, and to
+        # nobody when the last link goes — the document then belongs to the
+        # project.
+        if d.person_id == person_id:
+            heir = (
+                db.query(DBDocumentPerson)
+                .filter(DBDocumentPerson.document_id == doc_id)
+                .first()
+            )
+            d.person_id = heir.person_id if heir else None
         db.commit()
         db.refresh(d)
     return _doc_dict(d)
@@ -2303,19 +2320,20 @@ def _slug_filename(title: str | None) -> str:
 
 @app.post("/api/documents/text", status_code=201)
 def create_text_document(body: TextDocumentCreate, db: Session = Depends(get_db)):
+    # No person is a valid state: a chronicle or a research memo can be written
+    # before anyone in it has a record, and @ mentions link people as they go.
     person_ids = [pid for pid in dict.fromkeys(body.person_ids)]
-    if not person_ids:
-        raise HTTPException(400, "At least one person must be linked")
-    persons = db.query(DBPerson).filter(DBPerson.id.in_(person_ids)).all()
-    if len(persons) != len(person_ids):
-        raise HTTPException(404, "Person not found")
+    if person_ids:
+        persons = db.query(DBPerson).filter(DBPerson.id.in_(person_ids)).all()
+        if len(persons) != len(person_ids):
+            raise HTTPException(404, "Person not found")
 
     docs_dir = _docs_dir()
     stored_name = f"{uuid.uuid4().hex}.md"
     (docs_dir / stored_name).write_text(body.content or "", encoding="utf-8")
 
     doc = DBDocument(
-        person_id=person_ids[0],
+        person_id=person_ids[0] if person_ids else None,
         stored_name=stored_name,
         filename=_slug_filename(body.title),
         mime_type="text/markdown",

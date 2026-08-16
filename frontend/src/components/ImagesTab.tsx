@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { api, downloadViaBrowser } from '../api'
 import type { Cluster, ImageItem, ImagePerson, PersonEvent } from '../types'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
-import { useT } from '../SettingsContext'
+import { useT, useDateLocale } from '../SettingsContext'
 import { ImagePreviewModal } from './ImagePreviewModal'
 
 type FilterType = 'all' | 'done' | 'no_face' | 'error' | 'pending' | 'private'
@@ -24,9 +24,9 @@ const STATUS_KEY: Record<string, string> = {
   pending: 'images.statusPending',
 }
 
-function fmtExifDate(iso: string) {
+function fmtExifDate(iso: string, locale: string) {
   const d = new Date(iso)
-  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  return d.toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 function parseMeta(metaJson: string | null): { width?: number; height?: number; make?: string; model?: string } {
@@ -513,14 +513,14 @@ export default function ImagesTab({
                   <button
                     onClick={() => { setIncludeMode('or'); setPage(1) }}
                     className={`px-2.5 py-1 transition-colors ${includeMode === 'or' ? 'bg-brand-500 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
-                    title="Show images where any of the included persons appear"
+                    title={t('images.matchAnyTitle')}
                   >
                     {t('images.matchAny')}
                   </button>
                   <button
                     onClick={() => { setIncludeMode('and'); setPage(1) }}
                     className={`px-2.5 py-1 transition-colors ${includeMode === 'and' ? 'bg-brand-500 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
-                    title="Show only images where all included persons appear together"
+                    title={t('images.matchAllTitle')}
                   >
                     {t('images.matchAll')}
                   </button>
@@ -651,7 +651,11 @@ export default function ImagesTab({
       {totalPages > 1 && (
         <div className="flex items-center justify-between">
           <span className="text-xs text-zinc-600 tabular-nums">
-            {((page - 1) * pageSize + 1).toLocaleString()}–{Math.min(page * pageSize, total).toLocaleString()} of {total.toLocaleString()}
+            {t('images.pageRange', {
+              from: ((page - 1) * pageSize + 1).toLocaleString(),
+              to: Math.min(page * pageSize, total).toLocaleString(),
+              total: total.toLocaleString(),
+            })}
           </span>
           <div className="flex items-center gap-1">
             <button onClick={() => setPage(1)} disabled={page === 1}
@@ -775,6 +779,7 @@ function ImageCard({
   onTogglePrivacy: (id: number, isPrivate: boolean) => void
 }) {
   const t = useT()
+  const dateLocale = useDateLocale()
   const statusCls = STATUS_CLS[img.scan_status] ?? 'bg-zinc-800 text-zinc-400 border-zinc-700'
 
   return (
@@ -860,7 +865,7 @@ function ImageCard({
       <div className="px-2 py-1.5 border-t border-zinc-800/60">
         <p className="text-xs text-zinc-400 truncate leading-tight" title={img.filename}>{img.filename}</p>
         {img.exif_date ? (
-          <p className="text-xs text-zinc-600 leading-tight tabular-nums">{fmtExifDate(img.exif_date)}</p>
+          <p className="text-xs text-zinc-600 leading-tight tabular-nums">{fmtExifDate(img.exif_date, dateLocale)}</p>
         ) : img.face_count > 0 ? (
           <p className="text-xs text-zinc-600 leading-tight">{img.face_count} {img.face_count === 1 ? t('images.face') : t('images.faces')}</p>
         ) : (
@@ -898,6 +903,7 @@ function ImageRow({
   onTogglePrivacy: (id: number, isPrivate: boolean) => void
 }) {
   const t = useT()
+  const dateLocale = useDateLocale()
   const statusCls = STATUS_CLS[img.scan_status] ?? 'bg-zinc-800 text-zinc-400 border-zinc-700'
 
   return (
@@ -964,7 +970,7 @@ function ImageRow({
         </p>
         {img.exif_date && (
           <p className="text-xs text-zinc-500 tabular-nums">
-            {new Date(img.exif_date).toLocaleString()}
+            {new Date(img.exif_date).toLocaleString(dateLocale)}
           </p>
         )}
         {img.error_msg && (
@@ -1014,6 +1020,8 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
   onDone: () => void
 }) {
   const qc = useQueryClient()
+  const t = useT()
+  const dateLocale = useDateLocale()
   const [search, setSearch] = useState('')
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
   const [attaching, setAttaching] = useState(false)
@@ -1202,7 +1210,7 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
                 <input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="Search events…"
+                  placeholder={t('images.searchEvents')}
                   autoFocus
                   className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400"
                 />
@@ -1214,13 +1222,13 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
                       : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
                   }`}
                 >
-                  + New event
+                  {t('images.newEvent')}
                 </button>
               </div>
 
               {showCreate && (
                 <div className="border border-zinc-700/60 rounded-xl p-3 bg-zinc-800/30">
-                  <p className="text-xs text-zinc-500 mb-2">Create and select a new event</p>
+                  <p className="text-xs text-zinc-500 mb-2">{t('images.createSelectEvent')}</p>
                   <EventEditor
                     event={null}
                     persons={[]}
@@ -1238,7 +1246,7 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
                 </p>
               ) : filtered.map(ev => {
                 const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
-                const dateStr = formatEventDate(ev.date, ev.year)
+                const dateStr = formatEventDate(ev.date, ev.year, dateLocale)
                 const isSelected = ev.id === selectedEventId
                 return (
                   <button

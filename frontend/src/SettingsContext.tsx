@@ -73,6 +73,37 @@ export function useT() {
   }
 }
 
+/** BCP-47 locale for the UI language — use for every Intl / toLocale* call. */
+export const DATE_LOCALE: Record<Lang, string> = { en: 'en-GB', hu: 'hu-HU' }
+
+export function useDateLocale() {
+  const { lang } = useSettings()
+  return DATE_LOCALE[lang] ?? 'en-GB'
+}
+
+/**
+ * Formats a partial genealogy date — `YYYY`, `YYYY-MM` or `YYYY-MM-DD` — in the
+ * UI language. Intl handles the part ordering, so Hungarian gets
+ * "1950. március 12." where English gets "12 March 1950".
+ */
+export function formatPartialDate(date: string, locale: string, month: 'long' | 'short' = 'long'): string {
+  const [y, m, d] = date.split('-').map(Number)
+  if (!Number.isFinite(y)) return date
+  if (Number.isFinite(m) && Number.isFinite(d)) {
+    return new Date(y, m - 1, d).toLocaleDateString(locale, { year: 'numeric', month, day: 'numeric' })
+  }
+  if (Number.isFinite(m)) {
+    return new Date(y, m - 1, 1).toLocaleDateString(locale, { year: 'numeric', month })
+  }
+  return String(y)
+}
+
+/** Month names in the UI language, January first. */
+export function monthNames(locale: string, style: 'long' | 'short' = 'long'): string[] {
+  const fmt = new Intl.DateTimeFormat(locale, { month: style })
+  return Array.from({ length: 12 }, (_, i) => fmt.format(new Date(2000, i, 1)))
+}
+
 type NameLike = {
   name?: string | null
   title?: string | null

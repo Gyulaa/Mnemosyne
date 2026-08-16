@@ -3,12 +3,22 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import type { PersonFull, Relation, PersonEvent, ImageItem, ImagePerson } from '../types'
 import { api } from '../api'
-import { useT, useSettings } from '../SettingsContext'
+import { useT, useSettings, useDateLocale, formatPartialDate, monthNames } from '../SettingsContext'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const MONTHS_EN = ['January','February','March','April','May','June','July','August','September','October','November','December']
-const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+/**
+ * How many of an event's photos a surface shows before the rest collapse behind
+ * a `+N`. An event can hold dozens — a wedding, a whole reel from one afternoon —
+ * and at full length a single event pushed everything after it off the screen.
+ *
+ * The editor's limit is expandable and the row's is not, on purpose: in the
+ * editor every photo has to stay reachable to be removed, whereas the row is a
+ * glance at what the event holds, with the Events tab one click away for the
+ * whole set.
+ */
+const ROW_PHOTO_LIMIT = 4      // read-only timeline row
+const EDITOR_PHOTO_LIMIT = 6   // editor strip, expandable
 
 export const EVENT_TYPE_OPTIONS = [
   { value: 'custom',      label: 'General / Custom',  key: 'timeline.typeCustom' },
@@ -24,13 +34,8 @@ export const EVENT_TYPE_OPTIONS = [
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-export function formatEventDate(date: string | null | undefined, fallbackYear?: number | null): string | null {
-  if (date) {
-    const parts = date.split('-')
-    if (parts.length === 3) return `${parseInt(parts[2])} ${MONTHS_SHORT[parseInt(parts[1]) - 1]} ${parts[0]}`
-    if (parts.length === 2) return `${MONTHS_SHORT[parseInt(parts[1]) - 1]} ${parts[0]}`
-    return parts[0]
-  }
+export function formatEventDate(date: string | null | undefined, fallbackYear: number | null | undefined, locale: string): string | null {
+  if (date) return formatPartialDate(date, locale, 'short')
   return fallbackYear != null ? String(fallbackYear) : null
 }
 
@@ -43,6 +48,7 @@ function getYear(date: string | null | undefined, fallbackYear?: number | null):
 
 function DatePartPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const t = useT()
+  const dateLocale = useDateLocale()
   const parts = value ? value.split('-') : []
   const yr = parts[0] ?? '', mo = parts[1] ?? '', dy = parts[2] ?? ''
 
@@ -63,7 +69,7 @@ function DatePartPicker({ value, onChange }: { value: string; onChange: (v: stri
         <select value={mo} onChange={e => update(yr, e.target.value, e.target.value ? dy : '')}
           className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-100 outline-none focus:border-brand-400">
           <option value="">{t('timeline.monthPh')}</option>
-          {MONTHS_EN.map((m, i) => <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>)}
+          {monthNames(dateLocale).map((m, i) => <option key={i} value={String(i + 1).padStart(2, '0')}>{m}</option>)}
         </select>
       )}
       {yr && mo && (
@@ -291,8 +297,12 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
   const [showImagePicker, setShowImagePicker] = useState(false)
   const [showPersonSearch, setShowPersonSearch] = useState(false)
   const [personSearchQ, setPersonSearchQ] = useState('')
+  const [showAllPhotos, setShowAllPhotos] = useState(false)
   // Local copy of event to reflect image/person updates immediately
   const [localEvent, setLocalEvent] = useState<PersonEvent | null>(event)
+
+  const eventImages = localEvent?.images ?? []
+  const hiddenPhotoCount = Math.max(0, eventImages.length - EDITOR_PHOTO_LIMIT)
 
   async function save() {
     setSaving(true)
@@ -429,7 +439,7 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
         <div>
           <p className="text-xs text-zinc-500 mb-1.5">{t('timeline.photosSection')}</p>
           <div className="flex flex-wrap gap-1.5 items-center">
-            {(localEvent?.images ?? []).map(ei => (
+            {(showAllPhotos ? eventImages : eventImages.slice(0, EDITOR_PHOTO_LIMIT)).map(ei => (
               <div key={ei.id} className="relative group/img w-12 h-12">
                 <img src={api.imageViewUrl(ei.image_id, 120)} alt=""
                   className="w-12 h-12 rounded-lg object-cover" />
@@ -437,6 +447,20 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
                   className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white text-xs flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity">✕</button>
               </div>
             ))}
+            {/* Expandable, not a plain badge: a photo behind the cut still has to
+                be reachable to be removed. */}
+            {hiddenPhotoCount > 0 && (
+              <button
+                onClick={() => setShowAllPhotos(v => !v)}
+                title={showAllPhotos ? t('timeline.showFewerPhotos') : t('timeline.morePhotos', { n: hiddenPhotoCount })}
+                className="w-12 h-12 shrink-0 rounded-lg border border-zinc-700 bg-zinc-800/60 hover:border-zinc-500 hover:bg-zinc-800 flex items-center justify-center text-xs font-medium text-zinc-400 hover:text-zinc-100 tabular-nums transition-colors">
+                {showAllPhotos ? (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                  </svg>
+                ) : `+${hiddenPhotoCount}`}
+              </button>
+            )}
             <button onClick={() => setShowImagePicker(true)}
               className="w-12 h-12 rounded-lg border-2 border-dashed border-zinc-700 hover:border-brand-400 flex items-center justify-center text-zinc-600 hover:text-brand-400 transition-colors text-xl">
               +
@@ -617,8 +641,9 @@ function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage, currentP
   currentPersonId?: number
 }) {
   const t = useT()
+  const dateLocale = useDateLocale()
   const typeLabel = t(EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.key ?? ev.event_type)
-  const dateStr = formatEventDate(ev.date, ev.year)
+  const dateStr = formatEventDate(ev.date, ev.year, dateLocale)
   const participants = ev.persons.filter(ep => ep.role === 'participant')
   const isFeatured = currentPersonId != null && ev.persons.some(ep => ep.person_id === currentPersonId && ep.featured)
 
@@ -667,10 +692,17 @@ function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage, currentP
           </div>
           {ev.images.length > 0 && (
             <div className="flex gap-1 mt-2 flex-wrap">
-              {ev.images.map(ei => (
+              {ev.images.slice(0, ROW_PHOTO_LIMIT).map(ei => (
                 <img key={ei.id} src={api.imageViewUrl(ei.image_id, 120)} alt=""
                   className="w-10 h-10 rounded-lg object-cover border border-zinc-700" />
               ))}
+              {ev.images.length > ROW_PHOTO_LIMIT && (
+                <div
+                  title={t('timeline.morePhotos', { n: ev.images.length - ROW_PHOTO_LIMIT })}
+                  className="w-10 h-10 rounded-lg border border-zinc-700 bg-zinc-800/60 flex items-center justify-center text-xs text-zinc-500 tabular-nums">
+                  +{ev.images.length - ROW_PHOTO_LIMIT}
+                </div>
+              )}
             </div>
           )}
           {participants.length > 0 && (
@@ -707,6 +739,7 @@ interface Props {
 export default function EventTimeline({ person, relations, persons, onNavigateToBio, onNavToEvent, autoPhotoEventType, onAutoPhotoConsumed }: Props) {
   const t = useT()
   const { lang } = useSettings()
+  const dateLocale = useDateLocale()
   const qc = useQueryClient()
 
   // editingEvent: the event currently open in the editor (null = no editor open)
@@ -772,7 +805,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
       evs.push({
         kind: 'auto', eventType: 'birth',
         year: getYear(person.birth_date, person.birth_year),
-        dateStr: formatEventDate(person.birth_date, person.birth_year),
+        dateStr: formatEventDate(person.birth_date, person.birth_year, dateLocale),
         place: person.birth_place, label: t('timeline.born'),
         onEdit: onNavigateToBio,
         onAttachPhoto: () => openAttachPhotoForAuto('birth', person.birth_date ?? (person.birth_year ? String(person.birth_year) : null), person.birth_place),
@@ -782,7 +815,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
       evs.push({
         kind: 'auto', eventType: 'christening',
         year: getYear(person.christening_date, person.christening_year),
-        dateStr: formatEventDate(person.christening_date, person.christening_year),
+        dateStr: formatEventDate(person.christening_date, person.christening_year, dateLocale),
         place: person.christening_place, label: t('timeline.christened'),
         onEdit: onNavigateToBio,
         onAttachPhoto: () => openAttachPhotoForAuto('christening', person.christening_date ?? (person.christening_year ? String(person.christening_year) : null), person.christening_place),
@@ -817,7 +850,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
       evs.push({
         kind: 'auto', eventType: 'death',
         year: getYear(person.death_date, person.death_year),
-        dateStr: formatEventDate(person.death_date, person.death_year),
+        dateStr: formatEventDate(person.death_date, person.death_year, dateLocale),
         place: person.death_place, label: t('timeline.died'),
         onEdit: onNavigateToBio,
         onAttachPhoto: () => openAttachPhotoForAuto('death', person.death_date ?? (person.death_year ? String(person.death_year) : null), person.death_place),
@@ -827,7 +860,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
       evs.push({
         kind: 'auto', eventType: 'burial',
         year: getYear(person.burial_date, person.burial_year),
-        dateStr: formatEventDate(person.burial_date, person.burial_year),
+        dateStr: formatEventDate(person.burial_date, person.burial_year, dateLocale),
         place: person.burial_place, label: t('timeline.buried'),
         onEdit: onNavigateToBio,
         onAttachPhoto: () => openAttachPhotoForAuto('burial', person.burial_date ?? (person.burial_year ? String(person.burial_year) : null), person.burial_place),

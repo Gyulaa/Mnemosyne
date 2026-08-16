@@ -5,6 +5,7 @@ import type { PersonNote, DocumentNote, NoteCitation, Source, PersonEvent, Perso
 import { api } from '../api'
 import { renderMarkdown } from '../markdown'
 import { useFamilyContext, FamilyContextLines } from '../familyContext'
+import { caretAnchor, useCaretPopup, type CaretAnchor } from '../caretPopup'
 
 // ── NoteOps — injectable API operations (supports person notes & document notes) ─
 
@@ -15,7 +16,7 @@ export interface NoteOps {
   deleteCitation: (id: number) => Promise<unknown>
   togglePrivacy?: (id: number, isPrivate: boolean) => Promise<unknown>
 }
-import { useSettings, displayPersonName } from '../SettingsContext'
+import { useSettings, displayPersonName, useT, useDateLocale } from '../SettingsContext'
 
 // ── @ mention helper ──────────────────────────────────────────────────────────
 
@@ -60,6 +61,7 @@ interface Props {
 export default function NoteEditor({ note, sources, persons = [], relations = [], ops, onNavToPerson, onSaved, onDeleted, onCancel, autoFocusContent }: Props) {
   const noteOps: NoteOps = ops ?? api.notes
   const { nameOrder } = useSettings()
+  const t = useT()
   const [title, setTitle] = useState(note.title ?? '')
   const [content, setContent] = useState(note.content)
   const [citations, setCitations] = useState<NoteCitation[]>(note.citations)
@@ -76,10 +78,10 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
   // @ mention state
   const [mentionCtx, setMentionCtx] = useState<{ query: string; atStart: number } | null>(null)
   const [mentionCursor, setMentionCursor] = useState(0)
-  const [mentionPos, setMentionPos] = useState<{ top: number; left: number } | null>(null)
+  const [mentionPos, setMentionPos] = useState<CaretAnchor | null>(null)
+  const mentionPopup = useCaretPopup(mentionPos)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const mentionRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (autoFocusContent) textareaRef.current?.focus()
@@ -114,12 +116,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
     const pos = e.target.selectionStart ?? val.length
     const ctx = getAtMentionContext(val, pos)
     setMentionCtx(ctx)
-    if (ctx && textareaRef.current) {
-      const rect = textareaRef.current.getBoundingClientRect()
-      setMentionPos({ top: rect.top, left: rect.left })
-    } else if (!ctx) {
-      setMentionPos(null)
-    }
+    setMentionPos(ctx ? caretAnchor(e.target, pos) : null)
   }
 
   // ── @ mention insertion ───────────────────────────────────────────────────
@@ -285,19 +282,19 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
       <input
         value={title}
         onChange={e => setTitle(e.target.value)}
-        placeholder="Title (optional)"
+        placeholder={t('notes.titlePh')}
         className="w-full bg-transparent px-4 pt-3 pb-1 text-sm font-semibold text-zinc-100 placeholder-zinc-600 outline-none border-b border-zinc-800"
       />
 
       {/* Toolbar */}
       <div className="flex items-center gap-0.5 px-3 py-1.5 border-b border-zinc-800 bg-zinc-900/40">
-        <ToolbarBtn onClick={() => wrapSelection('**', '**')} title="Bold"><strong>B</strong></ToolbarBtn>
-        <ToolbarBtn onClick={() => wrapSelection('*', '*')} title="Italic"><em>I</em></ToolbarBtn>
-        <ToolbarBtn onClick={() => wrapSelection('~~', '~~')} title="Strikethrough"><span className="line-through">S</span></ToolbarBtn>
+        <ToolbarBtn onClick={() => wrapSelection('**', '**')} title={t('notes.bold')}><strong>B</strong></ToolbarBtn>
+        <ToolbarBtn onClick={() => wrapSelection('*', '*')} title={t('notes.italic')}><em>I</em></ToolbarBtn>
+        <ToolbarBtn onClick={() => wrapSelection('~~', '~~')} title={t('notes.strikethrough')}><span className="line-through">S</span></ToolbarBtn>
         <span className="w-px h-4 bg-zinc-700 mx-1" />
-        <ToolbarBtn onClick={() => insertLinePrefix('## ')} title="Heading">H</ToolbarBtn>
-        <ToolbarBtn onClick={() => insertLinePrefix('- ')} title="List">• —</ToolbarBtn>
-        <ToolbarBtn onClick={() => insertLinePrefix('> ')} title="Quote">"</ToolbarBtn>
+        <ToolbarBtn onClick={() => insertLinePrefix('## ')} title={t('notes.heading')}>H</ToolbarBtn>
+        <ToolbarBtn onClick={() => insertLinePrefix('- ')} title={t('notes.list')}>• —</ToolbarBtn>
+        <ToolbarBtn onClick={() => insertLinePrefix('> ')} title={t('notes.quote')}>"</ToolbarBtn>
         <span className="w-px h-4 bg-zinc-700 mx-1" />
 
         {/* Cite button */}
@@ -310,7 +307,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
             </svg>
-            Cite
+            {t('notes.cite')}
           </button>
 
           {showCitePicker && (
@@ -322,14 +319,14 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
                   onClick={() => setCiteTab('source')}
                   className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${citeTab === 'source' ? 'text-amber-400 border-b-2 border-amber-500' : 'text-zinc-500 hover:text-zinc-300'}`}
                 >
-                  Sources
+                  {t('notes.citeSources')}
                 </button>
                 <button
                   type="button"
                   onClick={() => setCiteTab('custom')}
                   className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${citeTab === 'custom' ? 'text-amber-400 border-b-2 border-amber-500' : 'text-zinc-500 hover:text-zinc-300'}`}
                 >
-                  Custom text
+                  {t('notes.citeCustom')}
                 </button>
               </div>
 
@@ -341,14 +338,14 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
                       type="search"
                       value={citeSearch}
                       onChange={e => setCiteSearch(e.target.value)}
-                      placeholder="Search sources…"
+                      placeholder={t('notes.searchSources')}
                       className="w-full bg-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none"
                     />
                   </div>
                   <div className="max-h-44 overflow-y-auto">
                     {filteredSources.length === 0 ? (
                       <p className="text-xs text-zinc-600 px-3 py-3 italic">
-                        {sources.length === 0 ? 'No sources yet — add via a document first' : 'No matches'}
+                        {sources.length === 0 ? t('notes.noSources') : t('notes.noMatches')}
                       </p>
                     ) : (
                       filteredSources.map(s => (
@@ -365,13 +362,13 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
                 </>
               ) : (
                 <div className="p-3 space-y-2">
-                  <p className="text-xs text-zinc-500">Type any reference text — a URL, book title, oral source, etc.</p>
+                  <p className="text-xs text-zinc-500">{t('notes.citeTypePh')}</p>
                   <input
                     autoFocus
                     value={customCiteText}
                     onChange={e => setCustomCiteText(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); insertCustomCite() } }}
-                    placeholder="e.g. Parish register, 1872"
+                    placeholder={t('notes.citePh')}
                     className="w-full bg-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none border border-zinc-700 focus:border-amber-600"
                   />
                   <button
@@ -380,7 +377,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
                     disabled={!customCiteText.trim()}
                     className="w-full py-1.5 text-xs font-medium bg-amber-600/20 text-amber-400 hover:bg-amber-600/30 disabled:opacity-40 rounded-lg transition-colors"
                   >
-                    Insert citation
+                    {t('notes.insertCitation')}
                   </button>
                 </div>
               )}
@@ -396,7 +393,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
           value={content}
           onChange={handleContentChange}
           onKeyDown={handleTextareaKeyDown}
-          placeholder={`Write in Markdown… use **bold**, *italic*, - lists, ## headings${persons.length > 0 ? ', @name to mention a person' : ''}`}
+          placeholder={`${t('notes.mdPh')}${persons.length > 0 ? t('notes.mdPh.person') : ''}`}
           rows={6}
           className="w-full bg-transparent px-4 py-3 text-sm text-zinc-200 placeholder-zinc-600 outline-none resize-y leading-relaxed font-mono"
         />
@@ -406,18 +403,11 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
       {/* @ mention dropdown — rendered via portal so overflow:hidden parents don't clip it */}
       {mentionCtx !== null && mentionMatches.length > 0 && mentionPos !== null && createPortal(
         <div
-          ref={mentionRef}
-          style={{
-            position: 'fixed',
-            top: mentionPos.top,
-            left: mentionPos.left + 16,
-            zIndex: 9999,
-            width: 272,
-            transform: 'translateY(calc(-100% - 6px))',
-          }}
+          ref={mentionPopup.ref}
+          style={{ ...mentionPopup.style, zIndex: 9999, width: 272 }}
           className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl overflow-hidden"
         >
-          <p className="px-3 pt-2 pb-1 text-xs font-semibold text-zinc-600 uppercase tracking-wider">Mention person</p>
+          <p className="px-3 pt-2 pb-1 text-xs font-semibold text-zinc-600 uppercase tracking-wider">{t('notes.mentionPerson')}</p>
           <div className="max-h-56 overflow-y-auto">
             {mentionMatches.map((p, i) => {
               const active = i === mentionCursor
@@ -452,7 +442,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
       {/* References panel */}
       {citations.length > 0 && (
         <div className="border-t border-zinc-800 px-4 py-2.5 space-y-1.5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-600">References</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-600">{t('notes.references')}</p>
           {[...citations].sort((a, b) => a.marker - b.marker).map(c => (
             <div key={c.id} className="flex items-start gap-2 group/ref">
               <span className="text-xs text-zinc-600 font-mono shrink-0 mt-0.5 w-5 text-right">[{c.marker}]</span>
@@ -466,7 +456,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
                 type="button"
                 onClick={() => removeCitation(c.marker)}
                 className="shrink-0 opacity-0 group-hover/ref:opacity-100 text-zinc-600 hover:text-red-400 transition-all mt-0.5"
-                title="Remove reference"
+                title={t('notes.removeRef')}
               >
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -482,29 +472,29 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
         <div className="flex items-center gap-2">
           <button onClick={save} disabled={saving}
             className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded-lg transition-colors">
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? t('notes.saving') : t('notes.save')}
           </button>
           <button onClick={onCancel}
             className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors">
-            Cancel
+            {t('notes.cancel')}
           </button>
         </div>
         {confirmDelete ? (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500">Delete this note?</span>
+            <span className="text-xs text-zinc-500">{t('notes.deleteConfirm')}</span>
             <button onClick={doDelete} disabled={deleting}
               className="text-xs text-red-400 hover:text-red-300 font-medium transition-colors">
-              {deleting ? '…' : 'Yes, delete'}
+              {deleting ? '…' : t('notes.deleteYes')}
             </button>
             <button onClick={() => setConfirmDelete(false)}
               className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
-              Cancel
+              {t('notes.deleteCancelBtn')}
             </button>
           </div>
         ) : (
           <button onClick={() => setConfirmDelete(true)}
             className="text-xs text-zinc-600 hover:text-red-400 transition-colors">
-            Delete
+            {t('notes.delete')}
           </button>
         )}
       </div>
@@ -585,6 +575,8 @@ function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, 
   onClose: () => void
   onEdit: () => void
 }) {
+  const t = useT()
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
@@ -628,7 +620,7 @@ function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, 
             {note.title ? (
               <h2 className="text-base font-semibold text-zinc-100 leading-snug">{note.title}</h2>
             ) : (
-              <h2 className="text-sm text-zinc-500 italic">Untitled note</h2>
+              <h2 className="text-sm text-zinc-500 italic">{t('notes.untitled')}</h2>
             )}
             {editedAt && (
               <p className="text-xs text-zinc-600 mt-0.5">{editedAt}</p>
@@ -637,13 +629,13 @@ function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, 
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={onEdit}
-              title="Edit note"
+              title={t('notes.editTitle')}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors"
             >
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
               </svg>
-              Edit
+              {t('common.edit')}
             </button>
             <button
               onClick={onClose}
@@ -667,7 +659,7 @@ function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, 
                 onClick={handleContentClick}
               />
             ) : (
-              <p className="text-sm text-zinc-600 italic">Empty note.</p>
+              <p className="text-sm text-zinc-600 italic">{t('notes.empty')}</p>
             )}
           </div>
 
@@ -675,7 +667,7 @@ function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, 
           {sortedCitations.length > 0 && (
             <div className="border-t border-zinc-800 bg-zinc-950/40 px-3 py-3">
               <p className="px-3 pb-1.5 text-xs font-semibold uppercase tracking-widest text-zinc-600">
-                References
+                {t('notes.references')}
               </p>
               <div className="space-y-0.5">
                 {sortedCitations.map(c => (
@@ -702,6 +694,8 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
   const [viewing, setViewing] = useState(false)
   const [privacyBusy, setPrivacyBusy] = useState(false)
   const qc = useQueryClient()
+  const t = useT()
+  const dateLocale = useDateLocale()
 
   const noteOpsForPrivacy: NoteOps = ops ?? api.notes
   const hasPrivacy = 'is_private' in note
@@ -778,7 +772,7 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
   }
 
   const editedAt = note.updated_at
-    ? new Date(note.updated_at).toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' })
+    ? new Date(note.updated_at).toLocaleDateString(dateLocale, { year: 'numeric', month: 'short', day: 'numeric' })
     : null
 
   return (
@@ -805,7 +799,7 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
                 onClick={handleCardContentClick}
               />
             ) : (
-              <p className="text-sm text-zinc-600 italic">Empty note</p>
+              <p className="text-sm text-zinc-600 italic">{t('notes.emptyCard')}</p>
             )}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
@@ -814,7 +808,7 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
               <button
                 onClick={handleTogglePrivacy}
                 disabled={privacyBusy}
-                title={isPrivate ? 'Private — not exported (click to make public)' : 'Mark as private (excluded from all exports)'}
+                title={isPrivate ? t('notes.privacyOn') : t('notes.privacyOff')}
                 className={[
                   'p-1.5 rounded transition-all',
                   isPrivate
@@ -837,7 +831,7 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
             <button
               onClick={e => { e.stopPropagation(); setEditing(true) }}
               className="opacity-0 group-hover:opacity-100 p-1.5 rounded text-zinc-600 hover:text-zinc-200 hover:bg-zinc-700 transition-all"
-              title="Edit"
+              title={t('common.edit')}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
@@ -853,7 +847,7 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
             </svg>
             <span className="text-xs text-zinc-600">
-              {note.citations.length} reference{note.citations.length !== 1 ? 's' : ''} — click to view
+              {t('notes.citations', { n: note.citations.length })}
             </span>
           </div>
         )}
