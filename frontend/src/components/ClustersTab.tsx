@@ -315,6 +315,7 @@ function ClusterCard({
   onTogglePrivacy: (clusterId: number, isPrivate: boolean) => void
 }) {
   const t = useT()
+  const { nameOrder } = useSettings()
   const previews = cluster.preview_face_ids.slice(0, 4)
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const wasLongPress = useRef(false)
@@ -390,7 +391,9 @@ function ClusterCard({
         <div className="flex items-start justify-between gap-1">
           <div className="min-w-0 flex-1">
             {cluster.person_name ? (
-              <div className="text-sm font-semibold text-zinc-100 truncate">{cluster.person_name}</div>
+              <div className="text-sm font-semibold text-zinc-100 truncate">
+                {cluster.person ? displayPersonName(cluster.person, nameOrder) : cluster.person_name}
+              </div>
             ) : (
               <div className="text-sm font-medium text-zinc-400 truncate">
                 Cluster {String(cluster.label).padStart(3, '0')}
@@ -577,7 +580,9 @@ function ClusterModal({
 
   const headingLabel = isNoise
     ? t('clusters.modal.unclassifiedFaces')
-    : cluster.person_name ?? t('clusters.clusterN', { n: String(cluster.label).padStart(3, '0') })
+    : cluster.person
+      ? displayPersonName(cluster.person, nameOrder)
+      : cluster.person_name ?? t('clusters.clusterN', { n: String(cluster.label).padStart(3, '0') })
 
   const otherClusters = allClusters.filter(c => c.id !== cluster.id)
 
@@ -596,7 +601,7 @@ function ClusterModal({
           <div className="flex items-start gap-4">
             <div className="flex-1 min-w-0">
               <p className="text-xs text-zinc-500 mb-1.5 uppercase tracking-wider">
-                {headingLabel} · {cluster.face_count} faces
+                {headingLabel} · {cluster.face_count} {t('clusters.faces')}
               </p>
 
               {!isNoise && (
@@ -662,7 +667,9 @@ function ClusterModal({
                   /* ── Name display (collapsed) ── */
                   <div className="flex items-center gap-2 min-w-0">
                     <div className="min-w-0">
-                      <span className="text-base font-semibold text-zinc-100">{savedName}</span>
+                      <span className="text-base font-semibold text-zinc-100">
+                        {cluster.person ? displayPersonName(cluster.person, nameOrder) : savedName}
+                      </span>
                       {currentPerson?.nickname && (
                         <span className="ml-2 text-sm text-zinc-500">"{currentPerson.nickname}"</span>
                       )}
@@ -2350,11 +2357,13 @@ function AssignFacesOverlay({
                         </div>
                         <div className="px-2 py-1.5">
                           {c.person_name ? (
-                            <div className="text-xs font-semibold text-zinc-100 truncate">{c.person_name}</div>
+                            <div className="text-xs font-semibold text-zinc-100 truncate">
+                              {c.person ? displayPersonName(c.person, nameOrder) : c.person_name}
+                            </div>
                           ) : (
                             <div className="text-xs text-zinc-400 truncate">Cluster {String(c.label).padStart(3, '0')}</div>
                           )}
-                          <div className="text-xs text-zinc-600 tabular-nums">{c.face_count} faces</div>
+                          <div className="text-xs text-zinc-600 tabular-nums">{c.face_count} {t('clusters.faces')}</div>
                         </div>
                       </button>
                     ))}
@@ -2758,6 +2767,7 @@ function MergePanel({
 }) {
   const queryClient = useQueryClient()
   const t = useT()
+  const { nameOrder } = useSettings()
   const [target, setTarget] = useState<Cluster | null>(null)
   const [merging, setMerging] = useState(false)
   const [search, setSearch] = useState('')
@@ -2780,11 +2790,11 @@ function MergePanel({
         <p className="text-zinc-300 text-center max-w-sm leading-relaxed">
           Merge{' '}
           <span className="font-semibold text-white">
-            {cluster.person_name ?? `Cluster ${cluster.label}`}
+            {cluster.person ? displayPersonName(cluster.person, nameOrder) : cluster.person_name ?? `Cluster ${cluster.label}`}
           </span>{' '}
           into{' '}
           <span className="font-semibold text-white">
-            {target.person_name ?? `Cluster ${target.label}`}
+            {target.person ? displayPersonName(target.person, nameOrder) : target.person_name ?? `Cluster ${target.label}`}
           </span>
           ?
         </p>
@@ -2871,13 +2881,15 @@ function MergePanel({
             </div>
             <div className="px-2.5 py-2">
               {c.person_name ? (
-                <div className="text-xs font-semibold text-zinc-100 truncate">{c.person_name}</div>
+                <div className="text-xs font-semibold text-zinc-100 truncate">
+                  {c.person ? displayPersonName(c.person, nameOrder) : c.person_name}
+                </div>
               ) : (
                 <div className="text-xs font-medium text-zinc-400 truncate">
                   Cluster {String(c.label).padStart(3, '0')}
                 </div>
               )}
-              <div className="text-xs text-zinc-500 tabular-nums">{c.face_count} faces</div>
+              <div className="text-xs text-zinc-500 tabular-nums">{c.face_count} {t('clusters.faces')}</div>
             </div>
           </button>
         ))}

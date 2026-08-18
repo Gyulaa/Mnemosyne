@@ -1056,6 +1056,7 @@ def list_clusters(db: Session = Depends(get_db)):
             "dismissed_count": sum(1 for f in c.faces if f.dismissed),
             "person_id": c.person_id,
             "person_name": c.person.name if c.person else None,
+            "person": _doc_person_dict(c.person) if c.person else None,
             "preview_face_ids": _preview_face_ids(c.id, db),
             "is_private": bool(c.is_private),
         }
@@ -1774,7 +1775,7 @@ def _rel_dict(r: "DBRelation") -> dict:
 
 
 def _doc_person_dict(p: "DBPerson") -> dict:
-    """Linked-person stub for document payloads.
+    """Linked-person stub, reused anywhere a payload carries a person reference.
 
     Ships the individual name parts alongside the stored display name: the
     stored one is always composed in a single fixed order, so only the client

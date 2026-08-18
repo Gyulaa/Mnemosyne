@@ -49,6 +49,7 @@ export interface Cluster {
   dismissed_count?: number
   person_id: number | null
   person_name: string | null
+  person: DocumentPersonRef | null
   preview_face_ids: number[]
   is_private?: boolean
 }
