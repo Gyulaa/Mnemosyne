@@ -27,6 +27,7 @@ from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Pe
 from . import scanner as scanner_mod
 from . import clusterer
 from .clusterer import recompute_person_subclusters
+from . import maintenance
 from . import export_utils
 from .schemas import (
     ScanStartRequest, ScanStatusResponse,
@@ -54,6 +55,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _run_startup_maintenance():
+    """The project active at last shutdown is loaded by project_manager before
+    the app object even exists (see ProjectManager.__init__), so it never goes
+    through activate_project — this is the only hook for "app just opened"."""
+    if project_manager.active_id:
+        maintenance.start(project_manager.session_factory)
 
 
 def get_db():
@@ -104,10 +114,14 @@ def create_project(body: dict):
 def activate_project(project_id: str):
     if scanner_mod.get_status()["running"]:
         raise HTTPException(409, "Stop the running scan before switching projects")
+    if maintenance.get_status()["running"]:
+        raise HTTPException(409, "Wait for background maintenance to finish before switching projects")
     try:
-        return project_manager.switch_project(project_id)
+        result = project_manager.switch_project(project_id)
     except FileNotFoundError:
         raise HTTPException(404, "Project not found")
+    maintenance.start(project_manager.session_factory)
+    return result
 
 
 @app.patch("/api/projects/{project_id}")
@@ -599,6 +613,13 @@ def stop_scan():
 @app.get("/api/scan/status", response_model=ScanStatusResponse)
 def scan_status():
     return scanner_mod.get_status()
+
+
+@app.get("/api/maintenance/status")
+def maintenance_status():
+    """Background prune-missing-images pass, started automatically on project
+    activation. Polled briefly by the frontend so it can refresh once done."""
+    return maintenance.get_status()
 
 
 @app.get("/api/scan/pending")

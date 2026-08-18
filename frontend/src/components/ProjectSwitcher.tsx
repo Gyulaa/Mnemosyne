@@ -47,11 +47,30 @@ export default function ProjectSwitcher({
     return () => document.removeEventListener('mousedown', onDown)
   }, [])
 
+  // A quiet background pass prunes images whose files vanished from disk —
+  // it starts on backend startup (loading the last-active project) and again
+  // on every explicit switch below. Watch briefly and refresh once it's
+  // done, but only if it actually removed something.
+  const [watchingMaintenance, setWatchingMaintenance] = useState(true)
+  const { data: maintenanceStatus } = useQuery({
+    queryKey: ['maintenance-status'],
+    queryFn: api.scan.maintenanceStatus,
+    enabled: watchingMaintenance,
+    refetchInterval: 2_000,
+  })
+  useEffect(() => {
+    if (watchingMaintenance && maintenanceStatus && !maintenanceStatus.running) {
+      setWatchingMaintenance(false)
+      if (maintenanceStatus.removed_images > 0) qc.invalidateQueries()
+    }
+  }, [watchingMaintenance, maintenanceStatus, qc])
+
   const switchMut = useMutation({
     mutationFn: (id: string) => api.project.activate(id),
     onSuccess: () => {
       setOpen(false)
       qc.invalidateQueries()
+      setWatchingMaintenance(true)
     },
   })
 

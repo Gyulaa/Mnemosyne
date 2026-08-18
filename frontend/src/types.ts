@@ -7,6 +7,12 @@ export interface ScanStatus {
   current_path: string | null
 }
 
+export interface MaintenanceStatus {
+  running: boolean
+  removed_images: number
+  removed_faces: number
+}
+
 export interface DuplicateImageInfo {
   id: number
   path: string

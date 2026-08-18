@@ -1,4 +1,4 @@
-import type { ScanStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, ChatThread, ChatMessage, ChatStreamEvent } from './types'
+import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, ChatThread, ChatMessage, ChatStreamEvent } from './types'
 
 const BASE = '/api'
 
@@ -53,6 +53,7 @@ export const api = {
       post(`${BASE}/scan/start`, { path, skip_duplicates: skipDuplicates }),
     stop:  () => post(`${BASE}/scan/stop`),
     status: () => fetchJson<ScanStatus>(`${BASE}/scan/status`),
+    maintenanceStatus: () => fetchJson<MaintenanceStatus>(`${BASE}/maintenance/status`),
     duplicateGroups: () => fetchJson<DuplicateGroup[]>(`${BASE}/images/duplicate-groups`),
     resolveDuplicate: (imageId: number, action: 'keep' | 'dismiss' | 'delete') =>
       post<{ ok: boolean; action: string }>(`${BASE}/images/${imageId}/resolve-duplicate?action=${action}`),

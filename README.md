@@ -246,6 +246,7 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 | If the task is about | Read | Then open |
 |---|---|---|
 | Scanning photos, face detection, clustering | [Scan](#scan), [Clusters](#clusters), [Sub-cluster centroid matching](#sub-cluster-centroid-matching) | `backend/scanner.py`, `backend/clusterer.py`, `ScanTab.tsx`, `ClustersTab.tsx` |
+| Photos deleted outside the app, gallery going stale | [Gallery maintenance](#gallery-maintenance) | `backend/maintenance.py`, `main.py` (`activate_project`, startup event), `ProjectSwitcher.tsx` |
 | The family tree — layout, controls, PNG export | [Genealogy](#genealogy) | `frontend/src/treeGeometry.ts`, `TreeView.tsx`, `FamilyTreeTab.tsx`, `TreeExportModal.tsx` |
 | Person profile, relations, notes, sources | [Genealogy](#genealogy) | `PersonPanel.tsx`, `NoteEditor.tsx`, `_person_dict` / `_note_dict` in `main.py` |
 | Documents, in-app text documents, citations | [Documents and text documents](#documents-and-text-documents) | `DocumentsTab.tsx`, `TextDocumentEditor.tsx`, `DocumentViewer.tsx`, `_doc_dict` in `main.py` |
@@ -277,6 +278,19 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 - HEIC/HEIF support (iPhone photos)
 - Resumable scanning — picks up where it left off after interruption
 - EXIF metadata extraction (date, camera, resolution)
+
+### Gallery maintenance
+Photos can disappear from disk without the app knowing — moved, deleted in the OS, a drive unmounted. Without this, the broken thumbnail sits in the gallery until the user notices and deletes the entry by hand, faces and all.
+
+`scanner.py` already prunes this during a full scan (`_run`, Phase 1) — but only for files under the root just scanned, since that's the only part of the collection it walked. `maintenance.py` runs the equivalent check across *every* image in the project — no directory walk, just a disk-existence check per known path — so it can run automatically without the user pointing a scan at anything.
+
+It runs once per project activation, as a background daemon thread (`GET /api/maintenance/status` is polled briefly by `ProjectSwitcher.tsx`), from two call sites:
+- `main.py`'s `startup` event, when `project_manager` loads the project that was active at last shutdown — this is the "app just opened" case, and it never goes through `activate_project` because `ProjectManager.__init__` activates that project directly.
+- `activate_project`, on every explicit project switch.
+
+`activate_project` also blocks switching while either a scan or a maintenance pass is running, for the same reason project switching already blocks on a running scan: switching disposes the SQLAlchemy engine so Windows releases the file handle, and a background write racing that disposal is the failure mode to avoid.
+
+A removed image takes its faces with it, and `_purge_empty_named_clusters`'s query (mirrored in `maintenance.py`) removes any named cluster (`label >= 0`) left with no faces at all — a linked person is kept regardless, exactly like every other place that empties a cluster. Sub-cluster centroids for an affected person are **not** recomputed here; they refresh at the next `run_clustering` call, same as after deleting an image or batch-deleting faces from the Clusters tab. New photos are not detected this way — that still needs an explicit scan.
 
 ### Clusters
 - Rename, merge, and delete clusters
@@ -683,6 +697,7 @@ Image-Organizer/
 ├── backend/
 │   ├── main.py              # FastAPI app, all REST API endpoints
 │   ├── scanner.py           # Background, resumable file scanner
+│   ├── maintenance.py       # Background prune of images whose files vanished from disk
 │   ├── clusterer.py         # DBSCAN + centroid-based clustering
 │   ├── database.py          # SQLite schema, SQLAlchemy models, startup migrations
 │   ├── schemas.py           # Pydantic request/response models

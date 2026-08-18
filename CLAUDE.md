@@ -23,7 +23,7 @@ Two facts shape everything below: **there is no automated test suite**, so "done
 | Serialisation | `_person_dict`, `_doc_dict`, `_event_dict`, … in `main.py` | Every response funnels through one of these. Add a field there, never ad-hoc inside an endpoint |
 | Schema | `backend/database.py` | SQLAlchemy models + `schema_version` + idempotent startup migrations (currently v7) |
 | Projects | `backend/project_manager.py` | One SQLite DB per project; `get_db()` read-write, `get_readonly_db()` for the assistant |
-| Long jobs | `backend/scanner.py`, `backend/updater.py` | Daemon threads + a module-level state dict behind a lock, polled over HTTP |
+| Long jobs | `backend/scanner.py`, `backend/updater.py`, `backend/maintenance.py` | Daemon threads + a module-level state dict behind a lock, polled over HTTP |
 | Pipelines | `export_utils.py`, `merge_import.py`, `gedcom_*.py` | Copy-then-filter; the filters are hand-maintained and forgetting one leaks data |
 | Assistant | `backend/ai/` | Read-only tool use over SQL, opt-in, off without an API key |
 | API client | `frontend/src/api.ts` | The only place that knows URL strings |
