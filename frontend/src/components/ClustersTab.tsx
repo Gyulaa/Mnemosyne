@@ -2772,6 +2772,12 @@ function MergePanel({
   const [merging, setMerging] = useState(false)
   const [search, setSearch] = useState('')
 
+  // Named clusters first — merging into an already-identified person is the common case
+  const sortedOtherClusters = useMemo(
+    () => [...otherClusters].sort((a, b) => (a.person_name ? 0 : 1) - (b.person_name ? 0 : 1)),
+    [otherClusters],
+  )
+
   async function doMerge() {
     if (!target || merging) return
     setMerging(true)
@@ -2828,11 +2834,11 @@ function MergePanel({
 
   const q = search.trim().toLowerCase()
   const filtered = q
-    ? otherClusters.filter(c =>
+    ? sortedOtherClusters.filter(c =>
         c.person_name?.toLowerCase().includes(q) ||
         String(c.label).padStart(3, '0').includes(q)
       )
-    : otherClusters
+    : sortedOtherClusters
 
   return (
     <div className="space-y-3">
