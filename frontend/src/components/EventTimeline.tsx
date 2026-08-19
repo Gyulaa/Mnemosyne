@@ -276,7 +276,7 @@ function ImagePickerModal({ personId, persons, alreadyAttachedIds = new Set(), o
 
 export interface EventEditorProps {
   event: PersonEvent | null        // null = creating new
-  prefill?: { event_type?: string; date?: string; place?: string }
+  prefill?: { event_type?: string; date?: string; place?: string; title?: string }
   personId?: number                // optional; used for image picker scope
   persons?: PersonFull[]
   onSaved: (ev: PersonEvent) => void
@@ -288,7 +288,7 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
   const t = useT()
   const qc = useQueryClient()
   const [type, setType] = useState(event?.event_type ?? prefill?.event_type ?? 'custom')
-  const [title, setTitle] = useState(event?.title ?? '')
+  const [title, setTitle] = useState(event?.title ?? prefill?.title ?? '')
   const [date, setDate] = useState(event?.date ?? prefill?.date ?? '')
   const [place, setPlace] = useState(event?.place ?? prefill?.place ?? '')
   const [description, setDescription] = useState(event?.description ?? '')
@@ -545,9 +545,11 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
             className="px-3 py-1 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-50 text-white rounded-lg transition-colors">
             {saving ? t('events.saving') : isExisting ? t('timeline.update') : t('events.save')}
           </button>
-          <button onClick={onCancel} className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors">
-            {isExisting ? t('timeline.done') : t('events.cancel')}
-          </button>
+          {!isExisting && (
+            <button onClick={onCancel} className="px-3 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors">
+              {t('events.cancel')}
+            </button>
+          )}
         </div>
         {isExisting && (
           confirmDelete ? (
@@ -908,8 +910,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
       setAutoEventPrefill(null)
       setEditingEvent(saved)
     } else {
-      // Update was already applied; just refresh
-      setEditingEvent(saved)
+      closeEditor()
     }
     refetch()
     qc.invalidateQueries({ queryKey: ['events'] })

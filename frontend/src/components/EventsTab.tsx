@@ -623,7 +623,10 @@ export default function EventsTab({ navTarget, onNavConsumed, onNavToCluster, on
       setIsCreating(false)
       setEditingEvent(saved)
     } else {
-      setEditingEvent(saved)
+      // Update on an existing event exits the editor, back to wherever it was opened from
+      if (viewingEvent !== null) setViewingEvent(saved)
+      setEditingEvent(null)
+      setIsCreating(false)
     }
     refetch()
     qc.invalidateQueries({ queryKey: ['images-with-events'] })

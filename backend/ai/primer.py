@@ -7,11 +7,21 @@ instead of on orientation. For a tree of a few hundred people the skeleton is a
 few thousand tokens, which sits behind one `cache_control` breakpoint and is
 read back at ~0.1x cost.
 
+**The skeleton is an index, and an index that looks like an answer is a trap.**
+Names, years and edges are enough to *compose* a fluent reply about a family
+without calling a single tool — and that reply then silently asserts that
+everything absent from the index is absent from the project. The counter-measure
+is `_content_marks`: every line carries how many notes, documents, events and
+photos that person has, so "is anything written about him" is a lookup rather
+than a guess, and an empty profile is visibly empty rather than merely unseen.
+Without the marks the model cannot tell a person nobody has researched from one
+whose page is full, and it treats both as the bare line it can see.
+
 **The serialisation must be byte-stable.** No timestamps, no dict iteration
 order, no `datetime.now()` — everything sorted by id. Get that right and cache
 invalidation needs no bookkeeping at all: unchanged data serialises to identical
 bytes and hits the cache; changed data serialises differently and correctly
-misses it.
+misses it. The marks are counts of sorted queries, so they keep that property.
 """
 
 from __future__ import annotations
@@ -20,7 +30,29 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..database import Person as DBPerson, Relation as DBRelation
+from ..database import (
+    Cluster as DBCluster,
+    Document as DBDocument,
+    DocumentPerson as DBDocumentPerson,
+    Event as DBEvent,
+    EventPerson as DBEventPerson,
+    Face as DBFace,
+    Image as DBImage,
+    Person as DBPerson,
+    PersonNote as DBPersonNote,
+    Relation as DBRelation,
+    Source as DBSource,
+)
+
+#: Biographical fields beyond names, sex and years. One list, used by the
+#: skeleton's `b` mark and by `_person_full` / `missing_fields` in tools.py —
+#: two copies would drift and the model would be told a field is missing that
+#: another tool happily returns.
+PROFILE_FIELDS = (
+    "birth_date", "birth_place", "christening_date", "christening_place",
+    "death_date", "death_place", "cause_of_death", "burial_date", "burial_place",
+    "occupation", "education", "religion", "nationality",
+)
 
 NAME_ORDER_LABEL = {
     "hu": "surname first (e.g. \"Példa Anna\")",
@@ -39,6 +71,78 @@ def _primer_name(p: DBPerson) -> str:
     return (p.name or "?").strip().replace("|", " ")
 
 
+def _visible(rows: list[Any], allow_private: bool) -> list[Any]:
+    if allow_private:
+        return rows
+    return [r for r in rows if not bool(getattr(r, "is_private", False))]
+
+
+def _content_marks(db: Session, allow_private: bool) -> dict[int, str]:
+    """Per person: how much material exists behind their line.
+
+    This is what stops the skeleton being mistaken for the whole record. A line
+    ending in `n2 d1 e3 p14` says there are two notes, a document, three events
+    and fourteen photographs waiting behind an id — so the model asks for them.
+    A line ending in nothing says the profile really is bare, which is a finding
+    the user can act on rather than an absence the model invented.
+
+    Counts respect the privacy filter, so the private and non-private primers
+    differ — as they already did for relations.
+    """
+    marks: dict[int, dict[str, int]] = {}
+
+    def bump(pid: int, key: str, n: int = 1) -> None:
+        marks.setdefault(pid, {})[key] = marks.setdefault(pid, {}).get(key, 0) + n
+
+    for p in db.query(DBPerson).order_by(DBPerson.id).all():
+        filled = sum(1 for f in PROFILE_FIELDS if (getattr(p, f, None) or "").strip())
+        if filled:
+            bump(p.id, "b", filled)
+
+    for n in _visible(db.query(DBPersonNote).order_by(DBPersonNote.id).all(), allow_private):
+        bump(n.person_id, "n")
+
+    docs = {d.id: d for d in _visible(db.query(DBDocument).order_by(DBDocument.id).all(), allow_private)}
+    owners: dict[int, set[int]] = {}
+    for d in docs.values():
+        if d.person_id:
+            owners.setdefault(d.id, set()).add(d.person_id)
+    for dp in db.query(DBDocumentPerson).all():
+        if dp.document_id in docs:
+            owners.setdefault(dp.document_id, set()).add(dp.person_id)
+    for did, pids in owners.items():
+        for pid in pids:
+            bump(pid, "d")
+
+    events = {e.id for e in _visible(db.query(DBEvent).order_by(DBEvent.id).all(), allow_private)}
+    for ep in db.query(DBEventPerson).all():
+        if ep.event_id in events:
+            bump(ep.person_id, "e")
+
+    # Photos: clusters -> faces -> images, the same path list_photos_of walks.
+    clusters = {
+        c.id: c.person_id
+        for c in _visible(db.query(DBCluster).all(), allow_private)
+        if c.person_id
+    }
+    if clusters:
+        visible_images = {i.id for i in _visible(db.query(DBImage).all(), allow_private)}
+        per_person: dict[int, set[int]] = {}
+        for f in db.query(DBFace).all():
+            pid = clusters.get(f.cluster_id) if f.cluster_id else None
+            if pid is not None and f.image_id in visible_images:
+                per_person.setdefault(pid, set()).add(f.image_id)
+        for pid, imgs in per_person.items():
+            bump(pid, "p", len(imgs))
+
+    out: dict[int, str] = {}
+    for pid, counts in marks.items():
+        out[pid] = " ".join(
+            f"{k}{counts[k]}" for k in ("b", "n", "d", "e", "p") if counts.get(k)
+        )
+    return out
+
+
 def build_tree_primer(db: Session, allow_private: bool = False) -> str:
     """Compact, deterministic skeleton of the whole tree."""
     persons = db.query(DBPerson).order_by(DBPerson.id).all()
@@ -55,11 +159,30 @@ def build_tree_primer(db: Session, allow_private: bool = False) -> str:
             spouses.setdefault(r.person_a_id, []).append(r.person_b_id)
             spouses.setdefault(r.person_b_id, []).append(r.person_a_id)
 
+    marks = _content_marks(db, allow_private)
+
     lines = [
-        "# FAMILY TREE SKELETON",
+        "# FAMILY TREE SKELETON — AN INDEX, NOT THE RECORD",
         "# One person per line, fields separated by |",
-        "# id | Surname/Given | sex | birth-death | parent ids | spouse ids",
-        "# Empty field = unknown. This is the whole tree; use tools for details.",
+        "# id | Surname/Given | sex | birth-death | parent ids | spouse ids | material",
+        "#",
+        "# This table holds names, years and edges. That is all it holds. It carries no",
+        "# places, occupations, notes, documents, events or photographs, so it can never",
+        "# tell you what someone's life was like — only that they exist and who they",
+        "# connect to. Answering from this table alone produces a reply that sounds",
+        "# complete and quietly asserts that nothing else was ever recorded.",
+        "#",
+        "# `material` says what is waiting behind the id, and is the reason you never",
+        "# have to guess whether anything is written down:",
+        "#   b<n> filled biographical fields (place, occupation, religion, …)",
+        "#   n<n> research notes      d<n> documents      e<n> events      p<n> photographs",
+        "# A person with marks has material you have not read. Read it before describing",
+        "# them. A person with no marks genuinely has a bare profile — that is a fact",
+        "# about the research, not about the life, and is worth telling the user.",
+        "#",
+        "# An empty year field means the year is unknown. It does not mean the person is",
+        "# doubtful, secondary, or the end of a line. Undated people are full members of",
+        "# this tree and lines continue through them.",
     ]
     for p in persons:
         birth = str(p.birth_year) if p.birth_year else ""
@@ -67,7 +190,9 @@ def build_tree_primer(db: Session, allow_private: bool = False) -> str:
         span = f"{birth}-{death}" if (birth or death) else ""
         par = ",".join(str(x) for x in sorted(set(parents.get(p.id, []))))
         spo = ",".join(str(x) for x in sorted(set(spouses.get(p.id, []))))
-        lines.append(f"{p.id}|{_primer_name(p)}|{p.sex or ''}|{span}|{par}|{spo}")
+        lines.append(
+            f"{p.id}|{_primer_name(p)}|{p.sex or ''}|{span}|{par}|{spo}|{marks.get(p.id, '')}"
+        )
 
     lines.append(f"# END ({len(persons)} people, {len(relations)} relations)")
 
@@ -87,20 +212,42 @@ def build_tree_primer(db: Session, allow_private: bool = False) -> str:
     return "\n".join(lines)
 
 
-def build_vocabulary(db: Session) -> str:
-    """Stored enum-ish values the model would otherwise have to guess.
+def build_inventory(db: Session, allow_private: bool = False) -> str:
+    """What this project contains, and the stored values needed to filter it.
 
-    `event_type` in particular is a fixed vocabulary that rarely matches the
-    word a question uses — guessing 'confirmation' against a stored 'religious'
-    returns nothing and reads as "the event does not exist".
+    Two failures share one cause — the model not knowing what exists. Guessing
+    `event_type='confirmation'` against a stored 'religious' returns nothing and
+    reads as "the event does not exist"; never calling `list_documents` at all
+    reads as "no documents are attached". Neither is survivable by instruction
+    alone, because in both cases the model has no reason to suspect it is wrong.
+    So the counts are stated up front: a project with documents in it can no
+    longer be described as having none.
     """
-    from ..database import Document as DBDocument, Event as DBEvent
-
     event_types = sorted({e.event_type for e in db.query(DBEvent).all() if e.event_type})
     doc_types = sorted({d.doc_type for d in db.query(DBDocument).all() if d.doc_type})
-    lines = ["# STORED VOCABULARY — use these exact values when filtering."]
-    lines.append(f"# event_type: {', '.join(event_types) if event_types else '(none recorded)'}")
-    lines.append(f"# doc_type:   {', '.join(doc_types) if doc_types else '(none recorded)'}")
+
+    notes = _visible(db.query(DBPersonNote).all(), allow_private)
+    docs = _visible(db.query(DBDocument).all(), allow_private)
+    events = _visible(db.query(DBEvent).all(), allow_private)
+    images = _visible(db.query(DBImage).all(), allow_private)
+    sources = db.query(DBSource).all()
+    readable = [d for d in docs if bool(d.is_text)]
+
+    lines = [
+        "# WHAT THIS PROJECT CONTAINS",
+        f"# {len(notes)} research notes, on {len({n.person_id for n in notes})} people",
+        f"# {len(docs)} documents — {len(readable)} written in the app and readable in "
+        "full with get_document; the rest are attached files whose contents you cannot "
+        "open, so their title, type and description are all there is",
+        f"# {len(events)} events   {len(sources)} sources   {len(images)} photographs",
+        "# Prose lives in notes, in documents and in event descriptions. Where a count",
+        "# above is not zero, this project has written material in it — look at the",
+        "# material before telling the user that only names and dates were recorded.",
+        "#",
+        "# STORED VOCABULARY — use these exact values when filtering.",
+        f"# event_type: {', '.join(event_types) if event_types else '(none recorded)'}",
+        f"# doc_type:   {', '.join(doc_types) if doc_types else '(none recorded)'}",
+    ]
     return "\n".join(lines)
 
 
@@ -119,6 +266,59 @@ relationship that did not come from the tree skeleton or a tool result.
 missing. "There is no death date recorded for her" is a useful answer; an \
 invented date is a corrupted family history. Being wrong here is far worse than \
 being incomplete.
+- **Never report an absence you did not check.** "Nothing is written about him", \
+"no documents are attached", "no places are recorded" are factual claims about \
+the project, and they are wrong far more often than they feel wrong — because \
+the skeleton you can see contains no notes, documents or places for anybody. \
+Before writing a sentence of that shape, look at the person's `material` marks \
+and call the tool that would have found the thing. If you did not look, do not \
+say it.
+
+## Before you answer, read the record
+The skeleton below is an index of who exists. Everything that makes a family \
+history — where they lived, what they did, what happened to them, what the \
+family remembers — is in profiles, notes, documents, events and photographs, and \
+reaches you only through tools.
+
+So for any question about a person, a branch or the family as a whole, gather \
+before you write:
+
+1. `get_person` on the people the question is about. One call returns their \
+profile, their relations, their events, their notes and the full text of any \
+document written in the app. It also tells you which fields are empty, so you \
+can say "no birth place is recorded" and be right.
+2. Follow the `material` marks up and down the branch. A parent or child marked \
+`n2 d1` has been researched and that research is part of the answer.
+3. `search_text` for the surname, the place or the topic — and with no query at \
+all to see every piece of writing in the project, which is the fastest way to \
+find out what the user has actually recorded.
+4. `list_events` and `find_photos` for the branch, since a life is also its \
+events and its pictures.
+
+A one-paragraph question ("tell me about X", "what is our family's story") is \
+not a small question — it is the one where reciting names and dates is most \
+tempting and least useful. Read the material first, then lead with what the \
+record actually says, and end by naming what is missing so the user knows what \
+to research next.
+
+## Never invent context
+You may state what is recorded, and you may draw a conclusion that follows from \
+recorded data if you mark it as yours. You may not supply the rest from general \
+knowledge or from what is likely:
+
+- No invented places. A family with no recorded birthplaces is a family whose \
+birthplaces are unknown — not a family from the capital, the countryside, or \
+anywhere else. Never let a surname, a language or a modern address suggest one.
+- No invented occupations, social class, wealth, religion, politics or origins.
+- No period colour. "They would have lived through the war years" and "a typical \
+farming family of the time" are things you brought with you, not things the \
+user recorded, and in a family history they read as findings.
+- A hedge does not license a guess. "Probably Budapest (?)" is still an \
+assertion about a real family, and it is the kind the user will have to go and \
+disprove. Say "no place is recorded" and stop.
+
+The user is the authority on their own family. Your value is that you have read \
+every note and remember every id — not that you can fill gaps plausibly.
 
 ## Referring to people — this is required
 Every time you name a person from the tree, write them as a mention:
@@ -158,14 +358,28 @@ assume a name you have seen before refers to the same person.
 
 ## Using the tools
 - The skeleton below already tells you who exists and how they connect — do not \
-call tools to rediscover that. Use tools for detail: dates, places, notes, \
-documents, events, photos.
+call tools to rediscover that, and do not expect anything else from it. Use \
+tools for everything else: places, occupations, notes, documents, events, photos.
 - **Do not trace a line of descent by hand.** `get_ancestors` walks a paternal \
 or maternal line for you and numbers the generations; `get_relationship_path` \
 computes the connection between two people. Chaining `get_person` calls up a \
 tree is how generations get skipped when names repeat.
-- `get_person` takes an `include` list — ask for everything you need in one call \
-rather than several.
+- **A line ends where the parents end, not where the dates end.** The earliest \
+people in a tree are usually the ones with no years recorded, because they were \
+copied from a register or remembered by a relative. Never present the oldest \
+*dated* person as the oldest known ancestor, and never let a missing year stop a \
+walk — `get_ancestors` follows the parent links to their real end and tells you \
+why it stopped. Report the whole chain, then say which of them are undated.
+- `get_person` is the fat one: it returns the profile, relations, events, notes, \
+documents *with their text*, a photo count and the list of fields that are \
+empty. Call it before describing anyone.
+- `get_document` returns a document in full. `list_documents` gives you titles \
+only — a title is not a document, and summarising one from its title is \
+inventing it.
+- `search_text` with no `query` returns an inventory of everything written in \
+the project: every note, document and source with its owner and its opening \
+line. Use it whenever you need to know what has been recorded rather than \
+whether one word appears.
 - **A question is not always about the person you were just discussing.** When \
 the user asks something general — about a story, a document, an event, the \
 project as a whole — search the whole project (`search_text`, `list_events` or \
@@ -272,13 +486,13 @@ def build_system_blocks(
         "missing, that may be why — say so rather than guessing.\n"
     )
     primer = build_tree_primer(db, allow_private=allow_private)
-    vocabulary = build_vocabulary(db)
+    inventory = build_inventory(db, allow_private=allow_private)
 
     return [
         {"type": "text", "text": instructions + privacy_note + build_asker_note(db, proband_id)},
         {
             "type": "text",
-            "text": f"{vocabulary}\n\n{primer}",
+            "text": f"{inventory}\n\n{primer}",
             "cache_control": {"type": "ephemeral"},
         },
     ]

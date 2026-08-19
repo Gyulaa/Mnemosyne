@@ -34,8 +34,10 @@ from sqlalchemy import or_, text as sql_text
 from sqlalchemy.orm import Session
 
 from ..database import (
+    Citation as DBCitation,
     Cluster as DBCluster,
     Document as DBDocument,
+    DocumentNote as DBDocumentNote,
     DocumentPerson as DBDocumentPerson,
     Event as DBEvent,
     EventPerson as DBEventPerson,
@@ -46,8 +48,13 @@ from ..database import (
     Relation as DBRelation,
     Source as DBSource,
 )
+from .primer import PROFILE_FIELDS
 
 MAX_RESULTS = 50
+
+#: Longest document body returned inline. Past this the model is reading a book
+#: through a keyhole anyway, and the excerpt plus a pointer serves it better.
+MAX_BODY_CHARS = 12000
 
 
 # ── context ───────────────────────────────────────────────────────────────────
@@ -140,22 +147,20 @@ def _person_stub(p: DBPerson) -> dict[str, Any]:
 
 def _person_full(p: DBPerson) -> dict[str, Any]:
     d = _person_stub(p)
-    d.update({
-        "birth_date": p.birth_date,
-        "birth_place": p.birth_place,
-        "christening_date": p.christening_date,
-        "christening_place": p.christening_place,
-        "death_date": p.death_date,
-        "death_place": p.death_place,
-        "cause_of_death": p.cause_of_death,
-        "burial_date": p.burial_date,
-        "burial_place": p.burial_place,
-        "occupation": p.occupation,
-        "education": p.education,
-        "religion": p.religion,
-        "nationality": p.nationality,
-    })
+    d.update({f: getattr(p, f, None) for f in PROFILE_FIELDS})
     return {k: v for k, v in d.items() if v is not None}
+
+
+def _missing_fields(p: DBPerson) -> list[str]:
+    """The biographical fields this person has nothing in.
+
+    `_person_full` drops empty keys, which leaves the caller unable to tell an
+    unrecorded field from one it did not ask for — and that ambiguity is where
+    "no occupation is recorded for anyone in this family" comes from. Naming the
+    gaps explicitly turns them into something the answer can state precisely and
+    the user can act on.
+    """
+    return [f for f in PROFILE_FIELDS if not (getattr(p, f, None) or "").strip()]
 
 
 def _event_dict(e: DBEvent) -> dict[str, Any]:
@@ -171,15 +176,35 @@ def _event_dict(e: DBEvent) -> dict[str, Any]:
 
 
 def _doc_dict(d: DBDocument) -> dict[str, Any]:
-    return {
+    """Metadata only. `readable` says whether the contents can ever be reached.
+
+    A document is either prose written inside the app — which `get_document`
+    returns in full — or an uploaded file: a scan, a photograph, a recording.
+    Nothing here can open the second kind, and a title like "1908 register
+    entry" is easy to mistake for having read it. So the distinction travels
+    with every document, and the unreadable ones say what to do instead.
+    """
+    readable = bool(d.is_text)
+    out = {
         "id": d.id,
         "title": d.title,
         "doc_type": d.doc_type,
         "year": d.year,
         "description": d.description,
-        "is_text": bool(d.is_text),
+        "is_text": readable,
         "filename": d.filename,
+        "mime_type": d.mime_type,
+        "readable": readable,
     }
+    if readable:
+        out["note"] = "Written in the app — call get_document to read the whole text."
+    else:
+        out["note"] = (
+            "An attached file. Its contents cannot be read by you or by any tool "
+            "here; only this metadata and the description exist. Do not summarise "
+            "or characterise it — tell the user it is there and let them open it."
+        )
+    return out
 
 
 def _event_with_persons(ctx: ToolContext, e: DBEvent) -> dict[str, Any]:
@@ -239,6 +264,30 @@ def _text_body(ctx: ToolContext, d: DBDocument) -> str:
         return ""
 
 
+def _doc_with_body(ctx: ToolContext, d: DBDocument) -> dict[str, Any]:
+    """Metadata plus the text, for documents that have text."""
+    out = _doc_dict(d)
+    if bool(d.is_text):
+        body = _text_body(ctx, d)
+        if len(body) > MAX_BODY_CHARS:
+            out["body"] = body[:MAX_BODY_CHARS]
+            out["body_truncated"] = True
+            out["body_total_chars"] = len(body)
+            out["note"] = (
+                f"Showing the first {MAX_BODY_CHARS} of {len(body)} characters. "
+                "Say so if you summarise it."
+            )
+        else:
+            out["body"] = body
+            out["note"] = "Full text included below in `body`."
+        if not body:
+            out["note"] = (
+                "This document is marked as written in the app but its file could "
+                "not be read. Report that rather than describing its contents."
+            )
+    return out
+
+
 # ── tool implementations ──────────────────────────────────────────────────────
 
 
@@ -286,8 +335,13 @@ def _t_get_person(ctx: ToolContext, a: dict[str, Any]) -> Any:
     if p is None:
         return {"error": f"No person with id {pid}"}
 
-    include = set(a.get("include") or ["relations", "events", "documents", "notes"])
-    result: dict[str, Any] = {"person": _person_full(p)}
+    include = set(a.get("include") or ["relations", "events", "documents", "notes", "photos", "sources"])
+    result: dict[str, Any] = {
+        "person": _person_full(p),
+        # Say which fields are empty rather than leaving the caller to infer it
+        # from what is absent — see _missing_fields.
+        "missing_fields": _missing_fields(p),
+    }
 
     if "relations" in include:
         by_id = {x.id: x for x in ctx.db.query(DBPerson).all()}
@@ -336,13 +390,52 @@ def _t_get_person(ctx: ToolContext, a: dict[str, Any]) -> Any:
         doc_ids = {dp.document_id for dp in ctx.db.query(DBDocumentPerson).filter(DBDocumentPerson.person_id == pid).all()}
         doc_ids |= {d.id for d in ctx.db.query(DBDocument).filter(DBDocument.person_id == pid).all()}
         docs = ctx.db.query(DBDocument).filter(DBDocument.id.in_(doc_ids)).all() if doc_ids else []
-        result["documents"] = [_doc_dict(d) for d in sorted(docs, key=lambda d: d.id) if _priv_ok(ctx, d)]
+        # The text comes with the metadata. A separate round-trip to read the one
+        # document a person has is a round-trip that often did not happen, and the
+        # answer was then written from the title.
+        result["documents"] = [
+            _doc_with_body(ctx, d)
+            for d in sorted(docs, key=lambda d: d.id) if _priv_ok(ctx, d)
+        ]
 
     if "notes" in include:
         notes = ctx.db.query(DBPersonNote).filter(DBPersonNote.person_id == pid).order_by(DBPersonNote.sort_order, DBPersonNote.id).all()
         result["notes"] = [
             {"id": n.id, "title": n.title, "content": n.content}
             for n in notes if _priv_ok(ctx, n)
+        ]
+        # The legacy free-text field on the person row, written by older versions
+        # and by the GEDCOM importer. Invisible to every other tool, and prose
+        # that is invisible is prose the answer silently denies exists.
+        if (p.notes or "").strip():
+            result["profile_note"] = p.notes
+
+    if "photos" in include:
+        image_ids = _person_image_ids(ctx, pid)
+        visible = [i for i in ctx.db.query(DBImage).filter(DBImage.id.in_(image_ids)).all()
+                   if _priv_ok(ctx, i)] if image_ids else []
+        result["photos"] = {
+            "count": len(visible),
+            "gallery_link": f"#people-{pid}" if visible else None,
+            "note": (
+                f"{len(visible)} photographs are linked to this person by face "
+                f"recognition. Offer them as [caption](#people-{pid}); call "
+                "find_photos or list_photos_of only if you need the individual images."
+            ) if visible else "No face cluster is linked to this person yet.",
+        }
+
+    if "sources" in include:
+        cites = ctx.db.query(DBCitation).filter(DBCitation.person_id == pid).order_by(DBCitation.id).all()
+        src_ids = {c.source_id for c in cites}
+        sources = {s.id: s for s in ctx.db.query(DBSource).filter(DBSource.id.in_(src_ids)).all()} if src_ids else {}
+        result["sources"] = [
+            {
+                "citation_id": c.id, "fact": c.fact, "detail": c.detail, "notes": c.notes,
+                "source_id": c.source_id,
+                "source_title": sources[c.source_id].title if c.source_id in sources else None,
+                "source_type": sources[c.source_id].source_type if c.source_id in sources else None,
+            }
+            for c in cites
         ]
 
     return result
@@ -525,11 +618,20 @@ def _t_get_ancestors(ctx: ToolContext, a: dict[str, Any]) -> Any:
         result["paternal"] = walk("M")
         result["maternal"] = walk("F")
     result["reporting"] = (
-        "Report every generation in `chain` in order. If `notes` or `stopped` "
-        "mention a data problem, tell the user about it — a line that ends "
-        "because of a bad record is not the same as a line that ends because "
-        "the ancestor is unknown."
+        "Report every generation in `chain` in order, including the people with no "
+        "birth or death year — the earliest generations of a tree are usually the "
+        "undated ones, and stopping at the last dated person reports someone as the "
+        "oldest known ancestor who is not. Name the undated ones as undated instead. "
+        "If `notes` or `stopped` mention a data problem, tell the user about it — a "
+        "line that ends because of a bad record is not the same as a line that ends "
+        "because the ancestor is unknown."
     )
+    for key in ("paternal", "maternal"):
+        walked = result.get(key)
+        if walked and walked["chain"]:
+            walked["undated_in_chain"] = [
+                x["id"] for x in walked["chain"] if not x.get("birth_year") and not x.get("death_year")
+            ]
     return result
 
 
@@ -853,6 +955,46 @@ def _t_list_documents(ctx: ToolContext, a: dict[str, Any]) -> Any:
     )
 
 
+def _t_get_document(ctx: ToolContext, a: dict[str, Any]) -> Any:
+    """One document in full: its text, its notes, who it is about, its sources.
+
+    `list_documents` returns titles, and a title invites a summary of a document
+    nobody read. This is the tool that actually opens one — and, for an uploaded
+    file, the tool that says plainly that it cannot be opened at all.
+    """
+    did = int(a["document_id"])
+    d = ctx.db.get(DBDocument, did)
+    if d is None:
+        return {"error": f"No document with id {did}"}
+    if not _priv_ok(ctx, d):
+        return {
+            "error": f"Document {did} is marked private and is hidden from this session",
+            "note": "Tell the user it exists but is private rather than that it is absent.",
+        }
+
+    out = _doc_with_body(ctx, d)
+
+    pids = {dp.person_id for dp in ctx.db.query(DBDocumentPerson).filter(DBDocumentPerson.document_id == did).all()}
+    if d.person_id:
+        pids.add(d.person_id)
+    people = ctx.db.query(DBPerson).filter(DBPerson.id.in_(pids)).all() if pids else []
+    out["persons"] = [_person_stub(x) for x in sorted(people, key=lambda x: x.id)]
+
+    notes = ctx.db.query(DBDocumentNote).filter(
+        DBDocumentNote.document_id == did
+    ).order_by(DBDocumentNote.sort_order, DBDocumentNote.id).all()
+    out["notes"] = [{"id": n.id, "title": n.title, "content": n.content} for n in notes]
+
+    src = ctx.db.query(DBSource).filter(DBSource.document_id == did).first()
+    if src is not None:
+        out["source"] = {
+            "id": src.id, "title": src.title, "source_type": src.source_type,
+            "author": src.author, "year": src.year, "publisher": src.publisher,
+            "location": src.location, "url": src.url, "description": src.description,
+        }
+    return out
+
+
 def _t_search_text(ctx: ToolContext, a: dict[str, Any]) -> Any:
     """Keyword search over the free-text corpus.
 
@@ -862,7 +1004,9 @@ def _t_search_text(ctx: ToolContext, a: dict[str, Any]) -> Any:
     """
     q = _norm(a.get("query"))
     if not q:
-        return {"error": "query is required"}
+        # Browsing returns one short entry per item, so it can afford a wider cap
+        # than a search whose hits carry excerpts.
+        return _t_list_written_material(ctx, min(int(a.get("limit") or 40), 120))
     limit = min(int(a.get("limit") or 20), MAX_RESULTS)
     hits: list[dict[str, Any]] = []
 
@@ -893,6 +1037,24 @@ def _t_search_text(ctx: ToolContext, a: dict[str, Any]) -> Any:
                 "doc_type": d.doc_type, "year": d.year, "excerpt": _excerpt(body),
             })
 
+    for dn in ctx.db.query(DBDocumentNote).order_by(DBDocumentNote.id).all():
+        doc = ctx.db.get(DBDocument, dn.document_id)
+        if doc is not None and not _priv_ok(ctx, doc):
+            continue
+        body = f"{dn.title or ''}\n{dn.content or ''}"
+        if q in _norm(body):
+            hits.append({
+                "kind": "document_note", "id": dn.id, "document_id": dn.document_id,
+                "title": dn.title, "excerpt": _excerpt(dn.content or ""),
+            })
+
+    for pr in ctx.db.query(DBPerson).order_by(DBPerson.id).all():
+        if (pr.notes or "").strip() and q in _norm(pr.notes):
+            hits.append({
+                "kind": "profile_note", "id": pr.id, "person_id": pr.id,
+                "excerpt": _excerpt(pr.notes or ""),
+            })
+
     for s in ctx.db.query(DBSource).order_by(DBSource.id).all():
         body = "\n".join(filter(None, [s.title, s.author, s.publisher, s.description]))
         if q in _norm(body):
@@ -901,7 +1063,110 @@ def _t_search_text(ctx: ToolContext, a: dict[str, Any]) -> Any:
                 "author": s.author, "year": s.year, "excerpt": _excerpt(body),
             })
 
-    return _capped({"hits": hits}, "hits", limit)
+    result = _capped({"hits": hits}, "hits", limit)
+    if not hits:
+        result["note"] = (
+            "No text matched. This searches words, so a miss means this wording is "
+            "absent — not that the subject is unrecorded. Try another word, or call "
+            "search_text with no query to see everything that is written down."
+        )
+    return result
+
+
+def _t_list_written_material(ctx: ToolContext, limit: int) -> Any:
+    """Everything written in this project, listed rather than searched.
+
+    Keyword search can only find what you already suspect is there. Asked what a
+    family's story is, a model with only a keyword tool guesses search terms,
+    misses, and concludes nothing was written — while the notes sit one call
+    away. This is that call: the whole prose corpus, with openings, so the model
+    can see what exists and then read the parts that matter.
+    """
+    items: list[dict[str, Any]] = []
+
+    def opening(body: str) -> str:
+        text = " ".join((body or "").split())
+        return text[:180] + ("…" if len(text) > 180 else "")
+
+    for n in ctx.db.query(DBPersonNote).order_by(DBPersonNote.person_id, DBPersonNote.id).all():
+        if not _priv_ok(ctx, n):
+            continue
+        items.append({
+            "kind": "note", "id": n.id, "person_id": n.person_id, "title": n.title,
+            "chars": len(n.content or ""), "opening": opening(n.content or ""),
+            "read_with": "get_person(person_id) returns this note in full",
+        })
+
+    for d in ctx.db.query(DBDocument).order_by(DBDocument.id).all():
+        if not _priv_ok(ctx, d):
+            continue
+        body = _text_body(ctx, d)
+        items.append({
+            "kind": "document", "id": d.id, "title": d.title, "doc_type": d.doc_type,
+            "year": d.year, "readable": bool(d.is_text), "person_id": d.person_id,
+            "description": d.description,
+            "chars": len(body) if body else 0,
+            "opening": opening(body) if body else None,
+            "read_with": (
+                "get_document(document_id) returns the whole text"
+                if bool(d.is_text) else
+                "an attached file — its contents cannot be read, only this metadata"
+            ),
+        })
+
+    for dn in ctx.db.query(DBDocumentNote).order_by(DBDocumentNote.id).all():
+        doc = ctx.db.get(DBDocument, dn.document_id)
+        if doc is not None and not _priv_ok(ctx, doc):
+            continue
+        items.append({
+            "kind": "document_note", "id": dn.id, "document_id": dn.document_id,
+            "title": dn.title, "chars": len(dn.content or ""),
+            "opening": opening(dn.content or ""),
+            "read_with": "get_document(document_id) returns this note",
+        })
+
+    for pr in ctx.db.query(DBPerson).order_by(DBPerson.id).all():
+        if (pr.notes or "").strip():
+            items.append({
+                "kind": "profile_note", "id": pr.id, "person_id": pr.id,
+                "chars": len(pr.notes), "opening": opening(pr.notes),
+                "read_with": "get_person(person_id) returns this as profile_note",
+            })
+
+    for src in ctx.db.query(DBSource).order_by(DBSource.id).all():
+        items.append({
+            "kind": "source", "id": src.id, "title": src.title,
+            "source_type": src.source_type, "author": src.author, "year": src.year,
+            "opening": opening(src.description or ""),
+        })
+
+    for e in ctx.db.query(DBEvent).order_by(DBEvent.year, DBEvent.id).all():
+        if not _priv_ok(ctx, e) or not (e.description or "").strip():
+            continue
+        items.append({
+            "kind": "event_description", "id": e.id, "title": e.title,
+            "year": e.year, "chars": len(e.description),
+            "opening": opening(e.description),
+            "read_with": "list_events returns this description",
+        })
+
+    # The per-kind totals are computed before the cap and survive it. A listing
+    # cut off at 40 items would otherwise show four notes and no documents and
+    # read as a project with no documents — the very failure this tool exists to
+    # prevent, reintroduced by truncation.
+    by_kind: dict[str, int] = {}
+    for it in items:
+        by_kind[it["kind"]] = by_kind.get(it["kind"], 0) + 1
+
+    result = _capped({"material": items}, "material", limit)
+    result["by_kind"] = dict(sorted(by_kind.items()))
+    result["note"] = (
+        "`by_kind` counts the whole corpus even when the list below is cut short, so "
+        "a kind missing from the list is not a kind missing from the project. An "
+        "empty corpus means nobody has written anything down yet — worth telling the "
+        "user. Otherwise read the items that bear on the question before answering."
+    )
+    return result
 
 
 def _t_get_statistics(ctx: ToolContext, a: dict[str, Any]) -> Any:
@@ -1191,9 +1456,13 @@ def build_registry() -> ToolRegistry:
     r.register(Tool(
         name="get_person",
         description=(
-            "Full profile of one person: biographical fields plus, on request, "
-            "their relations (parents, children, spouses, siblings), events, "
-            "documents and notes. Ask for everything you need in one call."
+            "Everything recorded about one person: biographical fields, which of "
+            "those fields are empty, relations, events, research notes, attached "
+            "documents with the full text of any written in the app, a photo "
+            "count with its gallery link, and cited sources. This is the tool to "
+            "call before describing anybody — the tree skeleton in your prompt "
+            "holds only names, years and edges, so a description built from it "
+            "silently claims nothing else was recorded."
         ),
         input_schema={
             "type": "object",
@@ -1201,8 +1470,11 @@ def build_registry() -> ToolRegistry:
                 "person_id": {"type": "integer"},
                 "include": {
                     "type": "array",
-                    "items": {"type": "string", "enum": ["relations", "events", "documents", "notes"]},
-                    "description": "Defaults to all four.",
+                    "items": {
+                        "type": "string",
+                        "enum": ["relations", "events", "documents", "notes", "photos", "sources"],
+                    },
+                    "description": "Defaults to all of them. Leave it out unless you have a reason.",
                 },
             },
             "required": ["person_id"],
@@ -1236,7 +1508,9 @@ def build_registry() -> ToolRegistry:
             "ancestor', 'trace the male line', 'how far back does X go' "
             "question — never trace a line yourself with repeated get_person "
             "calls, because people in this tree share given names and a "
-            "hand-traced line drops generations."
+            "hand-traced line drops generations. The walk follows parent links, "
+            "not dates: it runs past the undated ancestors that a tree usually "
+            "ends in, which is exactly where a hand-traced line stops early."
         ),
         input_schema={
             "type": "object",
@@ -1321,7 +1595,11 @@ def build_registry() -> ToolRegistry:
 
     r.register(Tool(
         name="list_documents",
-        description="Document metadata (certificates, letters, records). Returns titles, types and years — not file contents.",
+        description=(
+            "Document metadata (certificates, letters, records, chronicles): "
+            "titles, types and years. Never the text — call get_document for "
+            "that. Summarising a document from its title invents it."
+        ),
         input_schema={
             "type": "object",
             "properties": {
@@ -1336,19 +1614,44 @@ def build_registry() -> ToolRegistry:
     ))
 
     r.register(Tool(
+        name="get_document",
+        description=(
+            "One document in full: the complete text of anything written inside "
+            "the app, plus its notes, the people it is about and its source. For "
+            "an uploaded file (a scan, a recording, a photograph of a record) it "
+            "returns the metadata and says plainly that the contents cannot be "
+            "read — report that rather than describing what such a document "
+            "probably says."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {"document_id": {"type": "integer"}},
+            "required": ["document_id"],
+        },
+        handler=_t_get_document,
+    ))
+
+    r.register(Tool(
         name="search_text",
         description=(
-            "Full-text search across research notes, in-app text documents and "
-            "source descriptions. Use it for anything written in prose rather "
-            "than stored as a structured field."
+            "The project's prose: research notes, in-app documents, document "
+            "notes, event descriptions and source descriptions. With a `query` "
+            "it searches them; **with no `query` it lists all of them** — every "
+            "piece of writing with its owner and opening line. Use the listing "
+            "whenever you need to know what has been written down at all, "
+            "rather than whether one particular word appears. Guessing search "
+            "terms and missing is how a well-documented family gets reported as "
+            "having nothing recorded."
         ),
         input_schema={
             "type": "object",
             "properties": {
-                "query": {"type": "string"},
-                "limit": {"type": "integer", "description": "Default 20, max 50."},
+                "query": {
+                    "type": "string",
+                    "description": "Omit entirely to list the whole written corpus.",
+                },
+                "limit": {"type": "integer", "description": "Searching: default 20, max 50. Listing: default 40, max 120."},
             },
-            "required": ["query"],
         },
         handler=_t_search_text,
     ))

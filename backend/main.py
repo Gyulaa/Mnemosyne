@@ -930,6 +930,10 @@ def bulk_delete_images(body: dict, db: Session = Depends(get_db)):
     if not image_ids:
         return {"ok": True, "count": 0}
     db.query(DBEventImage).filter(DBEventImage.image_id.in_(image_ids)).delete(synchronize_session=False)
+    # duplicate_of is a self-referential FK with no ORM relationship, so nothing
+    # orders these deletes against it — clear inbound references first or deleting
+    # a duplicate group's "original" alongside its duplicates fails the FK check.
+    db.query(DBImage).filter(DBImage.duplicate_of.in_(image_ids)).update({"duplicate_of": None}, synchronize_session=False)
     images = db.query(DBImage).filter(DBImage.id.in_(image_ids)).all()
     count = len(images)
     for img in images:
@@ -967,6 +971,7 @@ def delete_image(image_id: int, db: Session = Depends(get_db)):
     if not img:
         raise HTTPException(404, "Image not found")
     db.query(DBEventImage).filter(DBEventImage.image_id == image_id).delete(synchronize_session=False)
+    db.query(DBImage).filter(DBImage.duplicate_of == image_id).update({"duplicate_of": None}, synchronize_session=False)
     db.delete(img)
     db.commit()
     _purge_empty_named_clusters(db)

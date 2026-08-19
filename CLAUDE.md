@@ -106,6 +106,8 @@ Test data: copy a project directory into the scratchpad and point the app at tha
 - It is **read-only by three independent mechanisms** (`query_only` connection, tools-only data path, `mutates=True` rejected at registration). Keep all three; none is redundant.
 - **Prefer one fat tool over three thin ones.** Walks, BFS and statistics belong server-side where ids cannot be conflated — see `get_ancestors` and `get_relationship_path`.
 - **An empty result must not read as an absent fact, and a truncated list must announce itself.** Both rules exist because the model produced confident wrong answers without them.
+- **The model cannot suspect an absence it has no way to detect.** The cached skeleton holds names, years and edges, which is enough to write a fluent answer that silently claims nothing else exists. So every person line carries `material` marks (`_content_marks`) and the prefix carries the project's totals (`build_inventory`). When you add data the assistant should notice, make it *visible in the prefix* — an instruction telling the model to remember to check is not a fix.
+- **Prose must be reachable without a keyword.** `search_text` with no query lists the whole written corpus, `get_document` opens one in full. Anything the assistant can only find by guessing a search term is something it will eventually report as non-existent.
 - **The primer must stay deterministic** — anything time- or order-dependent added to it destroys the prompt cache silently.
 - Every new tool needs its `chat.tool.<name>` label in both dictionaries.
 
@@ -123,6 +125,7 @@ Test data: copy a project directory into the scratchpad and point the app at tha
 - Making a column nullable quietly widens every export: `WHERE x IN (SELECT …)` is never true of NULL, so rows the copy-then-filter used to delete now survive into the ZIP. Each such column needs its own `IS NULL` delete.
 - `PRAGMA foreign_keys` is **silently ignored inside a transaction**, so a migration that needs FKs off must run on a connection with nothing open on it — otherwise the pragma appears to work and every `ON DELETE CASCADE` fires anyway.
 - Anything popup-anchored to a textarea caret goes through `caretPopup.ts`, not the field's own rect.
+- `images.duplicate_of` is a self-referential FK with no ORM relationship, so nothing orders deletes against it. Deleting an image that another row's `duplicate_of` still points to fails the FK check — even inside the same bulk-delete batch, since SQLAlchemy won't sequence a plain `Column` FK. Both `delete_image` and `bulk_delete_images` in `main.py` must null out inbound `duplicate_of` references before deleting.
 
 ---
 

@@ -2,9 +2,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import { api, downloadViaBrowser } from '../api'
-import type { Cluster, ImageItem, ImagePerson, PersonEvent } from '../types'
+import type { Cluster, ImageItem, ImagePerson, PersonEvent, PersonFull } from '../types'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
-import { useT, useDateLocale } from '../SettingsContext'
+import { useT, useDateLocale, useSettings, displayPersonName } from '../SettingsContext'
 import { ImagePreviewModal } from './ImagePreviewModal'
 
 type FilterType = 'all' | 'done' | 'no_face' | 'error' | 'pending' | 'private'
@@ -160,9 +160,13 @@ export default function ImagesTab({
   }
 
   async function deleteSingle(id: number) {
-    await api.images.delete(id)
-    setSelected(prev => { const n = new Set(prev); n.delete(id); return n })
-    invalidate()
+    try {
+      await api.images.delete(id)
+      setSelected(prev => { const n = new Set(prev); n.delete(id); return n })
+      invalidate()
+    } catch (e) {
+      alert(t('images.deleteFailed', { e: String(e) }))
+    }
   }
 
   async function deleteSelected() {
@@ -174,6 +178,8 @@ export default function ImagesTab({
       await api.images.bulkDelete([...selected])
       setSelected(new Set())
       invalidate()
+    } catch (e) {
+      alert(t('images.deleteFailed', { e: String(e) }))
     } finally {
       setBulkDeleting(false)
     }
@@ -1014,6 +1020,13 @@ function ImageRow({
 
 // ── AttachToEventModal ────────────────────────────────────────────────────────
 
+interface ParticipantCandidate {
+  person_id: number
+  person_name: string | null
+  face_id: number | null
+  manual: boolean
+}
+
 function AttachToEventModal({ imageIds, onClose, onDone }: {
   imageIds: number[]
   onClose: () => void
@@ -1022,19 +1035,29 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
   const qc = useQueryClient()
   const t = useT()
   const dateLocale = useDateLocale()
+  const { nameOrder } = useSettings()
   const [search, setSearch] = useState('')
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null)
   const [attaching, setAttaching] = useState(false)
   const [step, setStep] = useState<'select' | 'persons' | 'success'>('select')
   const [attachedCount, setAttachedCount] = useState(0)
-  const [candidatePersons, setCandidatePersons] = useState<ImagePerson[]>([])
+  const [participants, setParticipants] = useState<ParticipantCandidate[]>([])
   const [includedPersonIds, setIncludedPersonIds] = useState<Set<number>>(new Set())
+  const [primaryPersonIds, setPrimaryPersonIds] = useState<Set<number>>(new Set())
   const [showCreate, setShowCreate] = useState(false)
+  const [showPersonSearch, setShowPersonSearch] = useState(false)
+  const [personSearchQ, setPersonSearchQ] = useState('')
 
   const { data: events = [], refetch: refetchEvents } = useQuery<PersonEvent[]>({
     queryKey: ['events-all'],
     queryFn: () => api.events.list(false),
     staleTime: 10_000,
+  })
+
+  const { data: allPersons = [] } = useQuery<PersonFull[]>({
+    queryKey: ['persons'],
+    queryFn: api.persons.list,
+    staleTime: 60_000,
   })
 
   const filtered = events.filter(ev => {
@@ -1076,10 +1099,13 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
     }))
 
     setAttaching(false)
-    const candidates = [...personMap.values()]
+    const candidates: ParticipantCandidate[] = [...personMap.values()].map(p => ({
+      person_id: p.person_id, person_name: p.person_name, face_id: p.face_id, manual: false,
+    }))
     if (candidates.length > 0) {
-      setCandidatePersons(candidates)
+      setParticipants(candidates)
       setIncludedPersonIds(new Set(candidates.map(p => p.person_id)))
+      setPrimaryPersonIds(new Set())
       setStep('persons')
     } else {
       setStep('success')
@@ -1091,7 +1117,8 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
     if (!selectedEventId) return
     setAttaching(true)
     for (const pid of includedPersonIds) {
-      try { await api.events.addPerson(selectedEventId, pid, 'participant') } catch { /* ignore dupes */ }
+      const role = primaryPersonIds.has(pid) ? 'primary' : 'participant'
+      try { await api.events.addPerson(selectedEventId, pid, role) } catch { /* ignore dupes */ }
     }
     qc.invalidateQueries({ queryKey: ['events'] })
     setAttaching(false)
@@ -1099,16 +1126,52 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
     setTimeout(onDone, 1400)
   }
 
-  function togglePerson(pid: number) {
+  function toggleIncluded(pid: number) {
+    const wasIncluded = includedPersonIds.has(pid)
     setIncludedPersonIds(prev => {
+      const next = new Set(prev)
+      wasIncluded ? next.delete(pid) : next.add(pid)
+      return next
+    })
+    if (wasIncluded) {
+      setPrimaryPersonIds(prev => {
+        if (!prev.has(pid)) return prev
+        const next = new Set(prev)
+        next.delete(pid)
+        return next
+      })
+    }
+  }
+
+  function togglePrimary(pid: number) {
+    setPrimaryPersonIds(prev => {
       const next = new Set(prev)
       next.has(pid) ? next.delete(pid) : next.add(pid)
       return next
     })
   }
 
+  const existingParticipantIds = new Set(participants.map(p => p.person_id))
+  const extraSearchResults = personSearchQ.trim()
+    ? allPersons.filter(p => !existingParticipantIds.has(p.id) && displayPersonName(p, nameOrder).toLowerCase().includes(personSearchQ.trim().toLowerCase())).slice(0, 8)
+    : []
+
+  function addExtraPerson(p: PersonFull) {
+    setParticipants(prev => [...prev, { person_id: p.id, person_name: displayPersonName(p, nameOrder), face_id: p.thumbnail_face_id, manual: true }])
+    setIncludedPersonIds(prev => new Set(prev).add(p.id))
+    setPersonSearchQ('')
+    setShowPersonSearch(false)
+  }
+
+  function removeParticipant(pid: number) {
+    setParticipants(prev => prev.filter(p => p.person_id !== pid))
+    setIncludedPersonIds(prev => { const next = new Set(prev); next.delete(pid); return next })
+    setPrimaryPersonIds(prev => { const next = new Set(prev); next.delete(pid); return next })
+  }
+
   function handleCreated(ev: PersonEvent) {
     setShowCreate(false)
+    setSearch('')
     setSelectedEventId(ev.id)
     refetchEvents()
   }
@@ -1163,22 +1226,78 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
           <>
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 min-h-0">
               <p className="text-xs text-zinc-400 leading-relaxed">
-                These people appear in the attached photos. Add them to the event as participants?
+                {t('images.whoElseHint')}
               </p>
               <div className="space-y-1">
-                {candidatePersons.map(p => {
+                {participants.map(p => {
                   const included = includedPersonIds.has(p.person_id)
+                  const isPrimary = primaryPersonIds.has(p.person_id)
                   return (
-                    <label key={p.person_id} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-zinc-800 cursor-pointer transition-colors">
-                      <input type="checkbox" checked={included} onChange={() => togglePerson(p.person_id)}
-                        className="w-4 h-4 accent-brand-500 shrink-0" />
-                      <img src={api.faceThumbnailUrl(p.face_id, 48)} alt=""
-                        className="w-8 h-8 rounded-full object-cover shrink-0 border border-zinc-700" />
-                      <span className="text-sm text-zinc-200">{p.person_name ?? '(unnamed)'}</span>
-                    </label>
+                    <div key={p.person_id} className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-zinc-800 transition-colors">
+                      <input type="checkbox" checked={included} onChange={() => toggleIncluded(p.person_id)}
+                        className="w-4 h-4 accent-brand-500 shrink-0 cursor-pointer" />
+                      {p.face_id != null ? (
+                        <img src={api.faceThumbnailUrl(p.face_id, 48)} alt=""
+                          className="w-8 h-8 rounded-full object-cover shrink-0 border border-zinc-700" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-zinc-700 shrink-0 flex items-center justify-center text-xs text-zinc-400 border border-zinc-700">
+                          {(p.person_name ?? '?')[0]}
+                        </div>
+                      )}
+                      <span className="text-sm text-zinc-200 flex-1 min-w-0 truncate">{p.person_name ?? t('images.unnamed')}</span>
+                      <button
+                        onClick={() => togglePrimary(p.person_id)}
+                        disabled={!included}
+                        className={`shrink-0 px-2 py-1 rounded-full text-xs font-medium border transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                          isPrimary
+                            ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                            : 'border-zinc-700 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600'
+                        }`}
+                      >
+                        {isPrimary ? `★ ${t('timeline.primary')}` : t('images.setPrimary')}
+                      </button>
+                      {p.manual && (
+                        <button onClick={() => removeParticipant(p.person_id)}
+                          className="shrink-0 text-zinc-600 hover:text-red-400 transition-colors text-xs">✕</button>
+                      )}
+                    </div>
                   )
                 })}
               </div>
+
+              {showPersonSearch ? (
+                <div className="relative">
+                  <input
+                    autoFocus
+                    value={personSearchQ}
+                    onChange={e => setPersonSearchQ(e.target.value)}
+                    placeholder={t('docs.searchPersons')}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400"
+                  />
+                  {extraSearchResults.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl z-20 overflow-hidden">
+                      {extraSearchResults.map(p => (
+                        <button key={p.id} onClick={() => addExtraPerson(p)}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-zinc-700 text-left transition-colors">
+                          {p.thumbnail_face_id
+                            ? <img src={api.faceThumbnailUrl(p.thumbnail_face_id, 32)} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" />
+                            : <div className="w-5 h-5 rounded-full bg-zinc-600 shrink-0 flex items-center justify-center text-xs text-zinc-400">{(p.name ?? '?')[0]}</div>}
+                          <span className="text-xs text-zinc-200 truncate">{displayPersonName(p, nameOrder)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <button onClick={() => { setShowPersonSearch(false); setPersonSearchQ('') }}
+                    className="mt-1 text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
+                    {t('timeline.cancelSearch')}
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setShowPersonSearch(true)}
+                  className="text-xs text-zinc-600 hover:text-brand-400 transition-colors">
+                  {t('images.addPerson')}
+                </button>
+              )}
             </div>
             <div className="shrink-0 flex gap-2 px-5 py-3.5 border-t border-zinc-800">
               <button
@@ -1204,105 +1323,102 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
 
         {/* ── Select event ── */}
         {step === 'select' && (
-          <>
-            <div className="px-5 pt-4 pb-3 space-y-3 shrink-0">
-              <div className="flex gap-2">
-                <input
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder={t('images.searchEvents')}
-                  autoFocus
-                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400"
-                />
-                <button
-                  onClick={() => { setShowCreate(s => !s); setSearch('') }}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                    showCreate
-                      ? 'bg-brand-500/20 border-brand-500/40 text-brand-300'
-                      : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600'
-                  }`}
-                >
-                  {t('images.newEvent')}
-                </button>
+          showCreate ? (
+            <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0">
+              <p className="text-xs text-zinc-500 mb-2">{t('images.createSelectEvent')}</p>
+              <EventEditor
+                event={null}
+                prefill={search.trim() ? { title: search.trim() } : undefined}
+                persons={[]}
+                onSaved={handleCreated}
+                onCancel={() => setShowCreate(false)}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="px-5 pt-4 pb-3 space-y-3 shrink-0">
+                <div className="flex gap-2">
+                  <input
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    placeholder={t('images.searchEvents')}
+                    autoFocus
+                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400"
+                  />
+                  <button
+                    onClick={() => setShowCreate(true)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
+                  >
+                    {t('images.newEvent')}
+                  </button>
+                </div>
               </div>
 
-              {showCreate && (
-                <div className="border border-zinc-700/60 rounded-xl p-3 bg-zinc-800/30">
-                  <p className="text-xs text-zinc-500 mb-2">{t('images.createSelectEvent')}</p>
-                  <EventEditor
-                    event={null}
-                    persons={[]}
-                    onSaved={handleCreated}
-                    onCancel={() => setShowCreate(false)}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-1 min-h-0">
-              {filtered.length === 0 ? (
-                <p className="text-sm text-zinc-600 italic text-center py-8">
-                  {search ? `No events match "${search}"` : 'No events yet. Create one above.'}
-                </p>
-              ) : filtered.map(ev => {
-                const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
-                const dateStr = formatEventDate(ev.date, ev.year, dateLocale)
-                const isSelected = ev.id === selectedEventId
-                return (
-                  <button
-                    key={ev.id}
-                    onClick={() => setSelectedEventId(isSelected ? null : ev.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all ${
-                      isSelected
-                        ? 'bg-brand-500/20 border border-brand-500/40'
-                        : 'border border-transparent hover:border-zinc-700 hover:bg-zinc-800/50'
-                    }`}
-                  >
-                    <div className="shrink-0"><EventIcon type={ev.event_type} /></div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-zinc-100 truncate">{ev.title || typeLabel}</p>
-                      {ev.title && <p className="text-xs text-zinc-500">{typeLabel}</p>}
-                      {(dateStr || ev.place) && (
-                        <p className="text-xs text-zinc-500 truncate">{[dateStr, ev.place].filter(Boolean).join(' · ')}</p>
-                      )}
-                    </div>
-                    {ev.images.length > 0 && (
-                      <span className="text-xs text-zinc-600 shrink-0 tabular-nums">
-                        {ev.images.length} photo{ev.images.length !== 1 ? 's' : ''}
-                      </span>
-                    )}
-                    {isSelected && (
-                      <div className="w-5 h-5 rounded-full bg-brand-500 flex items-center justify-center shrink-0">
-                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                        </svg>
+              <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-1 min-h-0">
+                {filtered.length === 0 ? (
+                  <p className="text-sm text-zinc-600 italic text-center py-8">
+                    {search ? `No events match "${search}"` : 'No events yet. Create one above.'}
+                  </p>
+                ) : filtered.map(ev => {
+                  const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ev.event_type
+                  const dateStr = formatEventDate(ev.date, ev.year, dateLocale)
+                  const isSelected = ev.id === selectedEventId
+                  return (
+                    <button
+                      key={ev.id}
+                      onClick={() => setSelectedEventId(isSelected ? null : ev.id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all ${
+                        isSelected
+                          ? 'bg-brand-500/20 border border-brand-500/40'
+                          : 'border border-transparent hover:border-zinc-700 hover:bg-zinc-800/50'
+                      }`}
+                    >
+                      <div className="shrink-0"><EventIcon type={ev.event_type} /></div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-zinc-100 truncate">{ev.title || typeLabel}</p>
+                        {ev.title && <p className="text-xs text-zinc-500">{typeLabel}</p>}
+                        {(dateStr || ev.place) && (
+                          <p className="text-xs text-zinc-500 truncate">{[dateStr, ev.place].filter(Boolean).join(' · ')}</p>
+                        )}
                       </div>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
+                      {ev.images.length > 0 && (
+                        <span className="text-xs text-zinc-600 shrink-0 tabular-nums">
+                          {ev.images.length} photo{ev.images.length !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {isSelected && (
+                        <div className="w-5 h-5 rounded-full bg-brand-500 flex items-center justify-center shrink-0">
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
 
-            <div className="shrink-0 flex gap-2 px-5 py-3.5 border-t border-zinc-800">
-              <button
-                onClick={onClose}
-                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleAttach}
-                disabled={!selectedEventId || attaching}
-                className="flex-1 px-3 py-1.5 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-              >
-                {attaching
-                  ? 'Attaching…'
-                  : selectedEventId
-                    ? `Attach ${imageIds.length} photo${imageIds.length !== 1 ? 's' : ''}`
-                    : 'Select an event above'}
-              </button>
-            </div>
-          </>
+              <div className="shrink-0 flex gap-2 px-5 py-3.5 border-t border-zinc-800">
+                <button
+                  onClick={onClose}
+                  className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAttach}
+                  disabled={!selectedEventId || attaching}
+                  className="flex-1 px-3 py-1.5 text-xs font-medium bg-brand-500 hover:bg-brand-400 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                >
+                  {attaching
+                    ? 'Attaching…'
+                    : selectedEventId
+                      ? `Attach ${imageIds.length} photo${imageIds.length !== 1 ? 's' : ''}`
+                      : 'Select an event above'}
+                </button>
+              </div>
+            </>
+          )
         )}
       </div>
     </div>,

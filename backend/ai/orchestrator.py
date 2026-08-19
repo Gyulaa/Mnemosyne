@@ -31,7 +31,10 @@ from .provider import (
 )
 from .tools import REGISTRY, ToolContext
 
-MAX_ITERATIONS = 8
+# Gathering evidence before answering costs rounds: a profile, its documents,
+# the branch's notes and events is already four or five. Eight was tuned for a
+# lookup-shaped question and truncated the research-shaped ones.
+MAX_ITERATIONS = 14
 DEFAULT_MAX_TOKENS = 16000
 TITLE_MAX_CHARS = 60
 
