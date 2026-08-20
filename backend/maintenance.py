@@ -34,7 +34,7 @@ def get_status() -> dict:
 
 
 def _run(session_factory) -> None:
-    from .database import Image as DBImage, Face as DBFace
+    from .database import EventImage as DBEventImage, Image as DBImage, Face as DBFace
 
     removed_images = 0
     removed_faces = 0
@@ -44,6 +44,14 @@ def _run(session_factory) -> None:
         if stale_ids:
             removed_faces = db.query(DBFace).filter(DBFace.image_id.in_(stale_ids)) \
                 .delete(synchronize_session=False)
+            db.query(DBEventImage).filter(DBEventImage.image_id.in_(stale_ids)) \
+                .delete(synchronize_session=False)
+            # duplicate_of is a self-referential FK with no ORM relationship, so
+            # nothing orders this delete against it — null out inbound references
+            # first or pruning an original alongside its still-present duplicates
+            # fails the FK check (see bulk_delete_images in main.py).
+            db.query(DBImage).filter(DBImage.duplicate_of.in_(stale_ids)) \
+                .update({"duplicate_of": None}, synchronize_session=False)
             removed_images = len(stale_ids)
             db.query(DBImage).filter(DBImage.id.in_(stale_ids)).delete(synchronize_session=False)
             db.commit()

@@ -74,6 +74,7 @@ async def run_turn(
     docs_dir: Any = None,
     lang: str = "en",
     name_order: str = "en",
+    style: str = "structured",
     proband_id: int | None = None,
 ) -> AsyncIterator[str]:
     """Yield SSE frames for one user turn."""
@@ -108,7 +109,7 @@ async def run_turn(
 
     messages = _history_for_provider(write_db, thread_id)
     system = build_system_blocks(
-        read_db, lang=lang, name_order=name_order,
+        read_db, lang=lang, name_order=name_order, style=style,
         allow_private=settings["allow_private"], proband_id=proband_id,
     )
     tools = REGISTRY.definitions()

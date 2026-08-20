@@ -12,6 +12,10 @@ interface LiveMessage {
   toolCalls: ChatToolCall[]
 }
 
+/** How the assistant shapes its prose — sent with every turn, see primer.py. */
+type ChatStyle = 'structured' | 'narrative'
+const CHAT_STYLES: ChatStyle[] = ['structured', 'narrative']
+
 // Two photo-library prompts and two genealogy ones — the app is used for both,
 // and the empty state is where a new user learns which questions land.
 const SUGGESTION_KEYS = ['chat.suggest.1', 'chat.suggest.2', 'chat.suggest.3', 'chat.suggest.4']
@@ -50,6 +54,10 @@ export default function AssistantPanel({
   const [width, setWidth] = useState(() => {
     const saved = parseInt(localStorage.getItem('mnemosyne_assistantWidth') ?? '')
     return Number.isFinite(saved) && saved >= MIN_WIDTH ? saved : 440
+  })
+  const [style, setStyleState] = useState<ChatStyle>(() => {
+    const saved = localStorage.getItem('mnemosyne_chatStyle')
+    return saved === 'narrative' ? 'narrative' : 'structured'
   })
 
   const abortRef = useRef<AbortController | null>(null)
@@ -113,6 +121,11 @@ export default function AssistantPanel({
     window.addEventListener('pointerup', onUp)
   }
 
+  function setStyle(s: ChatStyle) {
+    setStyleState(s)
+    localStorage.setItem('mnemosyne_chatStyle', s)
+  }
+
   async function send(text: string) {
     const trimmed = text.trim()
     if (!trimmed || busy) return
@@ -137,7 +150,7 @@ export default function AssistantPanel({
 
       await api.ai.stream(
         id,
-        { message: trimmed, lang, name_order: nameOrder },
+        { message: trimmed, lang, name_order: nameOrder, style },
         ev => {
           switch (ev.type) {
             case 'user_saved':
@@ -377,6 +390,24 @@ export default function AssistantPanel({
 
           {/* Composer */}
           <div className="shrink-0 p-3 border-t border-zinc-800/70">
+            {/* Response style — swaps the prompt's formatting instructions, not
+                just a display preference, so it takes effect on the next turn. */}
+            <div className="flex items-center gap-1 mb-2">
+              {CHAT_STYLES.map(s => (
+                <button
+                  key={s}
+                  onClick={() => setStyle(s)}
+                  title={t(`chat.style.${s}.hint`)}
+                  className={`px-2 py-1 rounded-md text-[10.5px] font-medium border transition-colors ${
+                    style === s
+                      ? 'border-brand-500/40 bg-brand-500/15 text-brand-300'
+                      : 'border-transparent text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60'
+                  }`}
+                >
+                  {t(`chat.style.${s}`)}
+                </button>
+              ))}
+            </div>
             <div className="relative rounded-xl border border-zinc-700/70 bg-zinc-900/70 focus-within:border-brand-500/60 transition-colors">
               <textarea
                 ref={inputRef}

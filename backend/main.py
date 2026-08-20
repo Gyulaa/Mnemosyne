@@ -3612,6 +3612,7 @@ async def ai_stream(thread_id: int, body: ChatSendRequest):
                 docs_dir=docs_dir,
                 lang=body.lang,
                 name_order=body.name_order,
+                style=body.style,
                 # Identity comes from the project's stored starting person, read
                 # per request — never from anything baked into the prompt.
                 proband_id=project_manager.get_default_proband(),

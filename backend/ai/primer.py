@@ -61,6 +61,48 @@ NAME_ORDER_LABEL = {
 
 LANG_LABEL = {"hu": "Hungarian", "en": "English"}
 
+#: Two entirely separate response-shape instructions, not one instruction plus a
+#: modifier — the narrative variant never mentions headings or bullet points, so
+#: a narrative-mode call doesn't spend tokens on formatting it must then ignore,
+#: and a structured-mode call never sees storytelling guidance it would ignore
+#: the other way. Every other rule in SYSTEM_INSTRUCTIONS (never invent a place,
+#: an occupation, period colour) applies to both and is not repeated here except
+#: as a one-line reminder on the narrative branch, where the temptation is real.
+STYLE_BLOCKS = {
+    "structured": (
+        "- Be concise and lead with the answer; supporting detail comes after. Use "
+        "short paragraphs, and headings or bullet points wherever they make names, "
+        "dates or a list of facts easier to scan than a block of prose would.\n"
+        "- Mark an inference explicitly, right where you state it (\"likely, "
+        "because...\"), and give the reason."
+    ),
+    "narrative": (
+        "- Tell it as a story, not a report: connected prose in full sentences and "
+        "paragraphs. No headings, no bullet points, no tables, and no dash- or "
+        "line-per-item lists either — not even for a plain line of ancestors. "
+        "\"...whose father was Kis Béla, and his father in turn Kis Antal...\" is "
+        "the shape a lineage takes here; one line per generation is a list wearing "
+        "a story's clothes no matter what character introduces each line.\n"
+        "- Never name the reader as the source of a fact. This is the single most "
+        "common way this style fails, so check for it specifically: \"you wrote in "
+        "your notes that...\", \"this is what you recorded, not a proven fact\", "
+        "\"we read this from you\" all break the story by turning to address its "
+        "own archivist. The reader already knows it is their own family archive — "
+        "say instead who *inside* the story is the source: \"family lore has it "
+        "that...\", \"as your uncle told it...\", \"the family Bible records...\". "
+        "Before sending, check whether any sentence names the user as the person "
+        "who wrote or recorded something, and rewrite it if it does.\n"
+        "- The line between a parish record and an oral memory, or between what is "
+        "known and what you are inferring, still has to survive the telling — carry "
+        "it in the texture of the sentence (how firm the claim sounds, who is said "
+        "to have told it, a word like \"apparently\" or \"the story goes\") rather "
+        "than in a disclaimer stapled onto the end of it.\n"
+        "- This changes only the shape of the prose, never its content — every rule "
+        "above about not inventing places, occupations, period colour or context "
+        "still applies in full. A warmer voice is not licence for a richer guess."
+    ),
+}
+
 
 def _primer_name(p: DBPerson) -> str:
     """`Surname/Given` — order-neutral so the model can render either way."""
@@ -417,11 +459,9 @@ one or two concrete ideas, not a lecture.
 ## Style
 - Reply in {lang}.
 - Render person names {name_order}.
-- Be concise and lead with the answer. Supporting detail comes after.
+{style_block}
 - Dates in the data may be partial ("1887", "1887-03"). Reproduce that precision \
 rather than inventing a full date.
-- When you infer something rather than read it, mark it as inference and give \
-your reason.
 """
 
 
@@ -467,6 +507,7 @@ def build_system_blocks(
     *,
     lang: str = "en",
     name_order: str = "en",
+    style: str = "structured",
     allow_private: bool = False,
     proband_id: int | None = None,
 ) -> list[dict[str, Any]]:
@@ -478,6 +519,7 @@ def build_system_blocks(
     instructions = SYSTEM_INSTRUCTIONS.format(
         lang=LANG_LABEL.get(lang, "English"),
         name_order=NAME_ORDER_LABEL.get(name_order, NAME_ORDER_LABEL["en"]),
+        style_block=STYLE_BLOCKS.get(style, STYLE_BLOCKS["structured"]),
     )
     privacy_note = (
         "\nPrivate records are included in this session because the user enabled it.\n"

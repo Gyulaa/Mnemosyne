@@ -212,3 +212,4 @@ class ChatSendRequest(BaseModel):
     message: str
     lang: str = 'en'
     name_order: str = 'en'
+    style: str = 'structured'

@@ -554,7 +554,7 @@ export const api = {
      */
     stream: async (
       threadId: number,
-      body: { message: string; lang: string; name_order: string },
+      body: { message: string; lang: string; name_order: string; style: string },
       onEvent: (ev: ChatStreamEvent) => void,
       signal?: AbortSignal,
     ): Promise<void> => {
