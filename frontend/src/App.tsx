@@ -375,6 +375,7 @@ function AppInner() {
             onNavToPerson={navToGenealogy}
             onNavToImage={id => navToImage(id, [])}
             onNavToImages={navToImages}
+            onNavToDocument={id => navToDocument(id)}
           />
         )}
         </div>

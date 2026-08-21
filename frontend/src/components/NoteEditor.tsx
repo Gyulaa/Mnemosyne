@@ -784,14 +784,18 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
       >
         <div className="flex items-start justify-between gap-2 px-5 pt-4 pb-3">
           <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-2 mb-2">
-              {note.title && (
+            {/* Header row only when there is a title. An untitled note used to
+                render this row anyway, so its text started a title's height
+                further down for no reason — most visibly on document notes,
+                where titles are usually left blank. */}
+            {note.title && (
+              <div className="flex items-baseline gap-2 mb-2">
                 <p className="text-sm font-semibold text-zinc-200 truncate">{note.title}</p>
-              )}
-              {editedAt && (
-                <span className="text-xs text-zinc-600 shrink-0 ml-auto">{editedAt}</span>
-              )}
-            </div>
+                {editedAt && (
+                  <span className="text-xs text-zinc-600 shrink-0 ml-auto">{editedAt}</span>
+                )}
+              </div>
+            )}
             {note.content ? (
               <div
                 className="note-preview text-sm text-zinc-400 leading-relaxed line-clamp-4"
@@ -800,6 +804,11 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
               />
             ) : (
               <p className="text-sm text-zinc-600 italic">{t('notes.emptyCard')}</p>
+            )}
+            {/* With no header row to carry it, the date goes under the text —
+                below it costs nothing, above it would reinstate the gap. */}
+            {!note.title && editedAt && (
+              <p className="text-xs text-zinc-600 text-right mt-2">{editedAt}</p>
             )}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">

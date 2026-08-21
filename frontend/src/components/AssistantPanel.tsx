@@ -1,15 +1,137 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import { useSettings, useT } from '../SettingsContext'
+import { displayPersonName, useSettings, useT } from '../SettingsContext'
+import { getAtMentionContext, useAtMention } from '../mentions'
+import { caretAnchor, useCaretPopup, type CaretAnchor } from '../caretPopup'
+import { plainMentions } from '../markdown'
+import { docTypeLabel } from '../docTypes'
 import AssistantMessage from './AssistantMessage'
 import AssistantSetup from './AssistantSetup'
-import type { AiSettings, ChatMessage, ChatThread, ChatToolCall } from '../types'
+import type { AiSettings, ChatMessage, ChatThread, ChatToolCall, PersonDocument } from '../types'
 
 /** A message being streamed — not yet persisted, so it has no server id. */
 interface LiveMessage {
   content: string
   toolCalls: ChatToolCall[]
+}
+
+/**
+ * `#` document references in the composer — the document counterpart of the
+ * `@` person mentions in `mentions.tsx`. Kept local rather than folded into
+ * that shared module: the assistant composer is the only caller today, and
+ * a document has no family-context lines to show, so the row shape and the
+ * matching logic are both genuinely different from the person picker.
+ */
+const DOC_MENTION_LIMIT = 8
+
+interface DocMentionContext {
+  query: string
+  hashStart: number
+}
+
+/**
+ * Is the caret inside a `#…` document reference being typed? A resolved
+ * reference is `[Title](#doc-7)` — its `#` is *followed* by a `)`, which is
+ * how a live, still-open query is told apart from one already turned into a
+ * link (the `@` picker uses the mirror trick of looking for a `[` instead,
+ * since a resolved `@[Name](#pid-7)` has its bracket right after the `@`).
+ */
+function getDocMentionContext(text: string, cursorPos: number): DocMentionContext | null {
+  const before = text.slice(0, cursorPos)
+  const idx = before.lastIndexOf('#')
+  if (idx === -1) return null
+  const afterHash = before.slice(idx)
+  if (afterHash.includes(')') || afterHash.includes('\n')) return null
+  return { query: before.slice(idx + 1), hashStart: idx }
+}
+
+function DocMentionList({ matches, cursor, onHover, onPick, popupRef, style }: {
+  matches: PersonDocument[]
+  cursor: number
+  onHover: (i: number) => void
+  onPick: (d: PersonDocument) => void
+  popupRef: React.RefObject<HTMLDivElement | null>
+  style: React.CSSProperties
+}) {
+  const t = useT()
+  return (
+    <div ref={popupRef} style={{ ...style, zIndex: 9999, width: 288 }}
+      className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl overflow-hidden">
+      <p className="px-3 pt-2 pb-1 text-xs font-semibold text-zinc-600 uppercase tracking-wider">
+        {t('chat.mentionDocument')}
+      </p>
+      <div className="max-h-72 overflow-y-auto">
+        {matches.map((d, i) => {
+          const active = i === cursor
+          const meta = [docTypeLabel(t, d.doc_type, undefined), d.year].filter(Boolean).join(' · ')
+          return (
+            <button key={d.id} type="button"
+              onMouseDown={e => { e.preventDefault(); onPick(d) }}
+              onMouseEnter={() => onHover(i)}
+              className={`w-full text-left px-3 py-2 transition-all ${active ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'}`}>
+              <p className={`text-xs font-medium truncate ${active ? 'text-zinc-100' : 'text-zinc-200'}`}>
+                {plainMentions(d.title || d.filename)}
+              </p>
+              {meta && <p className="text-xs text-zinc-500 mt-0.5 truncate">{meta}</p>}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function useDocMention(onPick: (doc: PersonDocument, ctx: DocMentionContext) => void) {
+  const { data: allDocs = [] } = useQuery<PersonDocument[]>({ queryKey: ['docs-all'], queryFn: api.documents.listAll })
+
+  const [ctx, setCtx] = useState<DocMentionContext | null>(null)
+  const [anchor, setAnchor] = useState<CaretAnchor | null>(null)
+  const [cursor, setCursor] = useState(0)
+
+  const matches = useMemo(() => {
+    if (!ctx) return []
+    const q = ctx.query.trim().toLowerCase()
+    return allDocs
+      .filter(d => !q || (d.title || d.filename).toLowerCase().includes(q))
+      .slice(0, DOC_MENTION_LIMIT)
+  }, [ctx, allDocs])
+  useEffect(() => { setCursor(0) }, [matches])
+
+  const placement = useCaretPopup(anchor)
+
+  function close() { setCtx(null); setAnchor(null) }
+
+  function sync(field: HTMLTextAreaElement, value: string, caret: number) {
+    const next = getDocMentionContext(value, caret)
+    setCtx(next)
+    setAnchor(next ? caretAnchor(field, caret) : null)
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent): boolean {
+    // Matches the `@` picker's convention (mentions.tsx): with no matches,
+    // Enter falls through to the composer instead of being swallowed, so a
+    // query with no results doesn't trap the user into needing Escape first.
+    if (!ctx || matches.length === 0) return false
+    if (e.key === 'ArrowDown') { e.preventDefault(); setCursor(c => Math.min(c + 1, matches.length - 1)); return true }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); setCursor(c => Math.max(c - 1, 0)); return true }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); onPick(matches[cursor], ctx); return true }
+    if (e.key === 'Escape')   { e.preventDefault(); close(); return true }
+    return false
+  }
+
+  const popup = ctx !== null && anchor !== null && matches.length > 0
+    ? createPortal(
+        <DocMentionList
+          matches={matches} cursor={cursor} onHover={setCursor}
+          onPick={d => onPick(d, ctx)} popupRef={placement.ref} style={placement.style}
+        />,
+        document.body,
+      )
+    : null
+
+  return { sync, close, handleKeyDown, popup }
 }
 
 /** How the assistant shapes its prose — sent with every turn, see primer.py. */
@@ -30,11 +152,13 @@ export default function AssistantPanel({
   onNavToPerson,
   onNavToImage,
   onNavToImages,
+  onNavToDocument,
 }: {
   onClose: () => void
   onNavToPerson: (id: number) => void
   onNavToImage: (imageId: number) => void
   onNavToImages: (personIds: number[]) => void
+  onNavToDocument: (docId: number) => void
 }) {
   const t = useT()
   const { lang, nameOrder } = useSettings()
@@ -124,6 +248,63 @@ export default function AssistantPanel({
   function setStyle(s: ChatStyle) {
     setStyleState(s)
     localStorage.setItem('mnemosyne_chatStyle', s)
+  }
+
+  // `@` inserts a person as `@[Name](#pid-ID)`, `#` inserts a document as
+  // `[Title](#doc-ID)` — the same reference forms the assistant itself uses,
+  // so the id (not just the name or title) is what actually reaches the
+  // model, exactly the ambiguity a repeated given name would otherwise cause.
+  const personMention = useAtMention((person, ctx) => {
+    const ta = inputRef.current
+    if (!ta) return
+    const name = displayPersonName(person, nameOrder) || `Person ${person.id}`
+    const link = `@[${name}](#pid-${person.id})`
+    const next = input.slice(0, ctx.atStart) + link + input.slice(ta.selectionStart)
+    setInput(next)
+    personMention.close()
+    requestAnimationFrame(() => {
+      const pos = ctx.atStart + link.length
+      ta.selectionStart = ta.selectionEnd = pos
+      ta.focus()
+    })
+  })
+
+  const docMention = useDocMention((doc, ctx) => {
+    const ta = inputRef.current
+    if (!ta) return
+    const title = plainMentions(doc.title || doc.filename) || `Document ${doc.id}`
+    const link = `[${title}](#doc-${doc.id})`
+    const next = input.slice(0, ctx.hashStart) + link + input.slice(ta.selectionStart)
+    setInput(next)
+    docMention.close()
+    requestAnimationFrame(() => {
+      const pos = ctx.hashStart + link.length
+      ta.selectionStart = ta.selectionEnd = pos
+      ta.focus()
+    })
+  })
+
+  // Both pickers watch the same field; whichever trigger sits closer to the
+  // caret wins. Without this, resolving an `@` mention leaves a `#pid-ID`
+  // fragment in the text that the `#` detector would otherwise mistake for a
+  // document query being typed right after it.
+  function handleComposerChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const val = e.target.value
+    setInput(val)
+    const caret = e.target.selectionStart ?? val.length
+    const atCtx = getAtMentionContext(val, caret)
+    const hashCtx = getDocMentionContext(val, caret)
+    const hashWins = hashCtx !== null && (atCtx === null || hashCtx.hashStart > atCtx.atStart)
+    if (hashWins) {
+      docMention.sync(e.target, val, caret)
+      personMention.close()
+    } else if (atCtx) {
+      personMention.sync(e.target, val, caret)
+      docMention.close()
+    } else {
+      personMention.close()
+      docMention.close()
+    }
   }
 
   async function send(text: string) {
@@ -360,12 +541,14 @@ export default function AssistantPanel({
                     onNavToPerson={onNavToPerson}
                     onNavToImage={onNavToImage}
                     onNavToImages={onNavToImages}
+                    onNavToDocument={onNavToDocument}
                   />
                 ))}
                 {pendingUser && !messages.some(m => m.id === pendingUserId) && (
                   <AssistantMessage role="user" content={pendingUser} toolCalls={[]} onNavToPerson={onNavToPerson}
                     onNavToImage={onNavToImage}
-                    onNavToImages={onNavToImages} />
+                    onNavToImages={onNavToImages}
+                    onNavToDocument={onNavToDocument} />
                 )}
                 {live && (
                   <AssistantMessage
@@ -376,6 +559,7 @@ export default function AssistantPanel({
                     onNavToPerson={onNavToPerson}
                     onNavToImage={onNavToImage}
                     onNavToImages={onNavToImages}
+                    onNavToDocument={onNavToDocument}
                   />
                 )}
               </>
@@ -412,8 +596,10 @@ export default function AssistantPanel({
               <textarea
                 ref={inputRef}
                 value={input}
-                onChange={e => setInput(e.target.value)}
+                onChange={handleComposerChange}
                 onKeyDown={e => {
+                  if (personMention.handleKeyDown(e)) return
+                  if (docMention.handleKeyDown(e)) return
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()
                     send(input)
@@ -427,6 +613,8 @@ export default function AssistantPanel({
                 className="w-full bg-transparent resize-none px-3 py-2.5 pr-11 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none disabled:opacity-50 overflow-y-auto leading-relaxed"
                 style={{ minHeight: '42px', maxHeight: `${MAX_COMPOSER_PX}px` }}
               />
+              {personMention.popup}
+              {docMention.popup}
               {busy ? (
                 <button
                   onClick={() => abortRef.current?.abort()}

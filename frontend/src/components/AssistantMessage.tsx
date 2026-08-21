@@ -91,28 +91,21 @@ interface Props {
   onNavToPerson: (id: number) => void
   onNavToImage: (imageId: number) => void
   onNavToImages: (personIds: number[]) => void
+  onNavToDocument: (docId: number) => void
 }
 
 export default function AssistantMessage({
-  role, content, toolCalls, streaming, onNavToPerson, onNavToImage, onNavToImages,
+  role, content, toolCalls, streaming, onNavToPerson, onNavToImage, onNavToImages, onNavToDocument,
 }: Props) {
   const t = useT()
 
-  if (role === 'user') {
-    return (
-      <div className="flex justify-end ai-fade-up">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-zinc-800/60 border border-zinc-700/50 px-3.5 py-2 text-sm text-zinc-100 whitespace-pre-wrap break-words">
-          {content}
-        </div>
-      </div>
-    )
-  }
-
   // References render as anchors with a known class; delegate clicks to
-  // navigation the same way NoteEditor and DocumentViewer already do.
+  // navigation the same way NoteEditor and DocumentViewer already do. Shared
+  // by both roles, so a person or document the user themselves referenced
+  // when composing stays clickable in the transcript too.
   function handleClick(e: React.MouseEvent<HTMLDivElement>) {
     const anchor = (e.target as Element).closest(
-      'a.note-person-ref, a.note-image-ref, a.note-people-ref',
+      'a.note-person-ref, a.note-image-ref, a.note-people-ref, a.note-document-ref',
     ) as HTMLAnchorElement | null
     if (!anchor) return
     const href = anchor.getAttribute('href') ?? ''
@@ -124,11 +117,26 @@ export default function AssistantMessage({
     m = href.match(/image-ref-(\d+)$/)
     if (m) return onNavToImage(parseInt(m[1]))
 
+    m = href.match(/document-ref-(\d+)$/)
+    if (m) return onNavToDocument(parseInt(m[1]))
+
     m = href.match(/people-ref-([\d,]+)$/)
     if (m) {
       const ids = m[1].split(',').map(Number).filter(Number.isFinite)
       if (ids.length) onNavToImages(ids)
     }
+  }
+
+  if (role === 'user') {
+    return (
+      <div className="flex justify-end ai-fade-up">
+        <div
+          onClick={handleClick}
+          className="max-w-[85%] rounded-2xl rounded-br-md bg-zinc-800/60 border border-zinc-700/50 px-3.5 py-2 text-sm text-zinc-100 note-content ai-prose break-words"
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(content, []) }}
+        />
+      </div>
+    )
   }
 
   return (

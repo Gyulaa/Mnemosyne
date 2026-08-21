@@ -1,10 +1,11 @@
 /**
  * Markdown rendering for note, document and assistant bodies.
  *
- * Four app-specific constructs are resolved before the Markdown parse:
+ * Five app-specific constructs are resolved before the Markdown parse:
  *   @[Name](#pid-12)     — a person mention, becomes a clickable ref
  *   [caption](#img-40)   — one photo, opens it in the Images tab
  *   [caption](#people-3,6) — the Images tab filtered to those people (AND)
+ *   [Title](#doc-7)      — a document, opens it in the Documents tab
  *   [3]                  — a citation marker, becomes a superscript ref
  * All render as anchors with a known class, so a click handler on the
  * container can turn them into navigation.
@@ -68,20 +69,23 @@ function escapeHtml(s: string): string {
  */
 export function renderTitleMentions(text: string): string {
   const html = escapeHtml(text).replace(MENTION_RE, (_, name, id) =>
-    `<a href="#person-ref-${id}" class="note-person-ref">@${name}</a>`
+    `<a href="#person-ref-${id}" class="note-person-ref">${name}</a>`
   )
   return DOMPurify.sanitize(html, { ADD_ATTR: ['href', 'class'] })
 }
 
 export function renderMarkdown(content: string, citations: NoteCitation[]): string {
   let processed = content.replace(/@\[([^\]]+)\]\(#pid-(\d+)\)/g, (_, name, id) =>
-    `<a href="#person-ref-${id}" class="note-person-ref">@${name}</a>`
+    `<a href="#person-ref-${id}" class="note-person-ref">${name}</a>`
   )
   processed = processed.replace(/\[([^\]]+)\]\(#img-(\d+)\)/g, (_, label, id) =>
     `<a href="#image-ref-${id}" class="note-image-ref">${label}</a>`
   )
   processed = processed.replace(/\[([^\]]+)\]\(#people-([\d,]+)\)/g, (_, label, ids) =>
     `<a href="#people-ref-${ids.replace(/[^\d,]/g, '')}" class="note-people-ref">${label}</a>`
+  )
+  processed = processed.replace(/\[([^\]]+)\]\(#doc-(\d+)\)/g, (_, label, id) =>
+    `<a href="#document-ref-${id}" class="note-document-ref">${label}</a>`
   )
   processed = processed.replace(/\[(\d+)\]/g, (_, n) => {
     const nc = citations.find(c => c.marker === parseInt(n))

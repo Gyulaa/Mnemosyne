@@ -500,9 +500,9 @@ def _t_get_ancestors(ctx: ToolContext, a: dict[str, Any]) -> Any:
     """Walk the ancestor line(s) server-side.
 
     Genealogical trees repeat given names relentlessly, often between a father
-***REMOVED*** trace a line by chaining lookups will sooner
-    or later collapse two same-named people into one and silently drop a
-    generation. So the walk happens here, and the answer carries ids and
+    and his son. A model that tries to trace a line by chaining lookups will
+    sooner or later collapse two same-named people into one and silently drop
+    a generation. So the walk happens here, and the answer carries ids and
     generation numbers the model cannot mix up.
     """
     pid = int(a["person_id"])

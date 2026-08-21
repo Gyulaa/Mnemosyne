@@ -141,22 +141,24 @@ body::after {
 .note-preview a.note-ref:hover,
 .note-content a.note-ref:hover { text-decoration: underline; }
 
-.note-preview a.note-person-ref,
-.note-content a.note-person-ref {
+/* Unscoped on purpose: a person mention also appears outside a rendered body —
+   in a document's title, which is one line and not a `note-content` block. */
+a.note-person-ref {
   color: #a855f7; /* brand-400 */
   text-decoration: none;
   font-weight: 500;
   cursor: pointer;
 }
-.note-preview a.note-person-ref:hover,
-.note-content a.note-person-ref:hover { text-decoration: underline; }
+a.note-person-ref:hover { text-decoration: underline; }
 
-/* Photo and gallery references produced by the assistant. Styled as chips
-   rather than plain links so a list of them stays scannable. */
+/* Photo, gallery and document references produced by the assistant. Styled as
+   chips rather than plain links so a list of them stays scannable. */
 .note-content a.note-image-ref,
 .note-content a.note-people-ref,
+.note-content a.note-document-ref,
 .note-preview a.note-image-ref,
-.note-preview a.note-people-ref {
+.note-preview a.note-people-ref,
+.note-preview a.note-document-ref {
   display: inline-flex;
   align-items: center;
   gap: 0.25em;
@@ -173,8 +175,10 @@ body::after {
 }
 .note-content a.note-image-ref:hover,
 .note-content a.note-people-ref:hover,
+.note-content a.note-document-ref:hover,
 .note-preview a.note-image-ref:hover,
-.note-preview a.note-people-ref:hover {
+.note-preview a.note-people-ref:hover,
+.note-preview a.note-document-ref:hover {
   border-color: #a855f7;           /* brand-400 */
   background: rgba(168, 85, 247, 0.1);
   color: #e9d5ff;                  /* brand-200 */
@@ -183,6 +187,8 @@ body::after {
 .note-preview a.note-image-ref::before { content: '🖼'; font-size: 0.9em; }
 .note-content a.note-people-ref::before,
 .note-preview a.note-people-ref::before { content: '🖼'; font-size: 0.9em; }
+.note-content a.note-document-ref::before,
+.note-preview a.note-document-ref::before { content: '📄'; font-size: 0.9em; }
 
 /* Markdown element styles inside note-content and note-preview.
    Colours and sizes are shared; vertical rhythm deliberately is not. See the

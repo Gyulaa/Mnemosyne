@@ -153,6 +153,7 @@ function MediaCarousel({ items, startIndex, description, descriptionCitations, l
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(!!description)
+  const [sidebarResizing, setSidebarResizing] = useState(false)
   const [desc, setDesc] = useState(description ?? '')
   const [descCitations, setDescCitations] = useState(descriptionCitations)
   const [descLinkedIds, setDescLinkedIds] = useState(linkedPersonIds)
@@ -233,6 +234,10 @@ function MediaCarousel({ items, startIndex, description, descriptionCitations, l
     e.stopPropagation()
     const startX = e.clientX
     const startWidth = sidebarWidth
+    // The media re-centres against the panel's width, and an eased transition
+    // on that would visibly trail the pointer — so it is off while dragging and
+    // back on for the toggle, where the animation is the point.
+    setSidebarResizing(true)
     const onMove = (ev: PointerEvent) => {
       const next = Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, startWidth + (startX - ev.clientX)))
       setSidebarWidth(next)
@@ -241,6 +246,7 @@ function MediaCarousel({ items, startIndex, description, descriptionCitations, l
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       document.body.style.userSelect = ''
+      setSidebarResizing(false)
       setSidebarWidth(w => { localStorage.setItem('mnemosyne_docDescWidth', String(w)); return w })
     }
     document.body.style.userSelect = 'none'
@@ -285,7 +291,18 @@ function MediaCarousel({ items, startIndex, description, descriptionCitations, l
         </button>
       )}
 
-      <div className="flex flex-col items-center gap-3" style={{ maxWidth: `calc(${boxMaxWidthVw}vw - ${railReserved}px)`, maxHeight: `calc(${boxMaxHeightVh}vh + 56px)` }}
+      {/* Centred in the space *left of the panel*, not on the screen. The
+          overlay is `justify-center` across the full width, so a right margin
+          equal to the reserved rail moves the centre to (W - rail) / 2 —
+          exactly the middle of what the reader can actually see. Widening the
+          panel therefore slides the media left instead of hiding it. */}
+      <div className="flex flex-col items-center gap-3"
+        style={{
+          maxWidth: `calc(${boxMaxWidthVw}vw - ${railReserved}px)`,
+          maxHeight: `calc(${boxMaxHeightVh}vh + 56px)`,
+          marginRight: railReserved,
+          transition: sidebarResizing ? 'none' : 'margin-right 0.15s ease-out',
+        }}
         onClick={e => e.stopPropagation()}>
         {showImage ? (
           <div ref={imgWrapRef}
