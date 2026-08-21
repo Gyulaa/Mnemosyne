@@ -37,20 +37,20 @@
       "provider": "openai",
       "label": "GPT-5.1",
       "note": "OpenAI's strongest general model",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 400000, "max_output": 128000 }
+      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 400000, "max_output": 128000, "reasoning": true }
     },
     {
       "id": "gpt-5",
       "provider": "openai",
       "label": "GPT-5",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 400000, "max_output": 128000 }
+      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 400000, "max_output": 128000, "reasoning": true }
     },
     {
       "id": "gpt-5-mini",
       "provider": "openai",
       "label": "GPT-5 mini",
       "note": "Cheaper, good for simple lookups",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 400000, "max_output": 128000 }
+      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 400000, "max_output": 128000, "reasoning": true }
     },
     {
       "id": "gpt-4.1",

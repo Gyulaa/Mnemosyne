@@ -1284,6 +1284,8 @@ const en: Record<string, string> = {
   'chat.tool.get_photo_stats': 'Reading photo library',
   'chat.tool.get_descendants': 'Tracing descendants',
   'chat.tool.estimate_life_period': 'Estimating time period',
+  'chat.tool.search_web': 'Searching the web',
+  'chat.tool.read_web_page': 'Reading a web page',
 
   'chat.setup.title': 'Set up the assistant',
   'chat.setup.intro': 'The assistant answers questions about your tree by reading it. It cannot create, edit or delete anything.',
@@ -1306,6 +1308,18 @@ const en: Record<string, string> = {
   'chat.setup.save': 'Save',
   'chat.setup.saving': 'Saving…',
   'chat.setup.disconnect': 'Disconnect',
+
+  'chat.setup.web.title': 'Web research',
+  'chat.setup.web.intro': 'Lets the assistant search the web and read pages — including PDFs — to look for historical records that might corroborate your family history.',
+  'chat.setup.web.privacy': 'This is separate from the assistant above. When it searches, the names, places and years in your query go to the search provider below — a third party, not the AI provider you already chose. Off by default.',
+  'chat.setup.web.enable': 'Enable web research',
+  'chat.setup.web.apiKey': 'Tavily API key',
+  'chat.setup.web.apiKeyHint': 'Stored on this computer in config.json, separately from your AI provider keys. Get a free key at',
+  'chat.setup.web.dailyLimit': 'Daily search limit',
+  'chat.setup.web.usageToday': '{used} of {limit} searches used today',
+  'chat.setup.web.save': 'Save',
+  'chat.setup.web.saving': 'Saving…',
+  'chat.setup.web.disconnect': 'Disconnect',
 }
 
 const hu: Record<string, string> = {
@@ -2589,6 +2603,8 @@ const hu: Record<string, string> = {
   'chat.tool.get_photo_stats': 'Fotótár beolvasása',
   'chat.tool.get_descendants': 'Leszármazottak követése',
   'chat.tool.estimate_life_period': 'Élettartam becslése',
+  'chat.tool.search_web': 'Keresés a weben',
+  'chat.tool.read_web_page': 'Weboldal olvasása',
 
   'chat.setup.title': 'Asszisztens beállítása',
   'chat.setup.intro': 'Az asszisztens a fád beolvasásával válaszol a kérdéseidre. Létrehozni, módosítani és törölni nem tud semmit.',
@@ -2611,6 +2627,18 @@ const hu: Record<string, string> = {
   'chat.setup.save': 'Mentés',
   'chat.setup.saving': 'Mentés…',
   'chat.setup.disconnect': 'Lecsatlakozás',
+
+  'chat.setup.web.title': 'Webes kutatás',
+  'chat.setup.web.intro': 'Lehetővé teszi, hogy az asszisztens rákeressen az interneten, és elolvasson oldalakat — PDF-eket is —, hátha talál olyan történelmi forrásokat, amelyek alátámasztják a családtörténetedet.',
+  'chat.setup.web.privacy': 'Ez független a fenti asszisztenstől. Amikor keres, a kérdésedben szereplő nevek, helyek és évszámok a lenti keresőszolgáltatóhoz mennek ki — egy harmadik félhez, nem ahhoz az AI-szolgáltatóhoz, amit már kiválasztottál. Alapból kikapcsolva.',
+  'chat.setup.web.enable': 'Webes kutatás engedélyezése',
+  'chat.setup.web.apiKey': 'Tavily API-kulcs',
+  'chat.setup.web.apiKeyHint': 'Ezen a gépen, a config.json fájlban tárolódik, külön az AI-szolgáltatók kulcsaitól. Ingyenes kulcsot itt szerezhetsz:',
+  'chat.setup.web.dailyLimit': 'Napi keresési limit',
+  'chat.setup.web.usageToday': 'Ma {used} / {limit} keresés felhasználva',
+  'chat.setup.web.save': 'Mentés',
+  'chat.setup.web.saving': 'Mentés…',
+  'chat.setup.web.disconnect': 'Lecsatlakozás',
 }
 
 export const translations: Record<Lang, Record<string, string>> = { en, hu }

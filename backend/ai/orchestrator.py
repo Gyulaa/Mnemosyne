@@ -13,6 +13,7 @@ behaviour when the user edits their tree between questions.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from datetime import datetime
@@ -30,6 +31,7 @@ from .provider import (
     build_provider,
 )
 from .tools import REGISTRY, ToolContext
+from .web_tools import WEB_REGISTRY, WEB_TOOL_NAMES
 
 # Gathering evidence before answering costs rounds: a profile, its documents,
 # the branch's notes and events is already four or five. Eight was tuned for a
@@ -112,7 +114,15 @@ async def run_turn(
         read_db, lang=lang, name_order=name_order, style=style,
         allow_private=settings["allow_private"], proband_id=proband_id,
     )
+    # Web research is a second, independent opt-in (its own key, its own daily
+    # quota — see ai/config.py) — its tool *definitions* are withheld entirely
+    # when off, so a user who never turned it on never sees it exist and no
+    # prompt tokens are spent explaining a capability that would just refuse.
+    web_settings = ai_config.get_web_settings()
+    web_ready = bool(web_settings["enabled"] and web_settings["api_key"])
     tools = REGISTRY.definitions()
+    if web_ready:
+        tools = sorted(tools + WEB_REGISTRY.definitions(), key=lambda t: t["name"])
     ctx = ToolContext(db=read_db, allow_private=settings["allow_private"], docs_dir=docs_dir)
     provider = build_provider(settings["provider"], settings["api_key"], settings.get("base_url"))
 
@@ -161,7 +171,14 @@ async def run_turn(
             started = time.monotonic()
             is_error = False
             try:
-                result = REGISTRY.execute(call.name, call.input, ctx)
+                # A local tool is a fast SQLite read, always has been — but a
+                # web tool is a real network round trip (1-5s+), and this loop
+                # runs inside the request's own event loop. Running it inline
+                # would stall every other request this single-process app is
+                # serving for that whole duration; to_thread keeps it off the
+                # loop regardless of which registry handles it.
+                registry = WEB_REGISTRY if call.name in WEB_TOOL_NAMES else REGISTRY
+                result = await asyncio.to_thread(registry.execute, call.name, call.input, ctx)
             except Exception as exc:  # a tool crash must not kill the turn
                 result = {"error": f"{type(exc).__name__}: {exc}"}
                 is_error = True

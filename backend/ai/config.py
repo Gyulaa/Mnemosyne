@@ -36,6 +36,10 @@ UNKNOWN_MODEL_CAPS = {
     "prompt_cache": False,
     "context": 200000,
     "max_output": 16000,
+    # Conservative on purpose: an unknown model sending `reasoning_effort` to
+    # an endpoint that rejects it fails the whole turn with a 400, whereas
+    # just not sending it degrades quietly to the model's own default depth.
+    "reasoning": False,
 }
 
 
@@ -310,4 +314,116 @@ def public_settings() -> dict:
         "allow_private": s["allow_private"],
         "enabled": s["enabled"],
         "caps": model_caps(s["model"]),
+    }
+
+
+# ── web research settings (config.json → "web_research" block) ────────────────
+#
+# Deliberately a sibling of the "ai" block, not a field inside it: enabling
+# this sends specific names, dates and places to a *third* party (a search
+# engine), which is a different disclosure than talking to the LLM provider
+# the user already chose, and needs its own explicit, off-by-default consent
+# — folding it into `allow_private` would be wrong, since that toggle answers
+# a different question (visibility of the user's own private data to the
+# assistant, not whether anything leaves the machine to a new destination).
+
+DEFAULT_WEB_DAILY_LIMIT = 20
+
+
+def _web_block() -> dict:
+    web = dict(_read_config().get("web_research") or {})
+    web.setdefault("enabled", False)
+    web.setdefault("provider", "tavily")
+    web.setdefault("api_key", "")
+    web.setdefault("daily_limit", DEFAULT_WEB_DAILY_LIMIT)
+    web.setdefault("usage", {})
+    return web
+
+
+def get_web_settings() -> dict:
+    """Full web-research settings, including the raw key. Server-side only."""
+    web = _web_block()
+    return {
+        "enabled": bool(web["enabled"]),
+        "provider": web["provider"],
+        "api_key": web["api_key"] or "",
+        "daily_limit": int(web["daily_limit"]),
+    }
+
+
+def save_web_settings(
+    *,
+    enabled: bool | None = None,
+    api_key: str | None = None,
+    daily_limit: int | None = None,
+) -> dict:
+    """Patch the `web_research` block. Omitted fields keep their stored value.
+
+    An `api_key` of "" clears the key — same disconnect convention as the AI
+    provider keys.
+    """
+    cfg = _read_config()
+    web = _web_block()
+
+    if enabled is not None:
+        web["enabled"] = bool(enabled)
+    if api_key is not None:
+        web["api_key"] = api_key
+    if daily_limit is not None:
+        web["daily_limit"] = int(daily_limit)
+
+    cfg["web_research"] = web
+    _write_config(cfg)
+    return get_web_settings()
+
+
+def _today() -> str:
+    from datetime import date
+    return date.today().isoformat()
+
+
+def web_quota_status() -> dict:
+    """Today's usage against the configured limit — resets on date rollover."""
+    web = _web_block()
+    usage = web.get("usage") or {}
+    used = int(usage.get("count") or 0) if usage.get("date") == _today() else 0
+    limit = int(web["daily_limit"])
+    return {"used": used, "limit": limit, "remaining": max(0, limit - used)}
+
+
+def try_consume_web_quota() -> bool:
+    """Check-and-increment in one read-modify-write.
+
+    Called from inside a web tool handler *before* the outbound request, so
+    the cap is structural — enforced in code, not left to a prompt
+    instruction the model could ignore or forget under pressure. Mirrors the
+    date-rollover idiom `cache_is_stale()` / `set_cached_models()` already use
+    for the discovered-model cache below: no new table, no lock beyond the
+    read-modify-write every other `config.json` writer in this file already
+    does (fine for a single-user desktop app).
+    """
+    cfg = _read_config()
+    web = _web_block()
+    usage = web.get("usage") or {}
+    today = _today()
+    used = int(usage.get("count") or 0) if usage.get("date") == today else 0
+    limit = int(web["daily_limit"])
+    if used >= limit:
+        return False
+    web["usage"] = {"date": today, "count": used + 1}
+    cfg["web_research"] = web
+    _write_config(cfg)
+    return True
+
+
+def public_web_settings() -> dict:
+    """Web-research settings safe to send to the client."""
+    s = get_web_settings()
+    quota = web_quota_status()
+    return {
+        "enabled": s["enabled"],
+        "api_key_masked": mask_key(s["api_key"]),
+        "configured": bool(s["api_key"]),
+        "daily_limit": s["daily_limit"],
+        "usage_today": quota["used"],
     }

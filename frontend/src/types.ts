@@ -576,6 +576,18 @@ export interface AiSettings {
   caps: AiModel['caps']
 }
 
+/** A separate opt-in from `AiSettings` — enabling this sends specific names,
+ *  places and years to a third-party search provider, not just to the AI
+ *  provider chosen above. */
+export interface WebResearchSettings {
+  enabled: boolean
+  /** Masked for display only — the raw key never leaves the backend. */
+  api_key_masked: string
+  configured: boolean
+  daily_limit: number
+  usage_today: number
+}
+
 export interface ChatThread {
   id: number
   title: string | null

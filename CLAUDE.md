@@ -111,6 +111,7 @@ Test data: copy a project directory into the scratchpad and point the app at tha
 - **Prose must be reachable without a keyword.** `search_text` with no query lists the whole written corpus, `get_document` opens one in full. Anything the assistant can only find by guessing a search term is something it will eventually report as non-existent.
 - **The primer must stay deterministic** — anything time- or order-dependent added to it destroys the prompt cache silently.
 - Every new tool needs its `chat.tool.<name>` label in both dictionaries.
+- **A tool with an external network dependency** (`ai/web_tools.py`'s `search_web`/`read_web_page`) is a second, independent opt-in from the assistant itself — its own `config.json` block, its own consent disclosure in `AssistantSetup.tsx`, its own quota enforced inside the handler (never as a prompt instruction alone), and its tool *definitions* withheld from the model entirely when off. Don't fold a network-dependent tool into `tools.py`'s always-on `REGISTRY`.
 
 ---
 

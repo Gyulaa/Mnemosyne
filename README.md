@@ -18,14 +18,15 @@ You point it at a folder of photos, and it automatically finds and groups faces.
 
 **Out of the box, nothing is uploaded anywhere.** Your photos, names, dates and notes stay on your computer, and the app works entirely offline. The face recognition runs locally — nothing is sent away to identify anyone.
 
-Two features can reach the internet, and both are yours to control:
+Three features can reach the internet, and all three are yours to control:
 
 | Feature | What leaves your computer | Default |
 |---|---|---|
 | **Update check** | A request to GitHub asking whether a newer version exists. No data about you or your family. | On — switch it off in Settings |
 | **AI assistant** | Your question, plus the family data needed to answer it, goes to the AI provider you choose (Anthropic or OpenAI). | **Off** — it does nothing until you add your own API key |
+| **Web research** | The names, places and years in a query go to a search provider (Tavily) — separate from the AI provider above — when the assistant looks for corroborating historical records online. | **Off** — needs its own API key, on top of the assistant's |
 
-The assistant is the only feature that sends your family data anywhere. It is opt-in, it can be switched off entirely in Settings, and anything you marked **private** stays hidden from it unless you explicitly allow it. Your API key is stored on your own computer and never leaves it.
+The assistant and web research are the only features that send your family data anywhere, and each is its own switch to its own destination. Both are opt-in, both can be switched off entirely in Settings, and anything you marked **private** stays hidden from the assistant unless you explicitly allow it. Both API keys are stored on your own computer and never leave it except to the provider they're for.
 
 ---
 
@@ -180,7 +181,7 @@ Four relatives can easily share a name. Wherever you pick a person from a list �
 
 ### AI assistant (optional)
 
-This is the one feature that sends your family data off your computer, so it is off until you decide otherwise.
+This is the feature that sends your family data off your computer, so it is off until you decide otherwise.
 
 - **Off until you turn it on.** It needs an API key — either [Anthropic](https://console.anthropic.com) or [OpenAI](https://platform.openai.com/api-keys) — stored on your own computer and never sent anywhere except to that provider. You can save both keys and switch between them
 - **Switch it off any time** in Settings → *Enable assistant*. The floating button and the Ctrl+J shortcut disappear with it, and nothing is sent anywhere
@@ -193,6 +194,7 @@ This is the one feature that sends your family data off your computer, so it is 
 - Conversations are saved with the project and are **never included in any export**
 - Choose how it writes above the message box: **Structured** for concise, scannable answers, or **Storyteller** for a family history told as flowing prose. The choice is remembered on this device and applies to your next message
 - Type **@** to reference a person or **#** to reference a document while asking a question — the same pickers as elsewhere in the app. This tells the assistant exactly who or what you mean, which matters most for a given name that repeats in the family
+- **Web research is a separate, second off-switch** in the same Settings screen. Turned on, the assistant can search the web and read pages — including PDFs — for historical records that might corroborate what your tree already says, and tells you plainly when something looks like a match rather than editing anything itself. It needs its own [Tavily](https://tavily.com) API key, has its own daily search limit you set, and is off by default because it sends the names, places and years in your question to that search provider, not only to the AI provider you already chose
 
 ---
 
@@ -215,9 +217,10 @@ If you prefer to check for updates manually, go to **Settings** (gear icon, top 
 ## Your data
 
 - **Your source photos are never modified.** Mnemosyne only reads them; it never moves, renames, or changes the original files.
-- **By default, nothing leaves your computer.** The app works fully offline. Two features can reach the internet, both under your control:
+- **By default, nothing leaves your computer.** The app works fully offline. Three features can reach the internet, all under your control:
   - the **update check** against GitHub (turn it off in Settings) — it sends no data about you;
   - the **AI assistant**, which is off until you add an API key. While it is on, your questions and the family data needed to answer them go to the provider you picked. Switch it off in Settings and the widget, the shortcut and the network traffic all go with it.
+  - **web research**, a separate off switch in the assistant's own settings. While on, a query's names, places and years go to the search provider you configured — its own API key, its own daily limit, independent of the assistant's provider.
 - All your data (family tree, notes, documents) is stored in a folder called `projects/` next to the app. You can back it up by simply copying that folder.
 
 ---
@@ -546,6 +549,20 @@ Its anchors are found by two **one-directional** walks — pure ancestors, pure 
 
 Mnemosyne is also used purely to organise photographs and events, so the tool surface covers that too: `get_photo_stats` (totals per decade, who appears most, how much is unidentified), `find_photos` (by people together or individually, year range, faces nobody has named), and `find_shared_photos`. Every photo answer carries a `#people-…` gallery link, because the point is to act on the set — select, tag, export — not to read a list of ids.
 
+### Web research
+
+`ai/web_tools.py` is a **second, independent tool registry** (`WEB_REGISTRY`), never merged into `tools.py`'s always-on `REGISTRY`. Every tool in `tools.py` reads the local, already-consented-to project database; `search_web` and `read_web_page` send a query to a third-party search engine (Tavily) and fetch pages from the open internet — a materially different disclosure that needs its own opt-in, its own API key, and its own daily quota, all stored in `config.json`'s `web_research` block, separate from the `ai` block the assistant itself uses. `orchestrator.py` includes `WEB_REGISTRY`'s definitions only when that block is enabled and holds a key — a user who never turned it on never sees the tools exist, and no prompt tokens are spent explaining a capability that would just refuse.
+
+The split mirrors the project's own document tools: `search_text` finds, `get_document` reads one in full; here `search_web` finds candidate pages (title, URL, snippet only) and `read_web_page` reads exactly one. The system prompt requires the second call before reporting what a source says — a snippet is not the document.
+
+**PDF and page reading is done in-house, not left to the search vendor.** Tavily's documented API surface says nothing about PDF support one way or the other, so depending on it would mean depending on an unverified behaviour for the one requirement that matters most here. `read_web_page` fetches the URL itself and extracts text with `pypdf` (PDF) or `BeautifulSoup(..., "html.parser")` (HTML) — both pure-Python, chosen specifically so PyInstaller needs no special handling for them (`PyMuPDF`/`lxml` would add compiled binaries and, for `PyMuPDF`, an AGPL licence question neither is worth taking on here).
+
+**`pypdf` extracts a PDF's embedded text layer only — it does no OCR.** A scan published with no OCR pass comes back with nothing to read. In practice this rarely matters: serious digitisation efforts (archive.org, FamilySearch, library and society scanning programs) run OCR before publishing specifically so the result is searchable. `read_web_page` detects a PDF that comes back near-empty and returns a distinct note ("looks like a scanned image with no OCR text layer") rather than an empty string — the same "an empty result must not read as an absent fact" discipline the rest of this file already lives by, extended to a source the project has no control over.
+
+**The daily quota is enforced in the tool handler, not the prompt.** `try_consume_web_quota()` in `ai/config.py` does a check-and-increment against `config.json` before the outbound request even happens — the same "don't trust one mechanism alone" reasoning behind the read-only guarantee's three independent layers. A model asked nicely to be economical still might not be; a quota checked in code cannot be talked past.
+
+**Toggling web research on or off changes the cached prompt prefix**, exactly as `style`/`lang`/`name_order` already do (see "Response style" above) — `orchestrator.py` builds the tool list conditionally, and the tool-definitions block sits ahead of the system prompt in the same cached prefix. This is an accepted, existing trade-off, not a new one: flipping a per-turn input costs one full-price prompt instead of a cached one.
+
 ### Guessable values must be discoverable
 
 `event_type` is a stored vocabulary (`religious`, `custom`, …) that rarely matches the word a question uses — a filter of `confirmation` matched nothing, which the model reported as "the event was never recorded". Two mitigations: `build_inventory()` puts the project's actual `event_type` and `doc_type` values in the cached prefix, and `list_events` returns the available types in a `note` whenever a type filter matches nothing. The general rule for this tool layer: **an empty result must never be mistakable for an absent fact.**
@@ -651,6 +668,8 @@ Names in the primer are written `Surname/Given` precisely because they are order
 | `OpenAICompatProvider` | OpenAI today; OpenRouter / Ollama / LM Studio by setting `base_url` alone | Chat Completions API. Uses `max_completion_tokens`, and `stream_options.include_usage` (usage is otherwise absent from a streamed response) |
 
 Nothing provider-specific may leak above the protocol. Three differences are absorbed inside `OpenAICompatProvider`: the system prompt becomes an ordinary message (and the `cache_control` markers are dropped — OpenAI caches long prefixes automatically), tools are wrapped in a `function` envelope, and **streamed tool arguments arrive as fragments that must be reassembled per `index`** before they parse as JSON. That last one is the part that breaks silently if reimplemented carelessly.
+
+**Reasoning depth is capability-gated, not id-gated — same rule as everything else in the model manifest.** `OpenAICompatProvider` sends `reasoning_effort` only when `model_caps(model)["reasoning"]` is true (set on the gpt-5 family in `models.json`); a non-reasoning model rejects the field outright with a 400, and an unknown model defaults to `false` in `UNKNOWN_MODEL_CAPS` for exactly that reason — silently *not* asking for more depth is a safe degradation, silently asking a model that doesn't support it is a broken turn. `AnthropicProvider` has run at `effort: "high"` since it was written; `OpenAICompatProvider` gained the equivalent default for the same reason both exist — a research-shaped question (piecing together a lineage, judging whether a web page's names line up with the tree) benefits from more deliberation than this app is otherwise latency-sensitive about, and the shallower default depth was a real, observed cause of the assistant proposing a research plan instead of running it.
 
 ### Providers, keys and models
 
@@ -997,15 +1016,16 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 - The server binds exclusively to `127.0.0.1` — not reachable from the network
 - CORS restricted to `http://localhost` and `http://127.0.0.1`
 - ZIP imports are path-validated (Zip Slip protection)
-- **Outbound connections — exactly two, and neither sends family data by default:**
+- **Outbound connections — exactly three, and none sends family data by default:**
 
   | | Sends | Default | Off switch |
   |---|---|---|---|
   | GitHub update check | Version query only, nothing about the user | **On** | Settings → auto-check |
   | AI assistant | Questions plus the tree data needed to answer them | **Off** — inert without an API key | Settings → *Enable assistant* (`ai.enabled` in `config.json`) |
+  | Web research | The names, places and years in a query, to the search provider (not the AI provider above) | **Off** — inert without its own API key | Settings → assistant setup, web research section (`web_research.enabled` in `config.json`) |
 
-  The assistant is the only path by which project data leaves the machine. Disabling it hides the widget and the Ctrl+J shortcut and stops the traffic; it does not discard the stored key or model.
-- The API key lives in `config.json`, per provider. It is write-only over HTTP: `GET /api/ai/settings` returns it masked (`sk-ant-api…9f2a`), and no other endpoint returns it at all
+  The assistant and web research are the only paths by which project data leaves the machine, and they are separate switches to separate destinations. Disabling either hides its part of the UI and stops its traffic; neither discards its stored key.
+- Both API keys live in `config.json` — the AI provider key per provider, the web-research key in its own `web_research` block. Both are write-only over HTTP: `GET /api/ai/settings` and `GET /api/ai/web-settings` return them masked (`sk-ant-api…9f2a`), and no other endpoint returns either at all
 - Private records are withheld from the assistant unless `allow_private` is set — a third enforcement layer alongside ZIP and GEDCOM export (see *Privacy*)
 
 ---
@@ -1044,6 +1064,8 @@ Each entry below is **trigger → the files that must change together**. They ex
 - **New per-turn prompt parameter** (like `lang`, `name_order`, `style`) → add the field to `ChatSendRequest` in `schemas.py`, thread it through `run_turn` in `ai/orchestrator.py` into `build_system_blocks` in `ai/primer.py`, and send it from `AssistantPanel.tsx` on every `api.ai.stream()` call (update the body type in `api.ts` too). These are per-device request values, not stored on the thread or the project — and because the instructions block sits inside the cached prefix (see *Response style*), changing one mid-conversation costs a full-price prompt rather than a cached one; that is expected, not a bug
 - **New AI assistant tool** → register it in `build_registry()` in `ai/tools.py` with `mutates=False` (the registry rejects anything else); apply the `_priv_ok` privacy filter; return name *parts* rather than `persons.name`; add a `chat.tool.<name>` label to **both** dictionaries in `i18n/translations.ts`. Prefer one fat tool over several thin ones — push the computation into the tool, as `get_relationship_path` does with the BFS and `get_ancestors` does with the line walk. Two rules learned the hard way: an empty result must carry enough context that it cannot be read as an absent fact, and anything the model would otherwise have to *guess* — a stored enum value, or whether any material exists at all — belongs in the tool's error path, in `build_inventory()`, or in the skeleton's `material` marks (`_content_marks` in `ai/primer.py`), never in an instruction telling the model to remember to check
 - **New table holding prose** (notes, descriptions, bodies — anything a person writes) → it must reach the assistant in three places or it is invisible to every answer: the search loop and the listing in `_t_search_text` / `_t_list_written_material`, the counts in `build_inventory()`, and — if it hangs off a person — the `material` marks in `_content_marks` (`ai/primer.py`). Prose the assistant cannot see is prose it will report as never having been written.
+- **New AI tool with an external network dependency** (anything beyond a local SQLite read) → beyond the plain "New AI assistant tool" entry above: register it in its own registry (`ai/web_tools.py`'s `WEB_REGISTRY` is the worked example), never `tools.py`'s always-on `REGISTRY`; gate both its tool *definitions* and its handler on its own `config.json` block's enabled+key state (`orchestrator.py`'s `web_ready` check); give it its own consent/privacy disclosure in `AssistantSetup.tsx`. Folding it into the existing `allow_private` toggle is wrong — that toggle answers a different question (visibility of the user's own private data, not whether anything leaves the machine to a new third party)
+- **New AI tool with its own usage quota** → enforce the check-and-increment inside the tool handler itself (`ai/config.py`'s `try_consume_web_quota` is the worked example), never as a system-prompt instruction alone. The trigger for needing this: any tool whose real-world cost scales with how often the model decides to call it — which an ambient, non-button-gated tool always does, since nothing stops the model reaching for it more than intended
 - **New chat table** → add an unconditional `DELETE FROM <table>` to the chat block at the top of `build_export_db` in `export_utils.py`, children first. The export copies the whole database and then filters, so a table you forget here is silently exported — this is the one mistake in this area with a real privacy cost
 - **New model** → usually *nothing to do*: the list is fetched from the provider and new ids appear on the next refresh. Add an entry to `backend/ai/models.json` only to give it a friendly label, a note or a price (omit `pricing` rather than guessing — a missing block just hides the cost estimate, a wrong one misinforms). Never add a model-id branch in code; if you want one, the missing thing belongs in `caps`
 - **New non-chat model type appearing in the picker** → add a substring to `_NON_CHAT_MARKERS` in `ai/config.py`. Keep it conservative — over-filtering silently hides usable models, which is the worse failure

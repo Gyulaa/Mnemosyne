@@ -106,6 +106,7 @@ a = Analysis(
         'backend.ai.config',
         'backend.ai.provider',
         'backend.ai.tools',
+        'backend.ai.web_tools',
         'backend.ai.primer',
         'backend.ai.orchestrator',
     ],

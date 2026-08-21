@@ -215,9 +215,10 @@ class OpenAICompatProvider:
     arguments arrive as fragments that have to be reassembled per index.
     """
 
-    def __init__(self, api_key: str, base_url: str | None = None):
+    def __init__(self, api_key: str, base_url: str | None = None, effort: str = "high"):
         self._api_key = api_key
         self._base_url = base_url
+        self._effort = effort
 
     def _client(self):
         import openai
@@ -291,6 +292,7 @@ class OpenAICompatProvider:
         max_tokens: int = 16000,
     ) -> AsyncIterator[ProviderEvent]:
         import openai
+        from . import config as ai_config
 
         client = self._client()
         kwargs: dict[str, Any] = {
@@ -303,6 +305,12 @@ class OpenAICompatProvider:
         }
         if tools:
             kwargs["tools"] = self._to_openai_tools(tools)
+        # Capability-gated, not id-gated (models.json's own rule): a non-
+        # reasoning model rejects this field outright with a 400, so it is
+        # only sent when the manifest says this model actually supports it.
+        # Mirrors AnthropicProvider's `effort` — same default depth on both.
+        if ai_config.model_caps(model).get("reasoning"):
+            kwargs["reasoning_effort"] = self._effort
 
         text_parts: list[str] = []
         # index -> {id, name, args}; streamed arguments arrive in fragments.

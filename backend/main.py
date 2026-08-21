@@ -40,7 +40,7 @@ from .schemas import (
     BulkDownloadRequest,
     TextDocumentCreate, TextDocumentBody, DocumentImageAdd,
     DuplicateGroup, DuplicateImageInfo,
-    AiSettingsUpdate, ChatThreadCreate, ChatThreadUpdate, ChatSendRequest,
+    AiSettingsUpdate, WebResearchSettingsUpdate, ChatThreadCreate, ChatThreadUpdate, ChatSendRequest,
 )
 from .image_utils import load_image_bgr, crop_thumbnail, IMAGE_EXTENSIONS
 from .ai import config as ai_config
@@ -3710,6 +3710,26 @@ def ai_update_settings(body: AiSettingsUpdate):
         base_url=body.base_url,
     )
     return ai_config.public_settings()
+
+
+@app.get('/api/ai/web-settings')
+def ai_get_web_settings():
+    # A separate opt-in from /api/ai/settings: enabling this sends specific
+    # names, dates and places to a third-party search engine, not just to the
+    # LLM provider the user already chose. Own key, own toggle, own quota.
+    return ai_config.public_web_settings()
+
+
+@app.put('/api/ai/web-settings')
+def ai_update_web_settings(body: WebResearchSettingsUpdate):
+    if body.daily_limit is not None and body.daily_limit < 1:
+        raise HTTPException(400, 'Daily limit must be at least 1')
+    ai_config.save_web_settings(
+        enabled=body.enabled,
+        api_key=body.api_key,
+        daily_limit=body.daily_limit,
+    )
+    return ai_config.public_web_settings()
 
 
 @app.get('/api/ai/models')

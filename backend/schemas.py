@@ -201,6 +201,16 @@ class AiSettingsUpdate(BaseModel):
     base_url: Optional[str] = None
 
 
+class WebResearchSettingsUpdate(BaseModel):
+    """Patch for the `web_research` block — a separate opt-in from `ai`'s
+    `allow_private`, which means something else entirely (whether the
+    assistant may see the user's own data marked private, not whether it may
+    send anything to a third-party search engine)."""
+    enabled: Optional[bool] = None
+    api_key: Optional[str] = None
+    daily_limit: Optional[int] = None
+
+
 class ChatThreadCreate(BaseModel):
     title: Optional[str] = None
 

@@ -1,4 +1,4 @@
-import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, ChatThread, ChatMessage, ChatStreamEvent } from './types'
+import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, WebResearchSettings, ChatThread, ChatMessage, ChatStreamEvent } from './types'
 
 const BASE = '/api'
 
@@ -545,6 +545,11 @@ export const api = {
     getSettings: () => fetchJson<AiSettings>(`${BASE}/ai/settings`),
     saveSettings: (fields: Partial<{ provider: string; model: string; api_key: string; allow_private: boolean; enabled: boolean; base_url: string }>) =>
       put<AiSettings>(`${BASE}/ai/settings`, fields),
+
+    /** A separate opt-in from the assistant itself — see WebResearchSettings. */
+    getWebSettings: () => fetchJson<WebResearchSettings>(`${BASE}/ai/web-settings`),
+    saveWebSettings: (fields: Partial<{ enabled: boolean; api_key: string; daily_limit: number }>) =>
+      put<WebResearchSettings>(`${BASE}/ai/web-settings`, fields),
     /**
      * Models for the picker. The list comes from the provider itself (cached
      * server-side for a week); the bundled manifest only adds labels and
