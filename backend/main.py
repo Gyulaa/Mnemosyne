@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, object_session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentImage as DBDocumentImage, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage, ChatThread as DBChatThread, ChatMessage as DBChatMessage, ChatToolCall as DBChatToolCall
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentDescriptionCitation as DBDocumentDescriptionCitation, DocumentImage as DBDocumentImage, DocumentFile as DBDocumentFile, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage, ChatThread as DBChatThread, ChatMessage as DBChatMessage, ChatToolCall as DBChatToolCall
 from . import scanner as scanner_mod
 from . import clusterer
 from .clusterer import recompute_person_subclusters
@@ -1825,6 +1825,15 @@ def _doc_image_dict(di: "DBDocumentImage") -> dict:
     }
 
 
+def _doc_file_dict(f: "DBDocumentFile") -> dict:
+    return {
+        "id": f.id,
+        "filename": f.filename,
+        "mime_type": f.mime_type,
+        "sort_order": f.sort_order,
+    }
+
+
 def _doc_dict(d: "DBDocument") -> dict:
     return {
         "id": d.id,
@@ -1835,6 +1844,7 @@ def _doc_dict(d: "DBDocument") -> dict:
         "title": d.title,
         "doc_type": d.doc_type,
         "year": d.year,
+        "date": d.date,
         "description": d.description,
         "created_at": d.created_at,
         "is_private": bool(d.is_private),
@@ -1851,6 +1861,14 @@ def _doc_dict(d: "DBDocument") -> dict:
         "images": [
             _doc_image_dict(di)
             for di in sorted(d.body_images or [], key=lambda i: (i.sort_order, i.id))
+        ],
+        "files": [
+            _doc_file_dict(f)
+            for f in sorted(d.extra_files or [], key=lambda f: (f.sort_order, f.id))
+        ],
+        "description_citations": [
+            _doc_citation_dict(c)
+            for c in sorted(d.description_citations or [], key=lambda c: c.marker)
         ],
     }
 
@@ -1922,6 +1940,47 @@ def _year_from_date(d: str | None) -> int | None:
         except ValueError:
             pass
     return None
+
+
+_PERSON_REF_RE = re.compile(r"@\[([^\]]+)\]\(#pid-\d+\)")
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
+_EMPHASIS_RE = re.compile(r"\*{1,3}|~~|_{2,3}")
+_HEADING_RE = re.compile(r"^#{1,6}\s+", re.M)
+_LINE_MARKER_RE = re.compile(r"^[>\-*+]\s+", re.M)
+_INLINE_CODE_RE = re.compile(r"`([^`]*)`")
+
+
+def _plain_mentions(text: str | None) -> str:
+    """`@[Name](#pid-12)` → `Name`, and any other Markdown link → its label.
+
+    A document's `title` and `description` both hold mention markup, but plenty
+    of consumers need flat text: an on-disk filename, a GEDCOM `TITL`, a
+    generated source title, a ZIP manifest line. Those go through here — the raw
+    string would show the reader the brackets.
+    """
+    if not text:
+        return ""
+    return _MD_LINK_RE.sub(r"\1", _PERSON_REF_RE.sub(r"\1", text)).strip()
+
+
+def _plain_markdown(text: str | None) -> str:
+    """`_plain_mentions` plus the rest of the Markdown syntax, for one flat line.
+
+    Used where a Markdown body is quoted into plain text — the ZIP manifest's
+    `Description:` line, for instance. `[n]` citation markers are deliberately
+    **kept**: the manifest lists the sources they point at underneath, so
+    dropping them would orphan that list.
+    """
+    if not text:
+        return ""
+    out = _plain_mentions(text)
+    out = _INLINE_CODE_RE.sub(r"\1", out)
+    out = _HEADING_RE.sub("", out)
+    out = _LINE_MARKER_RE.sub("", out)
+    out = _EMPHASIS_RE.sub("", out)
+    return " ".join(out.split())
 
 
 def _derive_display_name(title: str | None, last_name: str | None, first_name: str | None, middle_name: str | None = None) -> str | None:
@@ -2245,37 +2304,63 @@ def list_documents(person_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/documents/upload", status_code=201)
 async def upload_document(
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     person_ids: str = Form(default=""),   # comma-separated; empty means the document belongs to nobody
     title: Optional[str] = Form(default=None),
     doc_type: Optional[str] = Form(default="other"),
     year: Optional[int] = Form(default=None),
+    date: Optional[str] = Form(default=None),
     description: Optional[str] = Form(default=None),
     db: Session = Depends(get_db),
 ):
+    if not files:
+        raise HTTPException(400, "No file provided")
     pids = list(dict.fromkeys(int(x) for x in person_ids.split(",") if x.strip().isdigit()))
     if pids and db.query(DBPerson).filter(DBPerson.id.in_(pids)).count() != len(pids):
         raise HTTPException(404, "Person not found")
+    if not year and date:
+        try:
+            year = int(date.split("-")[0])
+        except Exception:
+            pass
     docs_dir = _docs_dir()
-    ext = Path(file.filename or "file").suffix or ""
+
+    # Several files picked in one upload action become one document — every
+    # page of a scanned letter, front and back of a certificate — not one
+    # document each. The first file is the row's own primary file, as before.
+    primary = files[0]
+    ext = Path(primary.filename or "file").suffix or ""
     stored_name = f"{uuid.uuid4().hex}{ext}"
-    dest = docs_dir / stored_name
-    data = await file.read()
-    dest.write_bytes(data)
-    mime = file.content_type or mimetypes.guess_type(file.filename or "")[0]
+    (docs_dir / stored_name).write_bytes(await primary.read())
+    mime = primary.content_type or mimetypes.guess_type(primary.filename or "")[0]
     doc = DBDocument(
         person_id=pids[0] if pids else None,
         stored_name=stored_name,
-        filename=file.filename or stored_name,
+        filename=primary.filename or stored_name,
         mime_type=mime,
         title=title or None,
         doc_type=doc_type or "other",
         year=year,
+        date=date or None,
         description=description or None,
         created_at=datetime.now().isoformat(),
     )
     db.add(doc)
     db.flush()
+
+    for i, f in enumerate(files[1:]):
+        f_ext = Path(f.filename or "file").suffix or ""
+        f_stored = f"{uuid.uuid4().hex}{f_ext}"
+        (docs_dir / f_stored).write_bytes(await f.read())
+        f_mime = f.content_type or mimetypes.guess_type(f.filename or "")[0]
+        db.add(DBDocumentFile(
+            document_id=doc.id,
+            stored_name=f_stored,
+            filename=f.filename or f_stored,
+            mime_type=f_mime,
+            sort_order=i,
+        ))
+
     # Also insert into junction table
     for pid in pids:
         db.add(DBDocumentPerson(document_id=doc.id, person_id=pid))
@@ -2339,7 +2424,9 @@ def _text_doc_path(d: "DBDocument") -> Path:
 
 
 def _slug_filename(title: str | None) -> str:
-    base = (title or "").strip() or "document"
+    # Mentions first: stripping punctuation alone would leave `pid` and the id
+    # glued into the filename.
+    base = _plain_mentions(title) or "document"
     ascii_base = unicodedata.normalize("NFD", base).encode("ascii", "ignore").decode("ascii")
     safe = re.sub(r"[^\w\s-]", "", ascii_base).strip().replace(" ", "_")
     return f"{safe or 'document'}.md"
@@ -2359,6 +2446,13 @@ def create_text_document(body: TextDocumentCreate, db: Session = Depends(get_db)
     stored_name = f"{uuid.uuid4().hex}.md"
     (docs_dir / stored_name).write_text(body.content or "", encoding="utf-8")
 
+    year = body.year
+    if not year and body.date:
+        try:
+            year = int(body.date.split("-")[0])
+        except Exception:
+            pass
+
     doc = DBDocument(
         person_id=person_ids[0] if person_ids else None,
         stored_name=stored_name,
@@ -2366,7 +2460,8 @@ def create_text_document(body: TextDocumentCreate, db: Session = Depends(get_db)
         mime_type="text/markdown",
         title=(body.title or "").strip() or None,
         doc_type=body.doc_type or "other",
-        year=body.year,
+        year=year,
+        date=body.date or None,
         description=(body.description or "").strip() or None,
         created_at=datetime.now().isoformat(),
         is_text=True,
@@ -2429,6 +2524,36 @@ def add_document_citation(doc_id: int, body: NoteCitationCreate, db: Session = D
 @app.delete("/api/document-citations/{citation_id}")
 def delete_document_citation(citation_id: int, db: Session = Depends(get_db)):
     c = db.get(DBDocumentCitation, citation_id)
+    if not c:
+        raise HTTPException(404, "Citation not found")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/documents/{doc_id}/description-citations", status_code=201)
+def add_document_description_citation(doc_id: int, body: NoteCitationCreate, db: Session = Depends(get_db)):
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if body.source_id is None and not body.custom_label:
+        raise HTTPException(400, "Either source_id or custom_label is required")
+    c = DBDocumentDescriptionCitation(
+        document_id=doc_id,
+        source_id=body.source_id,
+        marker=body.marker,
+        detail=body.detail,
+        custom_label=body.custom_label,
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return _doc_citation_dict(c)
+
+
+@app.delete("/api/document-description-citations/{citation_id}")
+def delete_document_description_citation(citation_id: int, db: Session = Depends(get_db)):
+    c = db.get(DBDocumentDescriptionCitation, citation_id)
     if not c:
         raise HTTPException(404, "Citation not found")
     db.delete(c)
@@ -2529,9 +2654,15 @@ def update_document(doc_id: int, body: dict, db: Session = Depends(get_db)):
     d = db.get(DBDocument, doc_id)
     if not d:
         raise HTTPException(404, "Document not found")
-    for f in ("title", "doc_type", "year", "description", "is_private"):
+    for f in ("title", "doc_type", "year", "date", "description", "is_private"):
         if f in body:
             setattr(d, f, body[f])
+    # Keep year in sync with date, as events do.
+    if "date" in body and "year" not in body and body["date"]:
+        try:
+            d.year = int(body["date"].split("-")[0])
+        except Exception:
+            pass
     if d.is_text and "title" in body:
         d.filename = _slug_filename(d.title)
     db.commit()
@@ -2556,6 +2687,60 @@ def serve_document(doc_id: int, dl: bool = Query(default=False), db: Session = D
     )
 
 
+@app.get("/api/documents/{doc_id}/files/{file_id}")
+def serve_document_file(doc_id: int, file_id: int, dl: bool = Query(default=False), db: Session = Depends(get_db)):
+    f = db.get(DBDocumentFile, file_id)
+    if not f or f.document_id != doc_id:
+        raise HTTPException(404, "File not found")
+    docs_dir = _docs_dir()
+    path = docs_dir / f.stored_name
+    if not path.exists():
+        raise HTTPException(404, "File not found on disk")
+    disposition = "attachment" if dl else "inline"
+    safe_name = quote(f.filename)
+    return FileResponse(
+        str(path),
+        media_type=f.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": f'{disposition}; filename="{safe_name}"'},
+    )
+
+
+@app.delete("/api/documents/{doc_id}/files/{file_id}")
+def delete_document_file(doc_id: int, file_id: int, db: Session = Depends(get_db)):
+    f = db.get(DBDocumentFile, file_id)
+    if not f or f.document_id != doc_id:
+        raise HTTPException(404, "File not found")
+    docs_dir = _docs_dir()
+    path = docs_dir / f.stored_name
+    if path.exists():
+        path.unlink(missing_ok=True)
+    db.delete(f)
+    db.commit()
+    d = db.get(DBDocument, doc_id)
+    return _doc_dict(d)
+
+
+@app.post("/api/documents/bulk-delete")
+def bulk_delete_documents(body: dict, db: Session = Depends(get_db)):
+    document_ids = body.get("document_ids", [])
+    if not document_ids:
+        return {"ok": True, "count": 0}
+    docs_dir = _docs_dir()
+    docs = db.query(DBDocument).filter(DBDocument.id.in_(document_ids)).all()
+    count = len(docs)
+    for d in docs:
+        path = docs_dir / d.stored_name
+        if path.exists():
+            path.unlink(missing_ok=True)
+        for f in d.extra_files:
+            f_path = docs_dir / f.stored_name
+            if f_path.exists():
+                f_path.unlink(missing_ok=True)
+        db.delete(d)
+    db.commit()
+    return {"ok": True, "count": count}
+
+
 @app.delete("/api/documents/{doc_id}")
 def delete_document(doc_id: int, db: Session = Depends(get_db)):
     d = db.get(DBDocument, doc_id)
@@ -2565,6 +2750,12 @@ def delete_document(doc_id: int, db: Session = Depends(get_db)):
     path = docs_dir / d.stored_name
     if path.exists():
         path.unlink(missing_ok=True)
+    # The ORM cascade removes the document_files rows; their bytes on disk are
+    # not something the cascade knows about, same as the primary file above.
+    for f in d.extra_files:
+        f_path = docs_dir / f.stored_name
+        if f_path.exists():
+            f_path.unlink(missing_ok=True)
     db.delete(d)
     db.commit()
     return {"ok": True}
@@ -2573,15 +2764,8 @@ def delete_document(doc_id: int, db: Session = Depends(get_db)):
 @app.post("/api/documents/bulk-download")
 def bulk_download_documents(body: BulkDownloadRequest, db: Session = Depends(get_db)):
     import zipfile as _zf
-    import re as _re
 
-    _person_ref_re = _re.compile(r"@\[([^\]]+)\]\(#pid-\d+\)")
-    _md_link_re    = _re.compile(r"\[([^\]]*)\]\([^)]*\)")
-
-    def _plain(text: str) -> str:
-        text = _person_ref_re.sub(r"\1", text)
-        text = _md_link_re.sub(r"\1", text)
-        return text.strip()
+    _plain = _plain_mentions
 
     docs = (
         db.query(DBDocument)
@@ -2593,9 +2777,11 @@ def bulk_download_documents(body: BulkDownloadRequest, db: Session = Depends(get
 
     docs_dir = _docs_dir()
 
-    # Build deduplicated archive filenames
+    # Build deduplicated archive filenames — the primary file of each document,
+    # then each of its extra files (every page of a scanned letter, etc.).
     used: dict[str, int] = {}
     archive_names: dict[int, str] = {}
+    extra_archive_names: dict[int, str] = {}
     for doc in docs:
         base = doc.filename or doc.stored_name
         if base not in used:
@@ -2605,6 +2791,15 @@ def bulk_download_documents(body: BulkDownloadRequest, db: Session = Depends(get
             used[base] += 1
             name, _, ext = base.rpartition(".")
             archive_names[doc.id] = f"{name} ({used[base]}).{ext}" if ext else f"{base} ({used[base]})"
+        for ef in sorted(doc.extra_files or [], key=lambda f: (f.sort_order, f.id)):
+            ef_base = ef.filename or ef.stored_name
+            if ef_base not in used:
+                used[ef_base] = 0
+                extra_archive_names[ef.id] = ef_base
+            else:
+                used[ef_base] += 1
+                ef_name, _, ef_ext = ef_base.rpartition(".")
+                extra_archive_names[ef.id] = f"{ef_name} ({used[ef_base]}).{ef_ext}" if ef_ext else f"{ef_base} ({used[ef_base]})"
 
     buf = io.BytesIO()
     with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED, allowZip64=True) as zf:
@@ -2616,6 +2811,10 @@ def bulk_download_documents(body: BulkDownloadRequest, db: Session = Depends(get
             file_path = docs_dir / doc.stored_name
             if file_path.exists():
                 zf.write(str(file_path), archive_names[doc.id])
+            for ef in sorted(doc.extra_files or [], key=lambda f: (f.sort_order, f.id)):
+                ef_path = docs_dir / ef.stored_name
+                if ef_path.exists():
+                    zf.write(str(ef_path), extra_archive_names[ef.id])
 
             if body.include_notes:
                 # ── Build index entry ─────────────────────────────────────
@@ -2636,7 +2835,7 @@ def bulk_download_documents(body: BulkDownloadRequest, db: Session = Depends(get
                 person_names = ", ".join(p.name or "(unnamed)" for p in persons) or "—"
 
                 lines: list[str] = []
-                title = doc.title or doc.filename
+                title = _plain_mentions(doc.title) or doc.filename
                 lines.append(f"[{i}] {title}")
                 lines.append("    " + "─" * max(len(title) + 4, 20))
                 if header_meta:
@@ -2644,15 +2843,17 @@ def bulk_download_documents(body: BulkDownloadRequest, db: Session = Depends(get
                 lines.append(f"    File:    {archive_names[doc.id]}")
                 lines.append(f"    Persons: {person_names}")
                 if doc.description:
-                    lines.append(f"    Description: {_plain(doc.description)}")
+                    lines.append(f"    Description: {_plain_markdown(doc.description)}")
 
                 # A text document's own [n] references live on the document,
                 # not on a note — list them so the .md in the ZIP is readable.
+                # The description field can carry its own [n] references too.
                 body_cites = sorted(doc.body_citations or [], key=lambda c: c.marker)
-                if body_cites:
+                desc_cites = sorted(doc.description_citations or [], key=lambda c: c.marker)
+                if body_cites or desc_cites:
                     lines.append("")
                     lines.append("    Sources:")
-                    for bc in body_cites:
+                    for bc in body_cites + desc_cites:
                         if bc.source:
                             label = bc.source.title
                             if bc.source.year:
@@ -2665,6 +2866,9 @@ def bulk_download_documents(body: BulkDownloadRequest, db: Session = Depends(get
 
                 if doc.body_images:
                     lines.append(f"    Photos:  {len(doc.body_images)} attached")
+                if doc.extra_files:
+                    extra_names = ", ".join(extra_archive_names[ef.id] for ef in doc.extra_files)
+                    lines.append(f"    Also:    {extra_names}")
 
                 notes = (
                     db.query(DBDocumentNote)
@@ -2790,7 +2994,9 @@ def promote_document_to_source(doc_id: int, body: PromoteToSourceRequest, db: Se
         elif d.mime_type == "application/pdf" or d.mime_type.startswith("image/"):
             inferred_type = "register"
     s = DBSource(
-        title=body.title or d.title or d.filename,
+        # The source's title is plain text everywhere it is shown, so the
+        # document's mention markup must not travel into it.
+        title=body.title or _plain_mentions(d.title) or d.filename,
         source_type=body.source_type or inferred_type,
         year=d.year,
         document_id=doc_id,

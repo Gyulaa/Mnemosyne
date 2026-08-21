@@ -8,6 +8,7 @@ import { useT } from '../SettingsContext'
 
 const LAST_PATH_KEY = 'organizer_scan_path'
 const SKIP_DUPES_KEY = 'organizer_skip_duplicates'
+const DUPE_BANNER_DISMISSED_AT_KEY = 'organizer_dupe_banner_dismissed_at'
 
 export default function ScanTab() {
   const t = useT()
@@ -24,6 +25,18 @@ export default function ScanTab() {
   const [importResult, setImportResult] = useState<{ count: number; message: string } | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [showDupeReview, setShowDupeReview] = useState(false)
+  // Dismissing hides the banner at its current count; a later scan that finds
+  // more duplicates than that surfaces it again rather than staying silent.
+  // Persisted — the tab unmounts on every navigation away, so component state
+  // alone forgets the dismissal the moment the user switches tabs and back.
+  const [dupeBannerDismissedAt, setDupeBannerDismissedAtState] = useState(() => {
+    const saved = parseInt(localStorage.getItem(DUPE_BANNER_DISMISSED_AT_KEY) ?? '')
+    return Number.isFinite(saved) ? saved : 0
+  })
+  function setDupeBannerDismissedAt(n: number) {
+    setDupeBannerDismissedAtState(n)
+    localStorage.setItem(DUPE_BANNER_DISMISSED_AT_KEY, String(n))
+  }
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const qc = useQueryClient()
@@ -239,7 +252,7 @@ export default function ScanTab() {
             <StatCard label={t('scan.facesFound')} value={stats.total_faces} />
             <StatCard label={t('scan.pending')} value={stats.pending} />
           </div>
-          {(stats.duplicates ?? 0) > 0 && (
+          {(stats.duplicates ?? 0) > dupeBannerDismissedAt && (
             <div
               className="flex items-center gap-4 px-4 py-3 rounded-xl"
               style={{ background: 'rgba(251,191,36,0.07)', border: '1px solid rgba(251,191,36,0.18)' }}
@@ -263,6 +276,15 @@ export default function ScanTab() {
                   {t('scan.dupeReview')}
                 </button>
               )}
+              <button
+                onClick={() => setDupeBannerDismissedAt(stats.duplicates ?? 0)}
+                title={t('app.dismiss')}
+                className="w-6 h-6 flex items-center justify-center rounded-lg text-amber-400/70 hover:text-amber-200 hover:bg-amber-400/10 transition-colors shrink-0"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
           )}
         </section>

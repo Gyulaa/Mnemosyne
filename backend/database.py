@@ -135,6 +135,7 @@ class Document(Base):
     title = Column(String, nullable=True)
     doc_type = Column(String, nullable=True)        # key from document_types
     year = Column(Integer, nullable=True)
+    date = Column(String, nullable=True)   # ISO partial: "YYYY" | "YYYY-MM" | "YYYY-MM-DD"
     description = Column(String, nullable=True)
     created_at = Column(String, nullable=True)      # ISO timestamp
     is_private = Column(Boolean, nullable=False, default=False, server_default="0")
@@ -147,6 +148,8 @@ class Document(Base):
     document_notes = relationship("DocumentNote", back_populates="document", cascade="all, delete-orphan")
     body_citations = relationship("DocumentCitation", back_populates="document", cascade="all, delete-orphan")
     body_images = relationship("DocumentImage", back_populates="document", cascade="all, delete-orphan")
+    extra_files = relationship("DocumentFile", back_populates="document", cascade="all, delete-orphan")
+    description_citations = relationship("DocumentDescriptionCitation", back_populates="document", cascade="all, delete-orphan")
 
 
 class DocumentCitation(Base):
@@ -166,6 +169,25 @@ class DocumentCitation(Base):
     source = relationship("Source")
 
 
+class DocumentDescriptionCitation(Base):
+    """A [n] reference inside a document's `description` field.
+
+    Every document has a description, not just text documents, so this is
+    kept separate from DocumentCitation (which is scoped to the Markdown
+    body of an in-app text document) rather than reusing it under a
+    discriminator column.
+    """
+    __tablename__ = "document_description_citations"
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True)
+    marker = Column(Integer, nullable=False)
+    detail = Column(String, nullable=True)
+    custom_label = Column(String, nullable=True)
+    document = relationship("Document", back_populates="description_citations")
+    source = relationship("Source")
+
+
 class DocumentImage(Base):
     """A photo from the library attached to a text document."""
     __tablename__ = "document_images"
@@ -177,6 +199,25 @@ class DocumentImage(Base):
     document = relationship("Document", back_populates="body_images")
     image = relationship("Image")
     __table_args__ = (UniqueConstraint("document_id", "image_id", name="uq_document_image"),)
+
+
+class DocumentFile(Base):
+    """An extra file on a document beyond its primary one.
+
+    A single upload action can bring in several files at once — every page of
+    a scanned letter, front and back of a certificate — that all belong to one
+    document record rather than becoming one document each. The first file
+    stays the row's own stored_name/filename/mime_type as before; the rest
+    live here, ordered the way they were uploaded.
+    """
+    __tablename__ = "document_files"
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    stored_name = Column(String, nullable=False)
+    filename = Column(String, nullable=False)
+    mime_type = Column(String, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    document = relationship("Document", back_populates="extra_files")
 
 
 class DocumentPerson(Base):
@@ -842,6 +883,59 @@ def init_db_schema(engine):
             conn.commit()
             _drop_document_owner_not_null(conn.connection.dbapi_connection)
             conn.execute(text("UPDATE schema_version SET version = 8"))
+            conn.commit()
+
+        # v8 → v9: documents.date — a partial date (YYYY | YYYY-MM | YYYY-MM-DD)
+        # alongside the existing year, mirroring events.date/events.year so a
+        # document can record a month and day without losing year-based
+        # sorting and filtering.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 9:
+            try:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN date TEXT"))
+            except Exception:
+                pass
+            conn.execute(text("UPDATE schema_version SET version = 9"))
+            conn.commit()
+
+        # v9 → v10: document_files — a document created from several files at
+        # once (every page of a scanned letter, front and back of a
+        # certificate) keeps its first file as the row's own stored_name as
+        # before; the rest live in this table.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 10:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS document_files (
+                    id          INTEGER PRIMARY KEY,
+                    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    stored_name TEXT NOT NULL,
+                    filename    TEXT NOT NULL,
+                    mime_type   TEXT,
+                    sort_order  INTEGER NOT NULL DEFAULT 0
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_document_files_document_id ON document_files(document_id)"))
+            conn.execute(text("UPDATE schema_version SET version = 10"))
+            conn.commit()
+
+        # v10 → v11: document_description_citations — [n] references inside a
+        # document's `description` field, kept separate from document_citations
+        # (the in-app text document's Markdown body) since every document has
+        # a description, not just text documents.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 11:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS document_description_citations (
+                    id           INTEGER PRIMARY KEY,
+                    document_id  INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    source_id    INTEGER REFERENCES sources(id) ON DELETE CASCADE,
+                    marker       INTEGER NOT NULL,
+                    detail       TEXT,
+                    custom_label TEXT
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_document_description_citations_document_id ON document_description_citations(document_id)"))
+            conn.execute(text("UPDATE schema_version SET version = 11"))
             conn.commit()
 
 

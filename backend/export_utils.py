@@ -98,9 +98,9 @@ def _delete_images(conn: sqlite3.Connection, keep_subquery: str) -> None:
 def _delete_document_children(conn: sqlite3.Connection, where_clause: str) -> None:
     """Remove rows hanging off documents matched by where_clause (on document_id).
 
-    Tables added in schema v6, so tolerate their absence in older export inputs.
+    Tables added in schema v6/v10/v11, so tolerate their absence in older export inputs.
     """
-    for table in ("document_citations", "document_images"):
+    for table in ("document_citations", "document_images", "document_files", "document_description_citations"):
         try:
             conn.execute(f"DELETE FROM {table} WHERE {where_clause}")
         except sqlite3.OperationalError:
@@ -432,7 +432,10 @@ def create_project_zip(
             doc_conn = sqlite3.connect(str(tmp_db))
             try:
                 doc_stored_names = [
-                    r[0] for r in doc_conn.execute("SELECT stored_name FROM documents").fetchall()
+                    r[0] for r in doc_conn.execute(
+                        "SELECT stored_name FROM documents "
+                        "UNION ALL SELECT stored_name FROM document_files"
+                    ).fetchall()
                 ]
             finally:
                 doc_conn.close()
@@ -536,7 +539,10 @@ def stream_project_zip(
                             doc_conn = sqlite3.connect(str(tmp_db))
                             try:
                                 doc_stored_names = [
-                                    r[0] for r in doc_conn.execute("SELECT stored_name FROM documents").fetchall()
+                                    r[0] for r in doc_conn.execute(
+                                        "SELECT stored_name FROM documents "
+                                        "UNION ALL SELECT stored_name FROM document_files"
+                                    ).fetchall()
                                 ]
                             finally:
                                 doc_conn.close()

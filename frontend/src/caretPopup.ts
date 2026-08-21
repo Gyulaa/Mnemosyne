@@ -1,10 +1,11 @@
 /**
- * Positioning for popups that belong to the caret of a `<textarea>` — the `@`
- * mention pickers in the note and document editors.
+ * Positioning for popups that belong to the caret of a `<textarea>` or a
+ * single-line `<input>` — the `@` mention pickers in the note, document and
+ * title fields.
  *
- * A textarea gives no caret coordinates, so `caretAnchor()` measures them the
- * usual way: an off-screen div styled exactly like the textarea, holding the
- * text up to the caret, with the rest in a span whose offset is the caret.
+ * Neither element gives caret coordinates, so `caretAnchor()` measures them the
+ * usual way: an off-screen div styled exactly like the field, holding the text
+ * up to the caret, with the rest in a span whose offset is the caret.
  *
  * `useCaretPopup()` then places the popup below that line, flipping it above
  * when the space below is too small and clamping it to the viewport either way.
@@ -28,31 +29,41 @@ const MIRROR_PROPS = [
 ] as const
 
 /** Viewport rect of the caret's line: its top, its bottom, and its x. */
-export function caretAnchor(ta: HTMLTextAreaElement, index: number): CaretAnchor {
-  const cs = getComputedStyle(ta)
-  const rect = ta.getBoundingClientRect()
+export function caretAnchor(field: HTMLTextAreaElement | HTMLInputElement, index: number): CaretAnchor {
+  const cs = getComputedStyle(field)
+  const rect = field.getBoundingClientRect()
+  // An `<input>` never wraps and is always one line, which changes both how the
+  // mirror is measured and what the caret's "line" is.
+  const singleLine = field.tagName === 'INPUT'
 
   const mirror = document.createElement('div')
   for (const prop of MIRROR_PROPS) mirror.style[prop] = cs[prop]
   // Force content-box and give it the computed *content* width, so the mirror
   // wraps at the same column whatever box model the textarea itself uses.
   mirror.style.boxSizing = 'content-box'
-  mirror.style.width = cs.width
   mirror.style.height = 'auto'
   mirror.style.position = 'absolute'
   mirror.style.top = '0'
   mirror.style.left = '-9999px'
   mirror.style.visibility = 'hidden'
-  mirror.style.whiteSpace = 'pre-wrap'
-  mirror.style.overflowWrap = 'break-word'
+  if (singleLine) {
+    // Constraining the width would wrap text an input scrolls instead, putting
+    // the caret on an imaginary second line.
+    mirror.style.width = 'auto'
+    mirror.style.whiteSpace = 'pre'
+  } else {
+    mirror.style.width = cs.width
+    mirror.style.whiteSpace = 'pre-wrap'
+    mirror.style.overflowWrap = 'break-word'
+  }
   // A scrollbar on the mirror would narrow it and move every wrap point.
   mirror.style.overflow = 'hidden'
 
-  mirror.textContent = ta.value.slice(0, index)
+  mirror.textContent = field.value.slice(0, index)
   const marker = document.createElement('span')
   // A trailing newline collapses without something after it, and an empty span
   // has no box to measure.
-  marker.textContent = ta.value.slice(index) || '.'
+  marker.textContent = field.value.slice(index) || '.'
   mirror.appendChild(marker)
 
   document.body.appendChild(mirror)
@@ -62,16 +73,19 @@ export function caretAnchor(ta: HTMLTextAreaElement, index: number): CaretAnchor
 
   const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2
   // Offsets run from the mirror's padding edge, so the borders are still ours
-  // to add — `rect` starts at the textarea's outer border edge.
+  // to add — `rect` starts at the field's outer border edge.
   const borderTop = parseFloat(cs.borderTopWidth) || 0
   const borderLeft = parseFloat(cs.borderLeftWidth) || 0
   // A caret scrolled out of the field would drag the popup with it; keep it
   // alongside the visible part instead.
-  const top = Math.min(Math.max(rect.top + borderTop + offsetTop - ta.scrollTop, rect.top), rect.bottom)
+  const top = singleLine
+    ? rect.top
+    : Math.min(Math.max(rect.top + borderTop + offsetTop - field.scrollTop, rect.top), rect.bottom)
   return {
     top,
-    bottom: Math.min(top + lineHeight, rect.bottom),
-    left: rect.left + borderLeft + offsetLeft - ta.scrollLeft,
+    // An input's one line *is* the field, whatever its padding does vertically.
+    bottom: singleLine ? rect.bottom : Math.min(top + lineHeight, rect.bottom),
+    left: rect.left + borderLeft + offsetLeft - field.scrollLeft,
   }
 }
 

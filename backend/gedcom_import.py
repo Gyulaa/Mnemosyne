@@ -818,10 +818,14 @@ def execute_rollback(db_path: Path, docs_dir: Path) -> Optional[dict]:
 
     # 1. Delete created persons (manual cascade — SQLAlchemy ORM not available here)
     for pid in data.get('created_person_ids', []):
-        # Collect document files before deletion
-        doc_rows = conn.execute("SELECT stored_name FROM documents WHERE person_id = ?", (pid,)).fetchall()
+        # Collect document files before deletion — the primary file on the
+        # document row itself, and any extra files (document_files) it holds.
+        doc_rows = conn.execute("SELECT id, stored_name FROM documents WHERE person_id = ?", (pid,)).fetchall()
         for row in doc_rows:
-            _try_delete_file(docs_dir / row[0])
+            _try_delete_file(docs_dir / row['stored_name'])
+            for f_row in conn.execute("SELECT stored_name FROM document_files WHERE document_id = ?", (row['id'],)).fetchall():
+                _try_delete_file(docs_dir / f_row['stored_name'])
+            conn.execute("DELETE FROM document_files WHERE document_id = ?", (row['id'],))
 
         conn.execute("DELETE FROM note_citations WHERE note_id IN (SELECT id FROM person_notes WHERE person_id = ?)", (pid,))
         conn.execute("DELETE FROM person_notes WHERE person_id = ?", (pid,))
@@ -862,6 +866,9 @@ def execute_rollback(db_path: Path, docs_dir: Path) -> Optional[dict]:
     # 5. Delete documents added to merged persons
     for doc_info in data.get('added_documents', []):
         _try_delete_file(docs_dir / doc_info['stored_name'])
+        for f_row in conn.execute("SELECT stored_name FROM document_files WHERE document_id = ?", (doc_info['id'],)).fetchall():
+            _try_delete_file(docs_dir / f_row['stored_name'])
+        conn.execute("DELETE FROM document_files WHERE document_id = ?", (doc_info['id'],))
         cur = conn.execute("DELETE FROM documents WHERE id = ?", (doc_info['id'],))
         if cur.rowcount:
             deleted['documents'] += 1

@@ -168,6 +168,7 @@ class TextDocumentCreate(BaseModel):
     title: Optional[str] = None
     doc_type: Optional[str] = "other"
     year: Optional[int] = None
+    date: Optional[str] = None    # ISO partial
     description: Optional[str] = None
     content: str = ''
     person_ids: list[int] = []

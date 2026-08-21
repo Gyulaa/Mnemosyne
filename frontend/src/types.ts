@@ -220,6 +220,14 @@ export interface DocumentImageRef {
   sort_order: number
 }
 
+/** An extra file on a document beyond its primary one — e.g. page 2 of a scanned letter. */
+export interface DocumentFileRef {
+  id: number
+  filename: string
+  mime_type: string | null
+  sort_order: number
+}
+
 export interface PersonDocument {
   id: number
   /** Original single owner; null when the document belongs to no one. See `persons`. */
@@ -230,6 +238,8 @@ export interface PersonDocument {
   title: string | null
   doc_type: string | null
   year: number | null
+  /** ISO partial: "YYYY" | "YYYY-MM" | "YYYY-MM-DD" — the document's own date, kept in sync with `year`. */
+  date: string | null
   description: string | null
   created_at: string | null
   is_private: boolean
@@ -241,6 +251,10 @@ export interface PersonDocument {
   citations: NoteCitation[]
   /** Library photos attached to the body — text documents only. */
   images: DocumentImageRef[]
+  /** Extra files beyond the primary one, from a multi-file upload. */
+  files: DocumentFileRef[]
+  /** [n] references in the `description` field. */
+  description_citations: NoteCitation[]
 }
 
 export interface DocumentType {

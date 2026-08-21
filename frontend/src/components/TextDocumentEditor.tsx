@@ -18,22 +18,11 @@ import type {
   PersonDocument, PersonFull, DocumentType, Source, NoteCitation, ImageItem, ImagesPage,
 } from '../types'
 import { useT, useSettings, displayPersonName } from '../SettingsContext'
-import { personMatches, FamilyContextLines, personLifeSummary } from '../familyContext'
-import { caretAnchor, useCaretPopup, type CaretAnchor } from '../caretPopup'
+import { useAtMention } from '../mentions'
 import { usePersonDirectory, PersonMultiSelect } from './PersonSelect'
-import { renderMarkdown } from '../markdown'
+import { DatePartPicker } from './EventTimeline'
+import { renderMarkdown, plainMentions } from '../markdown'
 import { docTypeLabel } from '../docTypes'
-
-// ── @ mention helper ──────────────────────────────────────────────────────────
-
-function getAtMentionContext(text: string, cursorPos: number): { query: string; atStart: number } | null {
-  const before = text.slice(0, cursorPos)
-  const idx = before.lastIndexOf('@')
-  if (idx === -1) return null
-  const afterAt = before.slice(idx)
-  if (afterAt.includes('[') || afterAt.includes('\n')) return null
-  return { query: before.slice(idx + 1), atStart: idx }
-}
 
 function ToolbarBtn({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) {
   return (
@@ -145,7 +134,7 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
   const isNew = !doc
   const [title, setTitle]             = useState(doc?.title ?? '')
   const [docType, setDocType]         = useState(doc?.doc_type ?? 'other')
-  const [year, setYear]               = useState(doc?.year ? String(doc.year) : '')
+  const [date, setDate]               = useState(doc?.date ?? (doc?.year ? String(doc.year) : ''))
   const [description, setDescription] = useState(doc?.description ?? '')
   const [content, setContent]         = useState('')
   const [personIds, setPersonIds]     = useState<Set<number>>(
@@ -168,10 +157,6 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
   const [customCiteText, setCustomCiteText] = useState('')
 
   // @ mention
-  const [mentionCtx, setMentionCtx] = useState<{ query: string; atStart: number } | null>(null)
-  const [mentionCursor, setMentionCursor] = useState(0)
-  const [mentionPos, setMentionPos] = useState<CaretAnchor | null>(null)
-  const mentionPopup = useCaretPopup(mentionPos)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -196,49 +181,34 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
     setCitations(prev => prev.filter(c => content.includes(`[${c.marker}]`)))
   }, [content])
 
-  const mentionMatches = useMemo(() => {
-    if (!mentionCtx) return []
-    return persons.filter(p => personMatches(p, mentionCtx.query, nameOrder)).slice(0, 8)
-  }, [mentionCtx, persons, nameOrder])
-
-  useEffect(() => { setMentionCursor(0) }, [mentionMatches])
-
   // ── editing helpers ────────────────────────────────────────────────────────
 
-  function handleContentChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
-    const val = e.target.value
-    setContent(val)
-    const pos = e.target.selectionStart ?? val.length
-    const ctx = getAtMentionContext(val, pos)
-    setMentionCtx(ctx)
-    setMentionPos(ctx ? caretAnchor(e.target, pos) : null)
-  }
-
-  function insertMention(person: PersonFull) {
+  const mention = useAtMention((person, ctx) => {
     const ta = textareaRef.current
-    if (!ta || !mentionCtx) return
+    if (!ta) return
     const name = displayPersonName(person, nameOrder) || `Person ${person.id}`
     const link = `@[${name}](#pid-${person.id})`
-    const next = content.slice(0, mentionCtx.atStart) + link + content.slice(ta.selectionStart)
-    setContent(next)
+    setContent(content.slice(0, ctx.atStart) + link + content.slice(ta.selectionStart))
     // Mentioning someone is the same statement as linking them, so the sidebar
     // follows along. Deliberately one-way: removing the mention from the text
     // leaves the link, which is what an X in the picker is for.
     setPersonIds(prev => prev.has(person.id) ? prev : new Set(prev).add(person.id))
-    setMentionCtx(null)
+    mention.close()
     requestAnimationFrame(() => {
-      const pos = mentionCtx.atStart + link.length
+      const pos = ctx.atStart + link.length
       ta.selectionStart = ta.selectionEnd = pos
       ta.focus()
     })
+  })
+
+  function handleContentChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const val = e.target.value
+    setContent(val)
+    mention.sync(e.target, val, e.target.selectionStart ?? val.length)
   }
 
   function handleTextareaKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (!mentionCtx || mentionMatches.length === 0) return
-    if (e.key === 'ArrowDown')      { e.preventDefault(); setMentionCursor(c => Math.min(c + 1, mentionMatches.length - 1)) }
-    else if (e.key === 'ArrowUp')   { e.preventDefault(); setMentionCursor(c => Math.max(c - 1, 0)) }
-    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); insertMention(mentionMatches[mentionCursor]) }
-    else if (e.key === 'Escape')    { e.preventDefault(); setMentionCtx(null) }
+    mention.handleKeyDown(e)
   }
 
   function nextMarker() {
@@ -367,7 +337,7 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
       const meta = {
         title: title.trim() || undefined,
         doc_type: docType || 'other',
-        year: year ? parseInt(year) : undefined,
+        date: date || undefined,
         description: description.trim() || undefined,
       }
 
@@ -376,7 +346,9 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
         await api.documents.update(doc.id, {
           title: meta.title ?? null,
           doc_type: meta.doc_type,
-          year: meta.year ?? null,
+          date: meta.date ?? null,
+          // Omitted when a date is set — the backend derives year from it, as events do.
+          year: meta.date ? undefined : null,
           description: meta.description ?? null,
         })
         await api.documents.saveText(doc.id, content)
@@ -433,7 +405,7 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
 
   const citeableDocs = allDocs
     .filter(d => d.id !== doc?.id)
-    .filter(d => (d.title || d.filename).toLowerCase().includes(citeSearch.toLowerCase()))
+    .filter(d => plainMentions(d.title || d.filename).toLowerCase().includes(citeSearch.toLowerCase()))
     .slice(0, 40)
 
   const citeableSources = sources
@@ -477,8 +449,7 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
                     {types.map(dt => <option key={dt.key} value={dt.key}>{docTypeLabel(t, dt.key, dt.label)}</option>)}
                     {types.length === 0 && <option value="other">{t('person.docFallback')}</option>}
                   </select>
-                  <input type="number" value={year} onChange={e => setYear(e.target.value)} placeholder={t('docs.yearPh')}
-                    className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
+                  <DatePartPicker value={date} onChange={setDate} />
                 </div>
               </div>
 
@@ -532,7 +503,7 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
                               ) : citeableDocs.map(d => (
                                 <button key={d.id} type="button" onClick={() => citeDocument(d)}
                                   className="w-full text-left px-3 py-2 hover:bg-zinc-800 transition-colors">
-                                  <p className="text-xs text-zinc-100 truncate">{d.title || d.filename}</p>
+                                  <p className="text-xs text-zinc-100 truncate">{plainMentions(d.title || d.filename)}</p>
                                   <p className="text-xs text-zinc-500">
                                     {[docTypeLabel(t, d.doc_type, undefined), d.year].filter(Boolean).join(' · ')}
                                   </p>
@@ -682,7 +653,7 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
                 <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.descPh')}</p>
                 <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
                   placeholder={t('textDoc.descHint')}
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 resize-none" />
+                  className="w-full min-h-[72px] max-h-[50vh] bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 resize-y" />
               </div>
             </div>
           </div>
@@ -702,37 +673,7 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
         </div>
       </div>
 
-      {/* @ mention dropdown */}
-      {mentionCtx !== null && mentionMatches.length > 0 && mentionPos !== null && createPortal(
-        <div
-          ref={mentionPopup.ref}
-          style={{ ...mentionPopup.style, zIndex: 9999, width: 288 }}
-          className="bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl overflow-hidden"
-        >
-          <p className="px-3 pt-2 pb-1 text-xs font-semibold text-zinc-600 uppercase tracking-wider">
-            {t('textDoc.mentionPerson')}
-          </p>
-          <div className="max-h-64 overflow-y-auto">
-            {mentionMatches.map((p, i) => {
-              const active = i === mentionCursor
-              const bio = personLifeSummary(p)
-              return (
-                <button key={p.id} type="button"
-                  onMouseDown={e => { e.preventDefault(); insertMention(p) }}
-                  onMouseEnter={() => setMentionCursor(i)}
-                  className={`w-full text-left px-3 py-2 transition-all ${active ? 'bg-zinc-800' : 'hover:bg-zinc-800/60'}`}>
-                  <p className={`text-xs font-medium ${active ? 'text-zinc-100' : 'text-zinc-200'}`}>
-                    {displayPersonName(p, nameOrder)}
-                  </p>
-                  {bio && <p className="text-xs text-zinc-500 mt-0.5 truncate">{bio}</p>}
-                  {active && <FamilyContextLines fam={familyMap.get(p.id)} />}
-                </button>
-              )
-            })}
-          </div>
-        </div>,
-        document.body,
-      )}
+      {mention.popup}
 
       {showPhotoPicker && (
         <PhotoPickerModal

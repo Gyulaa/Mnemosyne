@@ -1,20 +1,32 @@
 import { useState, useRef, useEffect, useMemo, forwardRef } from 'react'
-import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
-import type { PersonDocument, PersonFull, DocumentType, DocumentPersonRef } from '../types'
+import type { PersonDocument, PersonFull, DocumentType, DocumentPersonRef, NoteCitation } from '../types'
 import DocumentViewer from './DocumentViewer'
 import TextDocumentEditor from './TextDocumentEditor'
 import { PersonMultiSelect, PersonFilterCombobox, usePersonDirectory } from './PersonSelect'
+import { DatePartPicker } from './EventTimeline'
 import { useT, useSettings, displayPersonName } from '../SettingsContext'
-import type { useFamilyContext } from '../familyContext'
+import { type useFamilyContext } from '../familyContext'
 import { docTypeLabel } from '../docTypes'
+import { useAtMention } from '../mentions'
+import { plainMentions, plainMarkdown, renderTitleMentions } from '../markdown'
+import { DescriptionField, persistDescriptionCitations } from './DescriptionField'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function isImage(mime: string | null) { return mime?.startsWith('image/') ?? false }
 function isPdf(mime: string | null)   { return mime === 'application/pdf' }
 function isAudio(mime: string | null) { return mime?.startsWith('audio/') ?? false }
+function isVideo(mime: string | null) { return mime?.startsWith('video/') ?? false }
+
+type SortMode = 'recent' | 'title_asc' | 'title_desc' | 'date_newest' | 'date_oldest'
+
+/** Best available date for sorting: the document's own partial date, else its year. */
+function docSortYear(d: PersonDocument): number {
+  if (d.date) { const y = parseInt(d.date.split('-')[0]); if (Number.isFinite(y)) return y }
+  return d.year ?? Number.NaN
+}
 
 /** Display name for a linked-person stub, in the user's configured name order. */
 function refName(p: DocumentPersonRef, order: 'en' | 'hu', fallback = '(unnamed)') {
@@ -40,6 +52,11 @@ function fileIcon(mime: string | null, isText = false) {
   if (isAudio(mime)) return (
     <svg className="w-5 h-5 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V2.25L9 5.25v10.303m0 0v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 01-.99-3.467l2.31-.66A2.25 2.25 0 009 15.553z"/>
+    </svg>
+  )
+  if (isVideo(mime)) return (
+    <svg className="w-5 h-5 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-2.36a.75.75 0 011.03.671v10.378a.75.75 0 01-1.03.671L15.75 17.5M4.5 6.75h9a1.5 1.5 0 011.5 1.5v9a1.5 1.5 0 01-1.5 1.5h-9a1.5 1.5 0 01-1.5-1.5v-9a1.5 1.5 0 011.5-1.5z"/>
     </svg>
   )
   return (
@@ -255,6 +272,67 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
   )
 }
 
+// ── TitleField ───────────────────────────────────────────────────────────────
+
+/**
+ * A document title with the same inline `@` mention picker every other text
+ * field has — type `@`, pick a person, and `@[Name](#pid-N)` replaces the `@…`
+ * while they are linked to the document.
+ *
+ * The stored markup is identical to a Markdown body's, so the mention stays a
+ * real reference to a person rather than a name that merely looks like one:
+ * it survives a rename, renders as a clickable link, and tells the assistant
+ * who the document is about. Everywhere a title has to be flat text — a
+ * filename, an `alt`, a GEDCOM `TITL` — it goes through `plainMentions()`.
+ * Linking stays one-way, as everywhere else: deleting the mention again does
+ * not unlink the person.
+ */
+function TitleField({ value, onChange, onMentionPerson }: {
+  value: string
+  onChange: (next: string) => void
+  onMentionPerson: (person: PersonFull) => void
+}) {
+  const t = useT()
+  const { nameOrder } = useSettings()
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const mention = useAtMention((person, ctx) => {
+    const input = inputRef.current
+    if (!input) return
+    const name = displayPersonName(person, nameOrder) || `Person ${person.id}`
+    const link = `@[${name}](#pid-${person.id})`
+    onChange(value.slice(0, ctx.atStart) + link + value.slice(input.selectionStart ?? value.length))
+    onMentionPerson(person)
+    mention.close()
+    requestAnimationFrame(() => {
+      const pos = ctx.atStart + link.length
+      input.selectionStart = input.selectionEnd = pos
+      input.focus()
+    })
+  })
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        value={value}
+        onChange={e => {
+          onChange(e.target.value)
+          mention.sync(e.target, e.target.value, e.target.selectionStart ?? e.target.value.length)
+        }}
+        onKeyDown={e => { mention.handleKeyDown(e) }}
+        // The list closes itself on pick via onMouseDown/preventDefault, so a
+        // real blur here means the field was genuinely left.
+        onBlur={() => mention.close()}
+        placeholder={t('docs.titlePh')}
+        title={t('docs.mentionPersonInTitle')}
+        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
+      />
+      {mention.popup}
+    </>
+  )
+}
+
 // ── UploadModal ───────────────────────────────────────────────────────────────
 
 function UploadModal({ persons, familyMap, types, onClose, onDone }: {
@@ -266,12 +344,14 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
 }) {
   const t = useT()
   const qc = useQueryClient()
+  const { nameOrder } = useSettings()
   const fileRef = useRef<HTMLInputElement>(null)
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
   const [title, setTitle] = useState('')
   const [docType, setDocType] = useState(types[0]?.key ?? 'other')
-  const [year, setYear] = useState('')
+  const [date, setDate] = useState('')
   const [description, setDescription] = useState('')
+  const [descCitations, setDescCitations] = useState<NoteCitation[]>([])
   const [selectedPersonIds, setSelectedPersonIds] = useState<number[]>([])
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -281,16 +361,30 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
     setSelectedPersonIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
   const selectedPersonIdSet = useMemo(() => new Set(selectedPersonIds), [selectedPersonIds])
 
+  function addFiles(list: FileList | File[]) {
+    const incoming = Array.from(list)
+    setFiles(prev => [...prev, ...incoming.filter(f => !prev.some(p => p.name === f.name && p.size === f.size))])
+  }
+  function removeFile(idx: number) {
+    setFiles(prev => prev.filter((_, i) => i !== idx))
+  }
+
   async function submit() {
-    if (!file || uploading) return
+    if (files.length === 0 || uploading) return
     setUploading(true); setErr(null)
     try {
-      await api.documents.upload(selectedPersonIds, file, {
+      // Every selected file becomes one document — the first is its primary
+      // file, the rest are attached alongside it (e.g. each page of a
+      // scanned letter uploaded together).
+      const created = await api.documents.upload(selectedPersonIds, files, {
         title: title.trim() || undefined,
         doc_type: docType || undefined,
-        year: year ? parseInt(year) : undefined,
+        date: date || undefined,
         description: description.trim() || undefined,
       })
+      // Citations can only be written once the document has an id, so the ones
+      // added while composing are held optimistically and flushed here.
+      if (descCitations.length > 0) await persistDescriptionCitations(created.id, [], descCitations)
       qc.invalidateQueries({ queryKey: ['docs-all'] })
       for (const pid of selectedPersonIds) qc.invalidateQueries({ queryKey: ['person-docs', pid] })
       onDone()
@@ -320,38 +414,54 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
           <div
             onDragOver={e => { e.preventDefault(); setDragOver(true) }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) setFile(f) }}
+            onDrop={e => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files) }}
             onClick={() => fileRef.current?.click()}
             className={`border-2 border-dashed rounded-xl px-4 py-5 text-center cursor-pointer transition-colors ${dragOver ? 'border-brand-400 bg-brand-500/10' : 'border-zinc-700 hover:border-zinc-500'}`}
           >
-            <input ref={fileRef} type="file" className="hidden" onChange={e => setFile(e.target.files?.[0] ?? null)} />
-            {file ? (
-              <div className="flex items-center justify-center gap-2">
-                {fileIcon(file.type)}
-                <span className="text-xs text-zinc-200 truncate max-w-xs">{file.name}</span>
-              </div>
+            <input ref={fileRef} type="file" multiple className="hidden"
+              onChange={e => { if (e.target.files?.length) addFiles(e.target.files); e.target.value = '' }} />
+            {files.length > 0 ? (
+              <p className="text-xs text-zinc-300">{t('docs.filesSelected', { n: files.length })} <span className="text-zinc-500">— {t('docs.addMoreFiles')}</span></p>
             ) : (
               <p className="text-xs text-zinc-500">{t('docs.dropHint')}</p>
             )}
           </div>
 
-          {/* Metadata */}
-          <input value={title} onChange={e => setTitle(e.target.value)} placeholder={t('docs.titlePh')}
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
+          {files.length > 0 && (
+            <ul className="space-y-1 max-h-32 overflow-y-auto">
+              {files.map((f, i) => (
+                <li key={`${f.name}-${f.size}-${i}`} className="flex items-center gap-2 bg-zinc-800/60 border border-zinc-700/60 rounded-lg px-2.5 py-1.5">
+                  {fileIcon(f.type)}
+                  <span className="text-xs text-zinc-200 truncate flex-1">{f.name}</span>
+                  <button onClick={e => { e.stopPropagation(); removeFile(i) }} title={t('docs.removeFile')}
+                    className="shrink-0 w-5 h-5 rounded flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-zinc-700 transition-colors">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
 
-          <div className="flex gap-2">
+          {/* Metadata */}
+          <TitleField value={title} onChange={setTitle}
+            onMentionPerson={p => setSelectedPersonIds(ids => ids.includes(p.id) ? ids : [...ids, p.id])} />
+
+          <div className="flex flex-wrap gap-2 items-center">
             <select value={docType} onChange={e => setDocType(e.target.value)}
               className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 outline-none focus:border-brand-400">
               {types.map(dt => <option key={dt.key} value={dt.key}>{docTypeLabel(t, dt.key, dt.label)}</option>)}
               {types.length === 0 && <option value="other">{t('person.docFallback')}</option>}
             </select>
-            <input type="number" value={year} onChange={e => setYear(e.target.value)} placeholder={t('docs.yearPh')}
-              className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
+            <DatePartPicker value={date} onChange={setDate} />
           </div>
 
-          <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder={t('docs.descPh')}
-            rows={2}
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 resize-none" />
+          <DescriptionField
+            docId={null}
+            value={description} onChange={setDescription}
+            citations={descCitations} onCitationsChange={setDescCitations}
+            onMentionPerson={p => setSelectedPersonIds(ids => ids.includes(p.id) ? ids : [...ids, p.id])}
+            className="w-full min-h-[96px] max-h-[40vh] bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 resize-y leading-relaxed"
+          />
 
           {/* Person selection */}
           <div>
@@ -372,7 +482,7 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
         </div>
 
         <div className="shrink-0 px-5 py-4 border-t border-zinc-800 flex gap-2">
-          <button onClick={submit} disabled={!file || uploading}
+          <button onClick={submit} disabled={files.length === 0 || uploading}
             className="flex-1 h-9 rounded-xl bg-brand-600 hover:bg-brand-500 disabled:opacity-40 text-white text-sm font-medium transition-colors flex items-center justify-center gap-2">
             {uploading ? (
               <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>{t('docs.uploading')}</>
@@ -396,18 +506,32 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
 }) {
   const t = useT()
   const qc = useQueryClient()
+  const { nameOrder } = useSettings()
   const [title, setTitle]           = useState(doc.title ?? '')
   const [docType, setDocType]       = useState(doc.doc_type ?? 'other')
-  const [year, setYear]             = useState(doc.year ? String(doc.year) : '')
+  const [date, setDate]             = useState(doc.date ?? (doc.year ? String(doc.year) : ''))
   const [description, setDescription] = useState(doc.description ?? '')
+  const [descCitations, setDescCitations] = useState(doc.description_citations ?? [])
   const [linkedIds, setLinkedIds]   = useState(() => new Set(doc.persons.map(p => p.id)))
+  const [extraFiles, setExtraFiles] = useState(doc.files)
   const [saving, setSaving]         = useState(false)
+
+  // What the description's citations were when the modal opened — the save
+  // below writes the difference, not the whole set. Person links need no such
+  // baseline here: `togglePerson` already persists each one as it happens.
+  const initialCitations = useRef(doc.description_citations ?? []).current
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [onClose])
+
+  async function removeExtraFile(fileId: number) {
+    const updated = await api.documents.removeFile(doc.id, fileId)
+    setExtraFiles(updated.files)
+    qc.invalidateQueries({ queryKey: ['docs-all'] })
+  }
 
   async function togglePerson(personId: number) {
     const wasLinked = linkedIds.has(personId)
@@ -429,9 +553,12 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
       await api.documents.update(doc.id, {
         title: title.trim() || null,
         doc_type: docType,
-        year: year ? parseInt(year) : null,
+        date: date || null,
+        // Omitted when a date is set — the backend derives year from it, as events do.
+        year: date ? undefined : null,
         description: description.trim() || null,
       })
+      await persistDescriptionCitations(doc.id, initialCitations, descCitations)
       qc.invalidateQueries({ queryKey: ['docs-all'] })
       for (const pid of linkedIds) qc.invalidateQueries({ queryKey: ['person-docs', pid] })
       onClose()
@@ -447,7 +574,7 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
         <div className="flex items-start justify-between px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
           <div className="min-w-0 flex-1 pr-3">
             <h2 className="text-sm font-semibold text-zinc-100">{t('docs.editDocTitle')}</h2>
-            <p className="text-xs text-zinc-500 mt-0.5 truncate">{doc.title || doc.filename}</p>
+            <p className="text-xs text-zinc-500 mt-0.5 truncate">{plainMentions(doc.title || doc.filename)}</p>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-colors shrink-0">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
@@ -455,21 +582,46 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-          <input value={title} onChange={e => setTitle(e.target.value)} placeholder={t('docs.titlePh')}
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
+          <TitleField value={title} onChange={setTitle}
+            onMentionPerson={p => { if (!linkedIds.has(p.id)) togglePerson(p.id) }} />
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 items-center">
             <select value={docType} onChange={e => setDocType(e.target.value)}
               className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 outline-none focus:border-brand-400">
               {types.map(dt => <option key={dt.key} value={dt.key}>{docTypeLabel(t, dt.key, dt.label)}</option>)}
               {types.length === 0 && <option value="other">{t('person.docFallback')}</option>}
             </select>
-            <input type="number" value={year} onChange={e => setYear(e.target.value)} placeholder={t('docs.yearPh')}
-              className="w-24 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
+            <DatePartPicker value={date} onChange={setDate} />
           </div>
 
-          <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder={t('docs.descPh')} rows={2}
-            className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 resize-none" />
+          <DescriptionField
+            docId={doc.id}
+            value={description} onChange={setDescription}
+            citations={descCitations} onCitationsChange={setDescCitations}
+            onMentionPerson={p => { if (!linkedIds.has(p.id)) togglePerson(p.id) }}
+            className="w-full min-h-[96px] max-h-[40vh] bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 resize-y leading-relaxed"
+          />
+
+          <div>
+            <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.attachedFiles')}</p>
+            <ul className="space-y-1">
+              <li className="flex items-center gap-2 bg-zinc-800/60 border border-zinc-700/60 rounded-lg px-2.5 py-1.5">
+                {fileIcon(doc.mime_type)}
+                <span className="text-xs text-zinc-200 truncate flex-1">{doc.filename}</span>
+                <span className="text-xs text-zinc-600 shrink-0">{t('docs.primaryFile')}</span>
+              </li>
+              {extraFiles.map(f => (
+                <li key={f.id} className="flex items-center gap-2 bg-zinc-800/60 border border-zinc-700/60 rounded-lg px-2.5 py-1.5">
+                  {fileIcon(f.mime_type)}
+                  <span className="text-xs text-zinc-200 truncate flex-1">{f.filename}</span>
+                  <button onClick={() => removeExtraFile(f.id)} title={t('docs.removeFile')}
+                    className="shrink-0 w-5 h-5 rounded flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-zinc-700 transition-colors">
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
 
           <div>
             <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.linkedPersons')}</p>
@@ -515,7 +667,7 @@ const DocRow = forwardRef<HTMLTableRowElement, {
   const displayName = doc.title || doc.filename
   const typeLabel = docTypeLabel(t, doc.doc_type, typeMap.get(doc.doc_type ?? ''))
   // Text documents open in the viewer too — it renders their Markdown body.
-  const canPreview = doc.is_text || isImage(doc.mime_type) || isPdf(doc.mime_type) || isAudio(doc.mime_type)
+  const canPreview = doc.is_text || isImage(doc.mime_type) || isPdf(doc.mime_type) || isAudio(doc.mime_type) || isVideo(doc.mime_type) || doc.files.length > 0
 
   const deleteMut = useMutation({
     mutationFn: () => api.documents.delete(doc.id),
@@ -566,9 +718,19 @@ const DocRow = forwardRef<HTMLTableRowElement, {
         </td>
         {/* Title + description */}
         <td className="py-2.5 pr-4">
-          <p className="text-xs font-medium text-zinc-100 truncate max-w-[260px]">{displayName}</p>
+          {/* Mentioned people are links here too; the row itself opens the
+              document, so a click on a name must not also do that. */}
+          <p className="text-xs font-medium text-zinc-100 truncate max-w-[260px]"
+            onClick={e => {
+              const anchor = (e.target as Element).closest('a.note-person-ref')
+              if (!anchor) return
+              e.preventDefault(); e.stopPropagation()
+              const m = anchor.getAttribute('href')?.match(/person-ref-(\d+)$/)
+              if (m) onNavToGenealogy(parseInt(m[1]))
+            }}
+            dangerouslySetInnerHTML={{ __html: renderTitleMentions(doc.title || doc.filename) }} />
           {doc.description && (
-            <p className="text-xs text-zinc-600 truncate max-w-[260px]">{doc.description}</p>
+            <p className="text-xs text-zinc-600 truncate max-w-[260px]">{plainMarkdown(doc.description)}</p>
           )}
         </td>
         {/* Type */}
@@ -624,6 +786,7 @@ export default function DocumentsTab({
   onNavConsumed?: () => void
 }) {
   const t = useT()
+  const qc = useQueryClient()
   const { nameOrder } = useSettings()
   const { data: docs = [] }    = useQuery<PersonDocument[]>({ queryKey: ['docs-all'], queryFn: api.documents.listAll })
   const { data: types = [] }   = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
@@ -632,9 +795,11 @@ export default function DocumentsTab({
   const [search, setSearch]           = useState('')
   const [filterType, setFilterType]   = useState<string>('__all__')
   const [filterPerson, setFilterPerson] = useState<number | null>(null)
+  const [sortBy, setSortBy]           = useState<SortMode>('recent')
   const [selectedIds, setSelectedIds]  = useState<Set<number>>(new Set())
   const [includeNotes, setIncludeNotes] = useState(true)
   const [downloading, setDownloading]  = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
   const [showChooser, setShowChooser] = useState(false)
   const [showUpload, setShowUpload]   = useState(false)
   const [creatingText, setCreatingText] = useState(false)
@@ -670,13 +835,31 @@ export default function DocumentsTab({
     if (search) {
       const q = search.toLowerCase()
       const haystack = [
-        d.title, d.filename, d.description,
+        // Titles hold mention markup; searching must not have to match `](#pid-`.
+        d.title ? plainMentions(d.title) : null, d.filename,
+        d.description ? plainMarkdown(d.description) : null,
         // Both orders, so searching "Anna Miklós" or "Miklós Anna" finds the same row.
         ...d.persons.flatMap(p => [p.name, refName(p, nameOrder, '')]),
       ].filter(Boolean).join(' ').toLowerCase()
       if (!haystack.includes(q)) return false
     }
     return true
+  }).sort((a, b) => {
+    // Sorting is on the visible text, so a leading `@[` never decides the order.
+    const titleOf = (d: PersonDocument) => plainMentions(d.title || d.filename)
+    switch (sortBy) {
+      case 'title_asc':  return titleOf(a).localeCompare(titleOf(b))
+      case 'title_desc': return titleOf(b).localeCompare(titleOf(a))
+      case 'date_newest':
+      case 'date_oldest': {
+        const ay = docSortYear(a), by = docSortYear(b)
+        if (Number.isNaN(ay) && Number.isNaN(by)) return 0
+        if (Number.isNaN(ay)) return 1   // undated documents sort last either way
+        if (Number.isNaN(by)) return -1
+        return sortBy === 'date_newest' ? by - ay : ay - by
+      }
+      default: return 0   // 'recent' — keep the API's created_at-desc order
+    }
   })
 
   const personOptions = persons.filter(p => docs.some(d => d.persons.some(dp => dp.id === p.id)))
@@ -704,6 +887,20 @@ export default function DocumentsTab({
       await api.documents.bulkDownload([...selectedIds], includeNotes)
     } finally {
       setDownloading(false)
+    }
+  }
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0 || bulkDeleting) return
+    if (!confirm(t('docs.deleteNConfirm', { n: selectedIds.size }))) return
+    setBulkDeleting(true)
+    try {
+      await api.documents.bulkDelete([...selectedIds])
+      setSelectedIds(new Set())
+      qc.invalidateQueries({ queryKey: ['docs-all'] })
+    } catch (e) {
+      alert(t('docs.deleteFailed', { e: String(e) }))
+    } finally {
+      setBulkDeleting(false)
     }
   }
 
@@ -803,6 +1000,16 @@ export default function DocumentsTab({
             onChange={setFilterPerson}
           />
 
+          <select value={sortBy} onChange={e => setSortBy(e.target.value as SortMode)}
+            title={t('docs.sortBy')}
+            className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-300 outline-none focus:border-brand-400 max-w-[160px]">
+            <option value="recent">{t('docs.sortRecent')}</option>
+            <option value="title_asc">{t('docs.sortTitleAsc')}</option>
+            <option value="title_desc">{t('docs.sortTitleDesc')}</option>
+            <option value="date_newest">{t('docs.sortDateNewest')}</option>
+            <option value="date_oldest">{t('docs.sortDateOldest')}</option>
+          </select>
+
           {(search || filterType !== '__all__' || filterPerson != null) && (
             <button onClick={() => { setSearch(''); setFilterType('__all__'); setFilterPerson(null) }}
               className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors shrink-0">
@@ -872,54 +1079,48 @@ export default function DocumentsTab({
         </div>
       </div>
 
-      {/* Floating action bar — appears when documents are selected */}
+      {/* Floating bulk toolbar — matches the Images tab's centered pill for a coherent selection UX */}
       {someSelected && (
-        <div className="shrink-0 border-t px-6 py-3 flex items-center gap-4" style={{ background: '#111117', borderColor: 'rgba(255,255,255,0.06)' }}>
-          <span className="text-xs font-medium text-zinc-300">
-            {t('docs.selectedCount', { n: selectedIds.size })}
-          </span>
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-6 py-3.5 bg-zinc-900/90 backdrop-blur-xl border border-zinc-700/60 rounded-2xl shadow-2xl">
+          <span className="text-sm text-zinc-200 font-semibold tabular-nums">{t('docs.selectedCount', { n: selectedIds.size })}</span>
+          <div className="w-px h-5 bg-zinc-700 shrink-0" />
+          <label className="flex items-center gap-2 cursor-pointer select-none whitespace-nowrap">
+            <div
+              onClick={() => setIncludeNotes(v => !v)}
+              className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${includeNotes ? 'bg-brand-500 border-brand-400' : 'border-zinc-600 hover:border-zinc-400'}`}
+            >
+              {includeNotes && (
+                <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 10" stroke="currentColor" strokeWidth={2}><path d="M1 5l3 3 7-7"/></svg>
+              )}
+            </div>
+            <span className="text-xs text-zinc-400">{t('docs.includeNotes')}</span>
+          </label>
+          <button
+            onClick={handleBulkDownload}
+            disabled={downloading || bulkDeleting}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-brand-500 hover:bg-brand-400 disabled:opacity-50 disabled:cursor-wait text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+            </svg>
+            {downloading ? t('docs.buildingZip') : t('docs.downloadZip')}
+          </button>
+          <button
+            onClick={handleBulkDelete}
+            disabled={bulkDeleting || downloading}
+            className="px-4 py-1.5 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+          >
+            {bulkDeleting ? t('docs.deleting') : t('docs.deleteN', { n: selectedIds.size })}
+          </button>
           <button
             onClick={() => setSelectedIds(new Set())}
-            className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+            className="px-3 py-1.5 text-zinc-500 hover:text-zinc-300 text-sm transition-colors whitespace-nowrap"
           >
             {t('docs.clear')}
           </button>
-          <div className="ml-auto flex items-center gap-3">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <div
-                onClick={() => setIncludeNotes(v => !v)}
-                className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${includeNotes ? 'bg-brand-500 border-brand-400' : 'border-zinc-600 hover:border-zinc-400'}`}
-              >
-                {includeNotes && (
-                  <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 10" stroke="currentColor" strokeWidth={2}><path d="M1 5l3 3 7-7"/></svg>
-                )}
-              </div>
-              <span className="text-xs text-zinc-400">{t('docs.includeNotes')}</span>
-            </label>
-            <button
-              onClick={handleBulkDownload}
-              disabled={downloading}
-              className="flex items-center gap-2 h-8 px-4 rounded-lg bg-brand-600 hover:bg-brand-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-              </svg>
-              {downloading ? t('docs.buildingZip') : t('docs.downloadZip')}
-            </button>
-          </div>
         </div>
       )}
 
-      {downloading && createPortal(
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[900] flex items-center gap-3 px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-xl shadow-2xl text-sm text-zinc-300 pointer-events-none">
-          <svg className="w-4 h-4 animate-spin text-brand-400 shrink-0" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-          </svg>
-          {t('docs.buildingZip')}
-        </div>,
-        document.body
-      )}
     </div>
   )
 }

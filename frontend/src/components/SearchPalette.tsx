@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { PersonFull, PersonEvent, PersonDocument } from '../types'
 import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
+import { plainMentions, plainMarkdown } from '../markdown'
 
 interface Props {
   open: boolean
@@ -89,9 +90,9 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
 
     for (const d of documents) {
       if (
-        (d.title ?? '').toLowerCase().includes(q) ||
+        plainMentions(d.title ?? '').toLowerCase().includes(q) ||
         (d.filename ?? '').toLowerCase().includes(q) ||
-        (d.description ?? '').toLowerCase().includes(q)
+        plainMarkdown(d.description ?? '').toLowerCase().includes(q)
       ) matched.push({ kind: 'document', id: d.id, doc: d })
       if (matched.filter(r => r.kind === 'document').length >= 3) break
     }
@@ -276,7 +277,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm text-zinc-100 truncate font-medium">{d.title ?? d.filename}</p>
+                        <p className="text-sm text-zinc-100 truncate font-medium">{plainMentions(d.title ?? d.filename)}</p>
                         <p className="text-xs text-zinc-500 truncate">
                           {[d.doc_type, d.year].filter(Boolean).join(' · ')}
                         </p>

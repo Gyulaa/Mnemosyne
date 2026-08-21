@@ -360,24 +360,30 @@ export const api = {
   documents: {
     listAll: () => fetchJson<PersonDocument[]>(`${BASE}/documents`),
     list: (personId: number) => fetchJson<PersonDocument[]>(`${BASE}/persons/${personId}/documents`),
-    /** Upload a file. An empty `personIds` stores it as a document of the project itself. */
-    upload: async (personIds: number[], file: File, meta: { title?: string; doc_type?: string; year?: number; description?: string }): Promise<PersonDocument> => {
+    /**
+     * Upload one or more files as a single document. An empty `personIds`
+     * stores it as a document of the project itself. Several files become one
+     * document with the first as its primary file and the rest as `files` —
+     * every page of a scanned letter uploaded together, for instance.
+     */
+    upload: async (personIds: number[], files: File[], meta: { title?: string; doc_type?: string; year?: number; date?: string; description?: string }): Promise<PersonDocument> => {
       const fd = new FormData()
-      fd.append('file', file)
+      for (const f of files) fd.append('files', f)
       fd.append('person_ids', personIds.join(','))
       if (meta.title) fd.append('title', meta.title)
       if (meta.doc_type) fd.append('doc_type', meta.doc_type)
       if (meta.year != null) fd.append('year', String(meta.year))
+      if (meta.date) fd.append('date', meta.date)
       if (meta.description) fd.append('description', meta.description)
       const res = await fetch(`${BASE}/documents/upload`, { method: 'POST', body: fd })
       if (!res.ok) throw new Error(await res.text())
       return res.json()
     },
-    update: (id: number, fields: Partial<Pick<PersonDocument, 'title' | 'doc_type' | 'year' | 'description'>>) =>
+    update: (id: number, fields: Partial<Pick<PersonDocument, 'title' | 'doc_type' | 'year' | 'date' | 'description'>>) =>
       patch<PersonDocument>(`${BASE}/documents/${id}`, fields),
     /** Create a document written in-app; its Markdown body is stored as a .md file. */
     createText: (fields: {
-      title?: string; doc_type?: string; year?: number; description?: string
+      title?: string; doc_type?: string; year?: number; date?: string; description?: string
       content: string; person_ids: number[]
     }) => post<PersonDocument>(`${BASE}/documents/text`, fields),
     getText: (id: number) =>
@@ -388,6 +394,10 @@ export const api = {
       post<NoteCitation>(`${BASE}/documents/${docId}/citations`, fields),
     deleteCitation: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/document-citations/${id}`, { method: 'DELETE' }),
+    addDescriptionCitation: (docId: number, fields: { source_id?: number; marker: number; detail?: string; custom_label?: string }) =>
+      post<NoteCitation>(`${BASE}/documents/${docId}/description-citations`, fields),
+    deleteDescriptionCitation: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/document-description-citations/${id}`, { method: 'DELETE' }),
     addImage: (docId: number, imageId: number) =>
       post<PersonDocument>(`${BASE}/documents/${docId}/images`, { image_id: imageId }),
     removeImage: (docId: number, imageId: number) =>
@@ -396,8 +406,15 @@ export const api = {
       patch<PersonDocument>(`${BASE}/documents/${id}`, { is_private: isPrivate }),
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/documents/${id}`, { method: 'DELETE' }),
+    bulkDelete: (ids: number[]) =>
+      post<{ ok: boolean; count: number }>(`${BASE}/documents/bulk-delete`, { document_ids: ids }),
     fileUrl: (id: number, download = false) =>
       `${BASE}/documents/${id}/file${download ? '?dl=1' : ''}`,
+    /** URL for an extra file (beyond the primary one) on a document. */
+    extraFileUrl: (docId: number, fileId: number, download = false) =>
+      `${BASE}/documents/${docId}/files/${fileId}${download ? '?dl=1' : ''}`,
+    removeFile: (docId: number, fileId: number) =>
+      fetchJson<PersonDocument>(`${BASE}/documents/${docId}/files/${fileId}`, { method: 'DELETE' }),
     promoteToSource: (docId: number, title?: string, sourceType?: string) =>
       post<Source>(`${BASE}/documents/${docId}/promote-to-source`, { title, source_type: sourceType }),
     linkPerson: (docId: number, personId: number) =>

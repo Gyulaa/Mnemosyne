@@ -18,6 +18,61 @@ import type { NoteCitation } from './types'
 
 marked.setOptions({ breaks: true, gfm: true })
 
+const MENTION_RE = /@\[([^\]]+)\]\(#pid-(\d+)\)/g
+
+/**
+ * `@[Name](#pid-12)` → `Name`.
+ *
+ * A document title stores mention markup like any other mentionable text, but
+ * plenty of places need it as flat text: a filename, an `alt`, a `title`
+ * attribute, a sort key, a GEDCOM record. Those call this — never the raw
+ * string, or the reader sees the brackets.
+ */
+export function plainMentions(text: string): string {
+  return text.replace(MENTION_RE, (_, name) => name)
+}
+
+/**
+ * Markdown down to readable flat text, for a single clamped line — a table
+ * cell, a card excerpt, a search result.
+ *
+ * `renderMarkdown` would be wrong there: a one-line excerpt has no room for
+ * headings, lists or superscript refs, and clamping rendered HTML mid-tag
+ * looks broken. But printing the raw string is worse, since the reader then
+ * sees `**` and `@[…](#pid-4)` instead of the words.
+ */
+export function plainMarkdown(text: string): string {
+  return plainMentions(text)
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')   // [label](url) → label
+    .replace(/`([^`]*)`/g, '$1')               // inline code
+    .replace(/^#{1,6}\s+/gm, '')               // headings
+    .replace(/^[>\-*+]\s+/gm, '')              // quotes and list markers
+    .replace(/\*{1,3}|~~|_{2,3}/g, '')         // emphasis marks
+    .replace(/\[\d+\]/g, '')                   // citation markers
+    .replace(/\s+/g, ' ')                      // collapse the newlines away
+    .trim()
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+/**
+ * A one-line title with its `@` mentions as clickable person refs.
+ *
+ * Deliberately *not* a Markdown parse: a title is a single plain line, so
+ * running it through `marked` would wrap it in a `<p>` and reinterpret any
+ * stray `*` or `_` in a real name as emphasis. Only the mention form is
+ * resolved; everything else is escaped and left alone. The anchors carry the
+ * same `note-person-ref` class as in a body, so one click handler serves both.
+ */
+export function renderTitleMentions(text: string): string {
+  const html = escapeHtml(text).replace(MENTION_RE, (_, name, id) =>
+    `<a href="#person-ref-${id}" class="note-person-ref">@${name}</a>`
+  )
+  return DOMPurify.sanitize(html, { ADD_ATTR: ['href', 'class'] })
+}
+
 export function renderMarkdown(content: string, citations: NoteCitation[]): string {
   let processed = content.replace(/@\[([^\]]+)\]\(#pid-(\d+)\)/g, (_, name, id) =>
     `<a href="#person-ref-${id}" class="note-person-ref">@${name}</a>`

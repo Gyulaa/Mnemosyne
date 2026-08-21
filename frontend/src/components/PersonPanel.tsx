@@ -10,6 +10,7 @@ import NoteEditorComponent from './NoteEditor'
 import EventTimeline from './EventTimeline'
 import RelationPathModal from './RelationPathModal'
 import { docTypeLabel, builtinDocTypeOptions } from '../docTypes'
+import { plainMentions } from '../markdown'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -597,7 +598,7 @@ function DocUploadForm({ personId, onDone }: { personId: number; onDone: () => v
     if (!file || uploading) return
     setUploading(true)
     try {
-      await api.documents.upload([personId], file, {
+      await api.documents.upload([personId], [file], {
         title: title.trim() || undefined,
         doc_type: docType,
         year: year ? parseInt(year) : undefined,
@@ -694,7 +695,7 @@ function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
   const typeMap = new Map(types.map(dt => [dt.key, dt.label]))
   const available = allDocs.filter(d => !linkedDocIds.has(d.id))
   const filtered = search
-    ? available.filter(d => [d.title, d.filename, ...(d.persons.map(p => p.name))].filter(Boolean).join(' ').toLowerCase().includes(search.toLowerCase()))
+    ? available.filter(d => [d.title ? plainMentions(d.title) : null, d.filename, ...(d.persons.map(p => p.name))].filter(Boolean).join(' ').toLowerCase().includes(search.toLowerCase()))
     : available
 
   async function link(docId: number) {
@@ -732,7 +733,7 @@ function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
             <button key={doc.id} onClick={() => link(doc.id)} disabled={linking === doc.id}
               className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-zinc-800 transition-colors disabled:opacity-60">
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-zinc-200 truncate">{doc.title || doc.filename}</p>
+                <p className="text-xs font-medium text-zinc-200 truncate">{plainMentions(doc.title || doc.filename)}</p>
                 <p className="text-xs text-zinc-500">
                   {typeMap.get(doc.doc_type ?? '') ?? doc.doc_type ?? t('person.docFallback')}
                   {doc.year ? ` · ${doc.year}` : ''}
@@ -778,20 +779,20 @@ function DocPreviewModal({ doc, onClose }: { doc: PersonDocument; onClose: () =>
         ✕
       </button>
       {isImage(doc.mime_type) ? (
-        <img src={url} alt={doc.title || doc.filename}
+        <img src={url} alt={plainMentions(doc.title || doc.filename)}
           className="max-w-[85vw] max-h-[85vh] object-contain rounded-lg shadow-2xl"
           onClick={e => e.stopPropagation()} />
       ) : isPdf(doc.mime_type) ? (
         <iframe src={url} className="w-[85vw] h-[85vh] rounded-lg shadow-2xl border-0 bg-white"
-          title={doc.title || doc.filename} onClick={e => e.stopPropagation()} />
+          title={plainMentions(doc.title || doc.filename)} onClick={e => e.stopPropagation()} />
       ) : isAudio(doc.mime_type) ? (
         <div className="flex flex-col items-center gap-4 px-8" onClick={e => e.stopPropagation()}>
-          <p className="text-zinc-300 text-sm font-medium">{doc.title || doc.filename}</p>
+          <p className="text-zinc-300 text-sm font-medium">{plainMentions(doc.title || doc.filename)}</p>
           <audio controls src={url} className="w-[60vw] max-w-xl" />
         </div>
       ) : null}
       <div className="absolute bottom-5 left-1/2 -translate-x-1/2 flex items-center gap-3">
-        <span className="text-zinc-400 text-sm truncate max-w-xs">{doc.title || doc.filename}</span>
+        <span className="text-zinc-400 text-sm truncate max-w-xs">{plainMentions(doc.title || doc.filename)}</span>
         <a href={api.documents.fileUrl(doc.id, true)} onClick={e => e.stopPropagation()}
           className="text-xs text-zinc-500 hover:text-zinc-200 transition-colors underline underline-offset-2">
           {t('person.download')}
@@ -854,7 +855,7 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
     }
   }
 
-  const displayName = doc.title || doc.filename
+  const displayName = plainMentions(doc.title || doc.filename)
   const typeMap = new Map(docTypes.map(dt => [dt.key, dt.label]))
   const typeLabel = docTypeLabel(t, doc.doc_type, typeMap.get(doc.doc_type ?? ''))
 
@@ -1037,27 +1038,66 @@ function CitationsInline({
   const t = useT()
   const [expanded, setExpanded] = useState(false)
   const [adding, setAdding] = useState(false)
-  const [selectedSourceId, setSelectedSourceId] = useState<number | ''>('')
+  const [picked, setPicked] = useState<Source | null>(null)
+  const [pickTab, setPickTab] = useState<'source' | 'document'>('source')
+  const [search, setSearch] = useState('')
   const [detail, setDetail] = useState('')
   const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  // Any document can back a citation, not only the ones already promoted into
+  // the source library — see `pickDocument` below. Only fetched once the
+  // Documents tab is actually opened.
+  const { data: allDocs = [] } = useQuery<PersonDocument[]>({
+    queryKey: ['docs-all'],
+    queryFn: api.documents.listAll,
+    enabled: adding && pickTab === 'document',
+    staleTime: 60_000,
+  })
+
+  function resetPicker() {
+    setPicked(null); setSearch(''); setDetail(''); setErr(null); setPickTab('source')
+  }
+
+  /**
+   * Promote a document to a source, then cite it. `promote-to-source` is
+   * idempotent — a document already in the library yields the same source —
+   * so this never creates a duplicate for a document cited twice.
+   */
+  async function pickDocument(d: PersonDocument) {
+    setErr(null)
+    try {
+      setPicked(await api.documents.promoteToSource(d.id, d.title || d.filename))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to use document as a source')
+    }
+  }
 
   async function addCitation() {
-    if (!selectedSourceId) return
-    setSaving(true)
+    if (!picked) return
+    setSaving(true); setErr(null)
     try {
       await api.citations.add(personId, {
-        source_id: selectedSourceId as number,
+        source_id: picked.id,
         fact,
         detail: detail.trim() || undefined,
       })
       onMutated()
       setAdding(false)
-      setSelectedSourceId('')
-      setDetail('')
+      resetPicker()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to add citation')
     } finally {
       setSaving(false)
     }
   }
+
+  const matchingSources = sources
+    .filter(s => s.title.toLowerCase().includes(search.trim().toLowerCase()))
+    .slice(0, 40)
+  const matchingDocs = allDocs
+    .filter(d => plainMentions(d.title || d.filename).toLowerCase().includes(search.trim().toLowerCase()))
+    .slice(0, 40)
 
   async function removeCitation(id: number) {
     await api.citations.delete(id)
@@ -1160,28 +1200,74 @@ function CitationsInline({
             {/* add form */}
             {adding ? (
               <div className="space-y-1.5 pt-1 border-t border-zinc-800">
-                {sources.length === 0 ? (
-                  <p className="text-xs text-zinc-500 italic">{t('person.noSourcesLibHint')}</p>
+                {picked ? (
+                  <div className="flex items-center gap-2 bg-zinc-800/70 border border-amber-700/40 rounded px-2 py-1">
+                    <BookIcon />
+                    <span className="text-xs text-amber-300 truncate flex-1">
+                      {picked.title}{picked.year ? ` (${picked.year})` : ''}
+                    </span>
+                    <button onClick={() => setPicked(null)} title={t('person.changeSource')}
+                      className="shrink-0 text-zinc-500 hover:text-zinc-200 transition-colors">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
                 ) : (
-                  <select value={selectedSourceId} onChange={e => setSelectedSourceId(Number(e.target.value) || '')}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 outline-none focus:border-amber-500">
-                    <option value="">{t('person.selectSource')}</option>
-                    {sources.map(s => (
-                      <option key={s.id} value={s.id}>
-                        {s.title}{s.year ? ` (${s.year})` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <>
+                    <div className="flex gap-1">
+                      {(['source', 'document'] as const).map(k => (
+                        <button key={k} onClick={() => { setPickTab(k); setSearch('') }}
+                          className={`flex-1 px-2 py-1 text-xs font-medium rounded transition-colors ${
+                            pickTab === k ? 'bg-amber-600/20 text-amber-400' : 'text-zinc-500 hover:text-zinc-300'
+                          }`}>
+                          {t(k === 'source' ? 'person.fromSources' : 'person.fromDocuments')}
+                        </button>
+                      ))}
+                    </div>
+                    <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('docs.search')}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500" />
+                    <div className="max-h-40 overflow-y-auto rounded border border-zinc-800">
+                      {pickTab === 'source' ? (
+                        matchingSources.length === 0 ? (
+                          <p className="text-xs text-zinc-600 italic px-2 py-2">
+                            {sources.length === 0 ? t('person.noSourcesLibHint') : t('docs.noResults')}
+                          </p>
+                        ) : matchingSources.map(s => (
+                          <button key={s.id} onClick={() => setPicked(s)}
+                            className="w-full text-left px-2 py-1.5 hover:bg-zinc-800 transition-colors">
+                            <p className="text-xs text-zinc-100 truncate">{s.title}</p>
+                            <p className="text-xs text-zinc-500 truncate">
+                              {[s.source_type, s.year, s.author].filter(Boolean).join(' · ')}
+                            </p>
+                          </button>
+                        ))
+                      ) : (
+                        matchingDocs.length === 0 ? (
+                          <p className="text-xs text-zinc-600 italic px-2 py-2">{t('docs.noResults')}</p>
+                        ) : matchingDocs.map(d => (
+                          <button key={d.id} onClick={() => pickDocument(d)}
+                            className="w-full text-left px-2 py-1.5 hover:bg-zinc-800 transition-colors">
+                            <p className="text-xs text-zinc-100 truncate">{plainMentions(d.title || d.filename)}</p>
+                            <p className="text-xs text-zinc-500 truncate">
+                              {[docTypeLabel(t, d.doc_type, undefined), d.year].filter(Boolean).join(' · ')}
+                            </p>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </>
                 )}
                 <input value={detail} onChange={e => setDetail(e.target.value)}
                   placeholder={t('person.citationPh')}
                   className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-amber-500" />
+                {err && <p className="text-xs text-red-400">{err}</p>}
                 <div className="flex gap-1.5">
-                  <button onClick={addCitation} disabled={saving || !selectedSourceId || sources.length === 0}
+                  <button onClick={addCitation} disabled={saving || !picked}
                     className="px-2.5 py-1 text-xs font-medium bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-white rounded transition-colors">
                     {saving ? '…' : t('person.save')}
                   </button>
-                  <button onClick={() => { setAdding(false); if (count === 0) setExpanded(false) }}
+                  <button onClick={() => { setAdding(false); resetPicker(); if (count === 0) setExpanded(false) }}
                     className="px-2.5 py-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
                     {t('person.cancel')}
                   </button>

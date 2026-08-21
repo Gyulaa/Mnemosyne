@@ -81,6 +81,16 @@ def _safe(value: str, max_len: int = 248) -> str:
     return value.replace('\r', ' ').replace('\n', ' ')[:max_len].strip()
 
 
+def _gedcom_form(mime_type: Optional[str]) -> str:
+    """Best-effort GEDCOM 2 FORM value from a stored mime type."""
+    mime = (mime_type or '').lower()
+    if 'pdf' in mime:
+        return 'PDF'
+    if 'png' in mime:
+        return 'PNG'
+    return 'JPEG'
+
+
 def _emit_note(level: int, text: str, lines: list[str]) -> None:
     """Emit a NOTE record with CONT lines for multiline text."""
     paragraphs = [p.strip() for p in text.splitlines() if p.strip()]
@@ -203,6 +213,13 @@ def build_gedcom_zip(
         documents     = conn.execute(
             "SELECT * FROM documents WHERE COALESCE(is_private,0)=0 AND person_id IS NOT NULL"
         ).fetchall() if include_documents else []
+        # Extra files beyond each document's primary one (v10+) — every page
+        # of a scanned letter, for instance — become additional OBJE records
+        # under the same document.
+        document_files = conn.execute(
+            "SELECT * FROM document_files WHERE document_id IN "
+            "(SELECT id FROM documents WHERE COALESCE(is_private,0)=0 AND person_id IS NOT NULL)"
+        ).fetchall() if include_documents else []
         sources       = conn.execute("SELECT * FROM sources").fetchall() if include_sources else []
         notes         = conn.execute("SELECT * FROM person_notes WHERE COALESCE(is_private,0)=0").fetchall() if include_notes else []
         note_cites    = conn.execute("SELECT * FROM note_citations").fetchall() if include_notes else []
@@ -249,6 +266,10 @@ def build_gedcom_zip(
     docs_by_person: dict[int, list] = {}
     for doc in documents:
         docs_by_person.setdefault(doc['person_id'], []).append(doc)
+
+    extra_files_by_doc: dict[int, list] = {}
+    for f in document_files:
+        extra_files_by_doc.setdefault(f['document_id'], []).append(f)
 
     notes_by_person: dict[int, list] = {}
     for note in notes:
@@ -413,18 +434,28 @@ def build_gedcom_zip(
                 # sanitise filename for ZIP arc name
                 safe_orig = re.sub(r'[^\w.\-]', '_', orig)
                 arc_name = f"media/doc_{doc['id']}_{safe_orig}"
-                mime = (doc['mime_type'] or '').lower()
-                if 'pdf' in mime:
-                    form = 'PDF'
-                elif 'png' in mime:
-                    form = 'PNG'
-                else:
-                    form = 'JPEG'
                 lines.append("1 OBJE")
                 lines.append(f"2 FILE {arc_name}")
-                lines.append(f"2 FORM {form}")
-                if doc['title']:
-                    lines.append(f"2 TITL {_safe(doc['title'])}")
+                lines.append(f"2 FORM {_gedcom_form(doc['mime_type'])}")
+                # A title carries @ mention markup like any other mentionable
+                # text; GEDCOM wants the plain name.
+                doc_title = _strip_markdown(doc['title'] or '')
+                if doc_title:
+                    lines.append(f"2 TITL {_safe(doc_title)}")
+
+                # Extra files on the same document — every page of a scanned
+                # letter, for instance — become their own OBJE records.
+                extra = extra_files_by_doc.get(doc['id'], [])
+                for i, ef in enumerate(extra, start=2):
+                    ef_orig = ef['filename'] or 'file'
+                    ef_safe = re.sub(r'[^\w.\-]', '_', ef_orig)
+                    ef_arc = f"media/doc_{doc['id']}_file{ef['id']}_{ef_safe}"
+                    lines.append("1 OBJE")
+                    lines.append(f"2 FILE {ef_arc}")
+                    lines.append(f"2 FORM {_gedcom_form(ef['mime_type'])}")
+                    title = f"{doc_title} ({i})" if doc_title else None
+                    if title:
+                        lines.append(f"2 TITL {_safe(title)}")
 
         # Photos
         for idx, photo in enumerate(photos_by_person.get(pid, [])):
@@ -496,6 +527,12 @@ def build_gedcom_zip(
                     orig = doc['filename'] or 'file'
                     safe_orig = re.sub(r'[^\w.\-]', '_', orig)
                     zf.write(str(doc_file), f"media/doc_{doc['id']}_{safe_orig}")
+                for ef in extra_files_by_doc.get(doc['id'], []):
+                    ef_file = docs_dir / ef['stored_name']
+                    if ef_file.exists():
+                        ef_orig = ef['filename'] or 'file'
+                        ef_safe = re.sub(r'[^\w.\-]', '_', ef_orig)
+                        zf.write(str(ef_file), f"media/doc_{doc['id']}_file{ef['id']}_{ef_safe}")
 
         # Photos + manifest
         manifest_images: list[dict] = []

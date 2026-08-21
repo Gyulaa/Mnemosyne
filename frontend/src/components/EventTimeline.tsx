@@ -46,7 +46,7 @@ function getYear(date: string | null | undefined, fallbackYear?: number | null):
 
 // ── DatePartPicker ─────────────────────────────────────────────────────────────
 
-function DatePartPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+export function DatePartPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const t = useT()
   const dateLocale = useDateLocale()
   const parts = value ? value.split('-') : []

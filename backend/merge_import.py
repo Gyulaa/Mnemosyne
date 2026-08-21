@@ -110,6 +110,15 @@ def read_zip_db(zip_data: bytes) -> dict:
         document_images = _safe_rows(conn,
             "SELECT document_id, image_id, sort_order, caption FROM document_images"
         )
+        # Extra files on a document beyond its primary one (v10+); older
+        # export ZIPs simply don't have the table.
+        document_files = _safe_rows(conn,
+            "SELECT id, document_id, stored_name, filename, mime_type, sort_order FROM document_files"
+        )
+        # [n] references inside a document's description field (v11+).
+        document_description_citations = _safe_rows(conn,
+            "SELECT id, document_id, source_id, marker, detail, custom_label FROM document_description_citations"
+        )
 
         person_notes = _safe_rows(conn,
             "SELECT id, person_id, title, content, sort_order FROM person_notes"
@@ -168,6 +177,8 @@ def read_zip_db(zip_data: bytes) -> dict:
         'document_persons':   document_persons,
         'document_citations': document_citations,
         'document_images':    document_images,
+        'document_files':     document_files,
+        'document_description_citations': document_description_citations,
         'person_notes':     person_notes,
         'events':           events,
         'event_persons':    event_persons,
@@ -785,6 +796,26 @@ def execute_merge(
                         rollback['added_documents'].append({'id': new_doc_id, 'stored_name': new_stored})
                     stats['documents_added'] += 1
 
+                # Extra files beyond each document's primary one (v10+) — every
+                # page of a scanned letter uploaded together in one go.
+                for df in incoming_data.get('document_files', []):
+                    new_doc_id = doc_id_remap.get(df['document_id'])
+                    if new_doc_id is None:
+                        continue
+                    arc = f"documents/{df['stored_name']}"
+                    if arc not in zip_names:
+                        continue
+                    f_ext = Path(df['stored_name']).suffix
+                    f_new_stored = f"{uuid.uuid4().hex}{f_ext}"
+                    (docs_dir / f_new_stored).write_bytes(zf.read(arc))
+                    f_mime = df.get('mime_type') or mimetypes.guess_type(df.get('filename') or '')[0] or 'application/octet-stream'
+                    conn.execute(
+                        "INSERT INTO document_files (document_id, stored_name, filename, mime_type, sort_order) "
+                        "VALUES (?,?,?,?,?)",
+                        (new_doc_id, f_new_stored, df.get('filename'), f_mime, df.get('sort_order') or 0),
+                    )
+                conn.commit()
+
             # Re-link additional persons via document_persons junction table.
             for dp in incoming_data.get('document_persons', []):
                 new_doc_id = doc_id_remap.get(dp['document_id'])
@@ -1044,6 +1075,27 @@ def execute_merge(
                 "INSERT INTO document_citations (document_id, source_id, marker, detail, custom_label) "
                 "VALUES (?,?,?,?,?)",
                 (local_doc_id, local_src_id, dc.get('marker'), dc.get('detail'), dc.get('custom_label')),
+            )
+        conn.commit()
+
+        # References inside a document's description field — same shape again.
+        for ddc in incoming_data.get('document_description_citations', []):
+            local_doc_id = doc_id_remap.get(ddc['document_id'])
+            if local_doc_id is None:
+                continue
+            local_src_id = src_id_remap.get(ddc['source_id']) if ddc.get('source_id') else None
+            if ddc.get('source_id') and local_src_id is None:
+                continue
+            dup = conn.execute(
+                "SELECT id FROM document_description_citations WHERE document_id = ? AND marker IS ?",
+                (local_doc_id, ddc.get('marker')),
+            ).fetchone()
+            if dup:
+                continue
+            conn.execute(
+                "INSERT INTO document_description_citations (document_id, source_id, marker, detail, custom_label) "
+                "VALUES (?,?,?,?,?)",
+                (local_doc_id, local_src_id, ddc.get('marker'), ddc.get('detail'), ddc.get('custom_label')),
             )
         conn.commit()
 
