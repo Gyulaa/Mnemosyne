@@ -13,6 +13,7 @@ import { useAtMention } from '../mentions'
 import { plainMentions, plainMarkdown, renderTitleMentions } from '../markdown'
 import { DescriptionField, persistDescriptionCitations } from './DescriptionField'
 import ScanReadModal from './ScanReadModal'
+import DocumentReadButton, { appendReading } from './DocumentReadButton'
 import { useBackdropClose } from '../modalBackdrop'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -620,6 +621,20 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
             citations={descCitations} onCitationsChange={setDescCitations}
             onMentionPerson={p => { if (!linkedIds.has(p.id)) togglePerson(p.id) }}
             className="w-full min-h-[96px] max-h-[40vh] bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400 resize-y leading-relaxed"
+          />
+
+          {/* Directly under the field it writes into, because that is the whole
+              behaviour: the reading is appended to the description. The server
+              has already appended it to the saved description by the time this
+              returns, so the draft is advanced by the same rule rather than
+              replaced — whatever was being typed here survives. */}
+          <DocumentReadButton
+            doc={doc}
+            onRead={text => {
+              setDescription(prev => appendReading(prev, text))
+              qc.invalidateQueries({ queryKey: ['docs-all'] })
+              for (const pid of linkedIds) qc.invalidateQueries({ queryKey: ['person-docs', pid] })
+            }}
           />
 
           <div>

@@ -5,6 +5,7 @@ import type { PersonFull, Relation, PersonEvent, ImageItem, ImagePerson } from '
 import { api } from '../api'
 import { useT, useSettings, useDateLocale, formatPartialDate, monthNames } from '../SettingsContext'
 import { useBackdropClose } from '../modalBackdrop'
+import PlaceInput from './PlaceInput'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -331,6 +332,8 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
       }
       if (personId) qc.invalidateQueries({ queryKey: ['person-events', personId] })
       qc.invalidateQueries({ queryKey: ['events'] })
+      // The place just typed becomes a suggestion in every other place field.
+      qc.invalidateQueries({ queryKey: ['places'] })
       onSaved(saved)
     } finally {
       setSaving(false)
@@ -342,6 +345,7 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
     await api.events.delete(localEvent.id)
     if (personId) qc.invalidateQueries({ queryKey: ['person-events', personId] })
     qc.invalidateQueries({ queryKey: ['events'] })
+    qc.invalidateQueries({ queryKey: ['places'] })
     onDeleted?.()
   }
 
@@ -428,7 +432,7 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
       {/* Date + Place */}
       <div className="space-y-1.5">
         <DatePartPicker value={date} onChange={setDate} />
-        <input value={place} onChange={e => setPlace(e.target.value)} placeholder={t('timeline.placePh')}
+        <PlaceInput value={place} onChange={setPlace} placeholder={t('timeline.placePh')}
           className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
       </div>
 

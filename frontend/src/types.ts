@@ -509,6 +509,32 @@ export interface PersonEvent {
   images: EventImage[]
 }
 
+/**
+ * One row of `GET /api/places` — a place the project already uses.
+ *
+ * The comma levels are split server-side by `backend/places.py`, which is the
+ * only place that decides what counts as a house number. Nothing on this side
+ * parses a place string.
+ */
+export interface PlaceUsage {
+  /** The full string as written (the most common spelling of its variants). */
+  value: string
+  /** Accent- and case-folded `value`, for matching a typed query against. */
+  key: string
+  /** How many facts use it. */
+  count: number
+  /** True for a settlement-level row derived from addresses written in front of it. */
+  is_settlement: boolean
+  /** Folded settlement-and-above — what a map pin is keyed by. */
+  settlement_key: string
+  /** The settlement and everything above it, as written — the address detail removed. */
+  canonical: string
+  detail: string | null
+  settlement: string | null
+  region: string | null
+  country: string | null
+}
+
 export interface UpdateStatus {
   status: 'idle' | 'checking' | 'up_to_date' | 'dev_build' | 'update_available' | 'downloading' | 'ready' | 'applying' | 'error'
   current_version: string

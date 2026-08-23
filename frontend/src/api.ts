@@ -1,4 +1,4 @@
-import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, WebResearchSettings, ChatThread, ChatMessage, ChatStreamEvent, DocumentAiSettings, TranscriptBatch, TranscriptBatchDetail, TranscriptPageFull, TranscriptStatus, TranscriptQuestion } from './types'
+import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, WebResearchSettings, ChatThread, ChatMessage, ChatStreamEvent, DocumentAiSettings, TranscriptBatch, TranscriptBatchDetail, TranscriptPageFull, TranscriptStatus, TranscriptQuestion, PlaceUsage } from './types'
 
 const BASE = '/api'
 
@@ -357,6 +357,10 @@ export const api = {
     delete: (id: number) =>
       fetchJson<{ ok: boolean }>(`${BASE}/relations/${id}`, { method: 'DELETE' }),
   },
+  places: {
+    /** Every place the project uses, most-used first. Filtered client-side. */
+    list: () => fetchJson<PlaceUsage[]>(`${BASE}/places`),
+  },
   documents: {
     listAll: () => fetchJson<PersonDocument[]>(`${BASE}/documents`),
     list: (personId: number) => fetchJson<PersonDocument[]>(`${BASE}/persons/${personId}/documents`),
@@ -381,6 +385,20 @@ export const api = {
     },
     update: (id: number, fields: Partial<Pick<PersonDocument, 'title' | 'doc_type' | 'year' | 'date' | 'description'>>) =>
       patch<PersonDocument>(`${BASE}/documents/${id}`, fields),
+    /**
+     * Read one of this document's files with the vision model and append the
+     * text to its description. `fileId` names an extra file; omitted means the
+     * primary one.
+     *
+     * The reading is already saved when this returns — it cost a page of the
+     * month's budget and must not depend on a modal being saved afterwards. The
+     * `text` is handed back as well so a caller holding an unsaved draft can
+     * append to that instead of overwriting it.
+     */
+    transcribe: (id: number, opts: { fileId?: number | null; lang?: string } = {}) =>
+      post<{ document: PersonDocument; text: string }>(`${BASE}/documents/${id}/transcribe`, {
+        file_id: opts.fileId ?? null, lang: opts.lang ?? 'en',
+      }),
     /** Create a document written in-app; its Markdown body is stored as a .md file. */
     createText: (fields: {
       title?: string; doc_type?: string; year?: number; date?: string; description?: string

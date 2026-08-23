@@ -29,6 +29,7 @@ from . import clusterer
 from .clusterer import recompute_person_subclusters
 from . import maintenance
 from . import export_utils
+from . import places as places_mod
 from . import transcriber
 from .schemas import (
     ScanStartRequest, ScanStatusResponse,
@@ -43,7 +44,7 @@ from .schemas import (
     DuplicateGroup, DuplicateImageInfo,
     AiSettingsUpdate, WebResearchSettingsUpdate, ChatThreadCreate, ChatThreadUpdate, ChatSendRequest,
     DocumentAiSettingsUpdate, TranscriptBatchCreate, TranscriptBatchStart,
-    TranscriptPageUpdate, TranscriptPageImport, TranscriptBatchAsk,
+    TranscriptPageUpdate, DocumentTranscribeRequest, TranscriptPageImport, TranscriptBatchAsk,
 )
 from .image_utils import load_image_bgr, crop_thumbnail, IMAGE_EXTENSIONS
 from .ai import config as ai_config
@@ -2778,6 +2779,83 @@ def delete_document_primary_file(doc_id: int, db: Session = Depends(get_db)):
     return _doc_dict(d)
 
 
+@app.post("/api/documents/{doc_id}/transcribe")
+async def transcribe_document(doc_id: int, body: DocumentTranscribeRequest, db: Session = Depends(get_db)):
+    """Read one of this document's own files and append the text to its description.
+
+    Reuses `doc_reader.read_file` — the same single-page, tool-free call the
+    batch job makes — but the reading is not stored as a transcript of its own.
+    It goes where the document's prose already lives, and that is the whole
+    point: the description is editable with the tools the user already has
+    (Markdown, `@` mentions, citations), it is searched, it is exported, and the
+    assistant receives it in full with every document it lists. A second field
+    holding the same words would only give the two something to disagree about.
+
+    The reading is appended, never substituted: a description someone has
+    written is theirs. Markdown here renders with `breaks: true`, so the
+    verbatim line structure — which is where a register's entry boundaries are —
+    survives without reflowing anything.
+
+    It is written before the response returns even though the caller may hold an
+    unedited draft, because the call cost a page of the month's budget and a
+    cancelled modal must not throw that away. The caller is handed the raw
+    `text` as well, so it can append to its own draft rather than overwrite it.
+    """
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if d.is_text:
+        raise HTTPException(400, "A text document already has a body; there is nothing to read")
+
+    settings = ai_config.get_doc_settings()
+    if not settings['enabled']:
+        raise HTTPException(400, 'Document reading is switched off in the assistant settings')
+    if not settings['api_key']:
+        raise HTTPException(400, 'No API key is configured for the document reader')
+    quota = ai_config.doc_quota_status()
+    if quota['remaining'] <= 0:
+        raise HTTPException(400, f"This month's page budget is used up ({quota['used']}/{quota['limit']})")
+
+    # Which file: the named extra, or the document's primary one.
+    if body.file_id is not None:
+        f = db.get(DBDocumentFile, body.file_id)
+        if not f or f.document_id != doc_id:
+            raise HTTPException(404, "File not found on this document")
+        stored_name, filename, mime = f.stored_name, f.filename, f.mime_type
+    else:
+        stored_name, filename, mime = d.stored_name, d.filename, d.mime_type
+
+    path = _docs_dir() / stored_name
+    if not path.exists():
+        raise HTTPException(404, "File not found on disk")
+    if path.suffix.lower() not in doc_reader.supported_extensions():
+        raise HTTPException(400, f"This file type cannot be read: {path.suffix or '(none)'}")
+
+    try:
+        result = await doc_reader.read_file(path, lang=body.lang)
+    except Exception as exc:
+        # The reader maps every provider failure it knows about onto
+        # `PageRead.error`; anything that still escapes is reported as a
+        # failed read rather than as a crash, because from here it is one.
+        raise HTTPException(502, f"{type(exc).__name__}: {exc}")
+    if result.error:
+        # A failed read is reported, not stored: an empty transcript row would
+        # make `readable` claim a body that is not there.
+        raise HTTPException(502, result.error)
+
+    text = (result.text or '').strip()
+    if not text:
+        raise HTTPException(502, "The reader returned nothing for this file")
+
+    existing = (d.description or '').rstrip()
+    d.description = f"{existing}\n\n{text}" if existing else text
+    db.commit()
+    db.refresh(d)
+    # `text` is not folded into the serialiser: it is what this one call read,
+    # not a property of the document, and `_doc_dict` is the document's contract.
+    return {"document": _doc_dict(d), "text": text}
+
+
 @app.get("/api/documents/{doc_id}/files/{file_id}")
 def serve_document_file(doc_id: int, file_id: int, dl: bool = Query(default=False), db: Session = Depends(get_db)):
     f = db.get(DBDocumentFile, file_id)
@@ -3721,6 +3799,43 @@ def list_image_events(image_id: int, db: Session = Depends(get_db)):
         return []
     events = db.query(DBEvent).filter(DBEvent.id.in_(event_ids)).all()
     return [_event_dict(ev) for ev in events]
+
+
+# ── Places ────────────────────────────────────────────────────────────────────
+
+
+def _place_dict(row: dict) -> dict:
+    """One suggestion row. The levels are already split by `backend/places.py`.
+
+    Splitting happens here rather than in the browser so there is exactly one
+    heuristic deciding what a house number is; the client filters and ranks the
+    array it gets and never parses a place string itself.
+    """
+    return {
+        "value": row["value"],
+        "key": row["key"],
+        "count": row["count"],
+        "is_settlement": row["is_settlement"],
+        "settlement_key": row["settlement_key"],
+        "canonical": row["canonical"],
+        "detail": row["detail"],
+        "settlement": row["settlement"],
+        "region": row["region"],
+        "country": row["country"],
+    }
+
+
+@app.get("/api/places")
+def list_places(db: Session = Depends(get_db)):
+    """Every place the project already uses, most-used first.
+
+    Returned whole rather than behind a `q` parameter: a family project holds at
+    most a few hundred distinct places, and a list the client already has filters
+    as fast as the user types instead of once per keystroke over HTTP.
+
+    Deliberately **not** privacy-filtered — see `collect_place_usage`.
+    """
+    return [_place_dict(r) for r in places_mod.collect_place_usage(db)]
 
 
 # ── Auto-update ───────────────────────────────────────────────────────────────

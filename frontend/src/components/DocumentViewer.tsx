@@ -9,6 +9,7 @@ import NoteEditorComponent from './NoteEditor'
 import { renderMarkdown, renderTitleMentions, plainMentions } from '../markdown'
 import { docTypeLabel } from '../docTypes'
 import { DescriptionField, persistDescriptionCitations, linkMentionedPersons } from './DescriptionField'
+import DocumentReadButton from './DocumentReadButton'
 import { useBackdropClose } from '../modalBackdrop'
 
 function isImage(mime: string | null) { return mime?.startsWith('image/') ?? false }
@@ -682,6 +683,17 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
                   onClick={handleBodyClick} />
               </div>
             )}
+
+            {/* Reads the scan into the description above. Nothing is held
+                here: the refetch brings the appended text back through the
+                description block, which is the only place it lives. */}
+            <DocumentReadButton
+              doc={doc}
+              onRead={() => {
+                qc.invalidateQueries({ queryKey: ['docs-all'] })
+                for (const p of doc.persons) qc.invalidateQueries({ queryKey: ['person-docs', p.id] })
+              }}
+            />
 
             {/* Linked persons */}
             <div>

@@ -5,6 +5,7 @@ import { api } from '../api'
 import { useBackdropClose } from '../modalBackdrop'
 import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument, DocumentType, Source, Citation } from '../types'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
+import PlaceInput from './PlaceInput'
 import { useSettings, displayPersonName, displayInitials, useT, useDateLocale, formatPartialDate, monthNames } from '../SettingsContext'
 import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
@@ -1574,6 +1575,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     mutationFn: (patch: Parameters<typeof api.persons.update>[1]) => api.persons.update(person.id, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['persons'] })
+      // A place typed here is a suggestion everywhere else the moment it is
+      // saved — without this it only shows up after a reload.
+      qc.invalidateQueries({ queryKey: ['places'] })
       setEditingHeader(false)
       setEditingDetails(false)
       setEditingNotes(false)
@@ -1610,6 +1614,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
       api.relations.update(id, fields),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['relations'] })
+      qc.invalidateQueries({ queryKey: ['places'] })
       setExpandedRelId(null)
     },
   })
@@ -2095,9 +2100,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   <span className="text-xs text-zinc-500 block mb-1">{t('person.birth')}</span>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DatePartPicker value={detailsData.birth_date} onChange={v => setDetailsData(d => ({ ...d, birth_date: v }))} />
-                    <input value={detailsData.birth_place} onChange={e => setDetailsData(d => ({ ...d, birth_place: e.target.value }))}
+                    <PlaceInput value={detailsData.birth_place} onChange={v => setDetailsData(d => ({ ...d, birth_place: v }))}
                       placeholder={t('person.place')}
-                      className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                   <CitationsInline personId={person.id} fact="birth" citations={citationsFor('birth')} sources={sources} onMutated={invalidateCitations} />
                 </div>
@@ -2106,9 +2111,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   <span className="text-xs text-zinc-500 block mb-1">{t('person.death')}</span>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DatePartPicker value={detailsData.death_date} onChange={v => setDetailsData(d => ({ ...d, death_date: v }))} />
-                    <input value={detailsData.death_place} onChange={e => setDetailsData(d => ({ ...d, death_place: e.target.value }))}
+                    <PlaceInput value={detailsData.death_place} onChange={v => setDetailsData(d => ({ ...d, death_place: v }))}
                       placeholder={t('person.place')}
-                      className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                   <CitationsInline personId={person.id} fact="death" citations={citationsFor('death')} sources={sources} onMutated={invalidateCitations} />
                 </div>
@@ -2167,9 +2172,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   <span className="text-xs text-zinc-500 block mb-1">{t('person.christening')}</span>
                   <div className="flex items-center gap-1.5 flex-wrap pl-0">
                     <DatePartPicker value={detailsData.christening_date} onChange={v => setDetailsData(d => ({ ...d, christening_date: v }))} />
-                    <input value={detailsData.christening_place} onChange={e => setDetailsData(d => ({ ...d, christening_place: e.target.value }))}
+                    <PlaceInput value={detailsData.christening_place} onChange={v => setDetailsData(d => ({ ...d, christening_place: v }))}
                       placeholder={t('person.place')}
-                      className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                   <CitationsInline personId={person.id} fact="christening" citations={citationsFor('christening')} sources={sources} onMutated={invalidateCitations} />
                 </div>
@@ -2178,9 +2183,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                   <span className="text-xs text-zinc-500 block mb-1">{t('person.burial')}</span>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <DatePartPicker value={detailsData.burial_date} onChange={v => setDetailsData(d => ({ ...d, burial_date: v }))} />
-                    <input value={detailsData.burial_place} onChange={e => setDetailsData(d => ({ ...d, burial_place: e.target.value }))}
+                    <PlaceInput value={detailsData.burial_place} onChange={v => setDetailsData(d => ({ ...d, burial_place: v }))}
                       placeholder={t('person.place')}
-                      className="flex-1 min-w-20 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                   <CitationsInline personId={person.id} fact="burial" citations={citationsFor('burial')} sources={sources} onMutated={invalidateCitations} />
                 </div>
@@ -2389,20 +2394,20 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                                 value={marriageEdits[rel.id]?.marriage_year ?? ''}
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], marriage_year: e.target.value } }))}
                                 className="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
-                              <input placeholder={t('person.location')}
+                              <PlaceInput placeholder={t('person.location')}
                                 value={marriageEdits[rel.id]?.marriage_place ?? ''}
-                                onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], marriage_place: e.target.value } }))}
-                                className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                                onChange={v => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], marriage_place: v } }))}
+                                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                             </div>
                             <div className="flex gap-1.5">
                               <input type="number" placeholder={t('person.divorceYear')}
                                 value={marriageEdits[rel.id]?.divorce_year ?? ''}
                                 onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], divorce_year: e.target.value } }))}
                                 className="w-24 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
-                              <input placeholder={t('person.location')}
+                              <PlaceInput placeholder={t('person.location')}
                                 value={marriageEdits[rel.id]?.divorce_place ?? ''}
-                                onChange={e => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], divorce_place: e.target.value } }))}
-                                className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                                onChange={v => setMarriageEdits(m => ({ ...m, [rel.id]: { ...m[rel.id], divorce_place: v } }))}
+                                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                             </div>
                             <CitationsInline
                               personId={person.id}

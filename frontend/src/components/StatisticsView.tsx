@@ -2,6 +2,8 @@ import { useMemo } from 'react'
 import type { PersonFull, Relation } from '../types'
 import { api } from '../api'
 import { useT } from '../SettingsContext'
+import { usePlaces } from './PlaceInput'
+import { placeKey } from '../placeKey'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -68,6 +70,15 @@ function BarList({ items, maxCount, color = 'bg-brand-500' }: {
 
 export default function StatisticsView({ persons, relations }: { persons: PersonFull[]; relations: Relation[] }) {
   const t = useT()
+  const { data: placeRows = [] } = usePlaces()
+  // Raw place string → the settlement and what is above it, as split by
+  // `backend/places.py`. Taking the first comma part instead — which is what
+  // this did before — files "Fő utca 12, Példafalva" under the street, so one
+  // village with a house number written in front of it counts as several.
+  const canonicalByKey = useMemo(
+    () => new Map(placeRows.filter(r => !r.is_settlement).map(r => [r.key, r.canonical])),
+    [placeRows],
+  )
   const s = useMemo(() => {
     const total = persons.length
     const maleCount = persons.filter(p => p.sex === 'M').length
@@ -94,9 +105,9 @@ export default function StatisticsView({ persons, relations }: { persons: Person
       8
     )
 
-    // Birth places — only city (first part before comma)
+    // Birth places — the settlement and above, address detail dropped
     const birthPlaces = countTop(
-      persons.map(p => p.birth_place ? p.birth_place.split(',')[0].trim() : null),
+      persons.map(p => canonicalByKey.get(placeKey(p.birth_place)) ?? p.birth_place?.trim() ?? null),
       8
     )
 
@@ -152,7 +163,7 @@ export default function StatisticsView({ persons, relations }: { persons: Person
       withBirthYear, withDeathYear, withPhoto, withFirstName, withLastName,
       generationDepth,
     }
-  }, [persons, relations])
+  }, [persons, relations, canonicalByKey])
 
   if (!persons.length) {
     return (

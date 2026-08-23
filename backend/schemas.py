@@ -264,6 +264,17 @@ class TranscriptBatchStart(BaseModel):
     page_ids: list[int] = []
 
 
+class DocumentTranscribeRequest(BaseModel):
+    """Read one of a document's own files with the vision model.
+
+    `file_id` names an entry in `document_files`; omitted means the document's
+    primary file. A multi-page scan is several files, and only the caller knows
+    which page is on screen.
+    """
+    file_id: Optional[int] = None
+    lang: str = 'en'
+
+
 class TranscriptPageUpdate(BaseModel):
     """A hand-corrected transcript. Storing an edit marks the page so a later
     re-read cannot quietly discard the user's reading of a `[?]`."""

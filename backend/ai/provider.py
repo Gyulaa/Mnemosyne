@@ -260,14 +260,22 @@ class AnthropicProvider:
 
         client = self._client()
         try:
-            msg = await client.messages.create(
+            # Streamed, not because the caller wants tokens as they arrive, but
+            # because the SDK refuses a non-streaming request whose `max_tokens`
+            # could take it past ten minutes — and a page budget sized for a
+            # dense register page is well past that line. It raised a bare
+            # ValueError before the request was even sent, which arrived as a
+            # 500 with no explanation. `get_final_message()` gives back exactly
+            # what `create()` did.
+            async with client.messages.stream(
                 model=model,
                 max_tokens=max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": content}],
                 thinking={"type": "adaptive"},
                 output_config={"effort": self._effort},
-            )
+            ) as stream:
+                msg = await stream.get_final_message()
             u = msg.usage
             text = "".join(b.text for b in msg.content if b.type == "text")
             if not text.strip() and msg.stop_reason == "max_tokens":

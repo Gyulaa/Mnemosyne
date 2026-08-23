@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { useQueryClient } from '@tanstack/react-query'
-import type { PersonNote, DocumentNote, NoteCitation, Source, PersonEvent, PersonFull, Relation } from '../types'
+import { useQueryClient, useQuery } from '@tanstack/react-query'
+import type { PersonNote, DocumentNote, NoteCitation, Source, PersonEvent, PersonFull, Relation, PersonDocument } from '../types'
 import { api } from '../api'
-import { renderMarkdown } from '../markdown'
+import { renderMarkdown, plainMentions } from '../markdown'
+import { docTypeLabel } from '../docTypes'
 import { useFamilyContext, FamilyContextLines } from '../familyContext'
 import { caretAnchor, useCaretPopup, type CaretAnchor } from '../caretPopup'
 import { useBackdropClose } from '../modalBackdrop'
@@ -70,11 +71,14 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
+  const { data: allDocs = [] } = useQuery<PersonDocument[]>({ queryKey: ['docs-all'], queryFn: api.documents.listAll })
+
   // Cite picker state
   const [showCitePicker, setShowCitePicker] = useState(false)
-  const [citeTab, setCiteTab] = useState<'source' | 'custom'>('source')
+  const [citeTab, setCiteTab] = useState<'document' | 'source' | 'custom'>('document')
   const [citeSearch, setCiteSearch] = useState('')
   const [customCiteText, setCustomCiteText] = useState('')
+  const [citeErr, setCiteErr] = useState<string | null>(null)
 
   // @ mention state
   const [mentionCtx, setMentionCtx] = useState<{ query: string; atStart: number } | null>(null)
@@ -169,6 +173,15 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
     setCitations(prev => [...prev, optimistic])
     setShowCitePicker(false)
     setCiteSearch('')
+  }
+
+  async function citeDocument(d: PersonDocument) {
+    try {
+      const src = await api.documents.promoteToSource(d.id, d.title || d.filename)
+      insertCiteAtCursor(src)
+    } catch (e) {
+      setCiteErr(e instanceof Error ? e.message : 'Failed to cite document')
+    }
   }
 
   function insertCustomCite() {
@@ -272,6 +285,12 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
     setContent(prev => prev.replace(new RegExp(`\\[${markerId}\\]`, 'g'), ''))
   }
 
+  const selfDocId = 'document_id' in note ? note.document_id : null
+  const citeableDocs = allDocs
+    .filter(d => d.id !== selfDocId)
+    .filter(d => plainMentions(d.title || d.filename).toLowerCase().includes(citeSearch.toLowerCase()))
+    .slice(0, 40)
+
   const filteredSources = sources.filter(s =>
     (s.citation_count > 0 || s.document_id !== null || s.event_id !== null) &&
     s.title.toLowerCase().includes(citeSearch.toLowerCase())
@@ -302,7 +321,7 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
         <div className="relative">
           <button
             type="button"
-            onClick={() => { setShowCitePicker(p => !p); setCiteSearch(''); setCiteTab('source'); setCustomCiteText('') }}
+            onClick={() => { setShowCitePicker(p => !p); setCiteSearch(''); setCiteTab('document'); setCustomCiteText(''); setCiteErr(null) }}
             className="flex items-center gap-1 px-2 py-0.5 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-900/30 rounded transition-colors font-medium"
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -315,6 +334,13 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
             <div className="absolute left-0 top-full mt-1 w-68 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 overflow-hidden" style={{ width: 272 }}>
               {/* Tabs */}
               <div className="flex border-b border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setCiteTab('document')}
+                  className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${citeTab === 'document' ? 'text-amber-400 border-b-2 border-amber-500' : 'text-zinc-500 hover:text-zinc-300'}`}
+                >
+                  {t('notes.citeDocuments')}
+                </button>
                 <button
                   type="button"
                   onClick={() => setCiteTab('source')}
@@ -331,7 +357,36 @@ export default function NoteEditor({ note, sources, persons = [], relations = []
                 </button>
               </div>
 
-              {citeTab === 'source' ? (
+              {citeTab === 'document' ? (
+                <>
+                  <div className="p-2 border-b border-zinc-800">
+                    <input
+                      autoFocus
+                      type="search"
+                      value={citeSearch}
+                      onChange={e => setCiteSearch(e.target.value)}
+                      placeholder={t('docs.search')}
+                      className="w-full bg-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none"
+                    />
+                  </div>
+                  <div className="max-h-44 overflow-y-auto">
+                    {citeableDocs.length === 0 ? (
+                      <p className="text-xs text-zinc-600 px-3 py-3 italic">{t('docs.noResults')}</p>
+                    ) : (
+                      citeableDocs.map(d => (
+                        <button key={d.id} type="button" onClick={() => citeDocument(d)}
+                          className="w-full text-left px-3 py-2 hover:bg-zinc-800 transition-colors">
+                          <p className="text-xs text-zinc-100 truncate">{plainMentions(d.title || d.filename)}</p>
+                          <p className="text-xs text-zinc-500">
+                            {[docTypeLabel(t, d.doc_type, undefined), d.year].filter(Boolean).join(' · ')}
+                          </p>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  {citeErr && <p className="text-xs text-red-400 px-3 py-1.5">{citeErr}</p>}
+                </>
+              ) : citeTab === 'source' ? (
                 <>
                   <div className="p-2 border-b border-zinc-800">
                     <input

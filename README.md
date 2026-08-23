@@ -255,7 +255,7 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 | Backend | FastAPI, ~160 REST endpoints in one module (`backend/main.py`), SQLAlchemy over SQLite |
 | Frontend | React 19 + TypeScript + Vite, Tailwind v4, react-query; one large component per tab in `frontend/src/components/` |
 | Data | one project directory per family archive: `projects/<id>/` with its own DB, documents and `project.json` |
-| Schema | version stamped in the DB, idempotent migrations at startup (currently v16) |
+| Schema | version stamped in the DB, idempotent migrations at startup (currently v17) |
 | Packaging | PyInstaller onedir; `launcher.py` starts uvicorn on a free local port and opens the browser |
 | CI | `.github/workflows/build.yml` — a push to `main` builds and publishes the Windows and macOS bundles |
 | Tests | none; changes are verified by exercising the real endpoint or screen |
@@ -279,6 +279,7 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 | The AI assistant — tools, prompt, providers, models | [AI assistant (implementation detail)](#ai-assistant-implementation-detail) | `backend/ai/`, `AssistantPanel.tsx`, `AssistantSetup.tsx` |
 | Reading scanned documents, triaging a folder of records | [Reading scanned documents](#reading-scanned-documents) | `ai/doc_reader.py`, `transcriber.py`, `ScanReadModal.tsx`, transcript endpoints in `main.py` |
 | Connections between people from shared photos | [Connections graph](#connections-graph) | `ConnectionsTab.tsx`, `graphLayout.ts`, connection endpoints in `main.py` |
+| Place names, autocomplete, the place hierarchy | [Places](#places) | `backend/places.py`, `components/PlaceInput.tsx`, `frontend/src/placeKey.ts` |
 | Global search, or the relationship finder | [Global Search](#global-search), [Relationship Path Finder](#relationship-path-finder) | `SearchPalette.tsx`, `RelationPathModal.tsx` |
 | Updating, packaging, bundled files | [Auto-update](#auto-update-implementation-detail) | `updater.py`, `launcher.py`, `mnemosyne.spec`, `UpdateBanner.tsx` |
 | A user-visible string, a date, a language issue | [Keeping this document up to date](#keeping-this-document-up-to-date) | `i18n/translations.ts`, `SettingsContext.tsx` |
@@ -533,6 +534,74 @@ Document payloads carry the individual name parts (`_doc_person_dict` in `main.p
 **`@` mentions are one implementation**, in `frontend/src/mentions.tsx`. `useAtMention(onPick)` owns the whole behaviour — open/closed state, the query, the keyboard cursor, the caret anchor and the rendered list — and hands back `sync()` (call it from the field's `onChange`), `handleKeyDown()` (returns true when it consumed the key) and a ready-to-render `popup`. The caller supplies only what an accepted mention *writes*, because that genuinely differs: a Markdown body gets `@[name](#pid-N)`, a plain-text title gets the bare name.
 
 This module exists because the three fields that have mentions once carried three near-copies of the same code, and they drifted — one grew the relative lines, another kept name-only rows, and the rule above quietly stopped holding in the newest one. Anything that would have been a fourth copy goes here instead.
+
+### Places
+
+A place is one free-text column per fact — `persons.birth_place`,
+`persons.christening_place`, `persons.death_place`, `persons.burial_place`,
+`relations.marriage_place`, `relations.divorce_place`, `events.place`. Those seven
+columns are enumerated once, in `PLACE_COLUMNS` in `backend/places.py`, and nothing
+else in the codebase lists them: a new place column added to the model has to be
+added there or it stays out of the suggestions.
+
+**The text is a hierarchy, written finest-first and separated by commas** — the same
+convention the GEDCOM exporter already emits as `PLAC`:
+
+```
+"Fő utca 12, Példafalva, Somogy, Magyarország"
+  │            │           │        │
+  detail    settlement   region  country
+```
+
+The finest level is where a street and a house number go. That is a records
+concern rather than a tidiness one: the same house number in two parish entries is
+the same family home, and a house number swallowed into the settlement name turns
+every address into a separate place. Reading it this way needed **no schema change**
+— the columns still hold exactly what was typed.
+
+**The split happens once, in `backend/places.py`, and never in the browser.**
+`GET /api/places` returns rows that are already divided into `detail` /
+`settlement` / `region` / `country`, plus `canonical` (everything but the detail)
+and `key` (the folded string). The frontend filters and ranks that array and does
+not parse a place, for the same reason `treeGeometry.ts` owns card sizes alone: two
+heuristics for "is this a house number" would drift, and the drift would be
+invisible until a map pin landed in the wrong village.
+
+`place_parts()` treats a leading level as a detail when it contains a digit or ends
+in a street word (`utca`, `út`, `tér`, `köz`, `street`, …). The word list is
+deliberately short — over-eager matching demotes a settlement to a house number,
+which costs the place its identity, while a missed detail merely leaves a house
+number in the label. One case has no comma at all and is handled separately: a
+register writes `Példafalva 47. sz.`, so a trailing house number is cut off the
+settlement it was written onto.
+
+**`GET /api/places` returns two kinds of row in one list.** Every distinct full
+string as written, with how many facts use it (spellings that differ only in comma
+spacing are merged and the most common one represents them); and a settlement-level
+row, flagged `is_settlement`, for each settlement that is *only* ever written with
+an address in front of it — so somebody who wants the village alone does not have
+to delete a stranger's house number first. The whole list comes back with no `q`
+parameter, because a family project holds at most a few hundred distinct places and
+a list the client already has filters as fast as the user types.
+
+**It is deliberately not privacy-filtered.** `is_private` governs what leaves the
+machine, not what its owner sees in their own project, so a private event's place is
+a suggestion like any other.
+
+**Every place field in the UI is `components/PlaceInput.tsx`**, never a bare
+`<input>`: the four on the person's details form, the two on the spouse row, and the
+one in `EventEditor` — which is shared by three tabs, so that single field covers
+all of them. The dropdown never overrides what was typed (free text is always a
+valid place) and only swallows Enter when a row has actually been arrowed onto,
+so typing a brand-new place does not need an Escape first. After any mutation that
+writes a place, `['places']` is invalidated alongside the resource's own keys.
+
+`frontend/src/placeKey.ts` holds the one client-side helper — folding a *typed
+query*, or a raw column value being looked up among the returned rows. It is a
+plain module with no React and no `api.ts` import so it can be run from a Node
+script and checked against `fold(normalize_raw(…))` in `backend/places.py`; the two
+have to agree exactly, and Hungarian `ő`/`ű` decompose differently from plain
+acutes, which is precisely the sort of disagreement nothing on screen would show.
 
 ### Global Search
 - **Ctrl+K** / **Cmd+K** — searches persons (name, nickname), events, documents, and note content simultaneously
@@ -803,6 +872,49 @@ Two rules in that prompt exist because of how these records actually read:
 The calls it makes are stored on `transcript_batches.analysis_steps` and shown beside the report, for the same reason `chat_tool_calls` exists: in genealogy the lookups are what make an answer checkable instead of merely fluent. Results are stored as a **preview** plus a length, because a few full tool results would dwarf the report they justify.
 
 It runs on the `query_only` pool (`get_readonly_db`), not the job's writable session. The read-only guarantee has three independent layers and a caller being trusted is not a reason to drop one.
+
+### Reading a document that is already in the project
+
+The batch reader answers "which of these two hundred pages matter". The other
+half of the problem is a scan the user has already filed and now wants the text
+of, and that is `POST /api/documents/{id}/transcribe`, offered by
+`DocumentReadButton.tsx` on both screens a document is worked on from: under the
+description field in `EditDocModal`, and in the viewer's metadata column.
+
+It reuses `doc_reader.read_file` unchanged: one page, one shot, no tools. What
+is worth understanding is where the result goes — **appended to the document's
+description**, not stored as a reading of its own.
+
+**Why there is no transcript field here.** A second field holding the text would
+have to be edited, searched, rendered, exported and reasoned about separately
+from the description, and the two would start disagreeing the moment either was
+touched. The description already goes everywhere the text needs to go: it takes
+Markdown, `@` mentions and citations through `DescriptionField`, `search_text`
+includes it, an export carries it, and `ai/tools.py`'s `_doc_dict` hands the
+assistant the **whole** description with every document it lists — so a reading
+that lands there is available without even a `get_document` call.
+
+Four details are load-bearing:
+
+- **Appended, never substituted.** What somebody wrote about a document is
+  theirs. `appendReading()` in `DocumentReadButton.tsx` and the endpoint apply
+  the same rule — one blank line between what was there and what was read — so a
+  locally edited draft and a server-written description cannot come out spaced
+  differently.
+- **Markdown renders with `breaks: true`,** so the verbatim line structure
+  survives into the rendered description. That matters: in a register the line
+  breaks are where the entry boundaries are.
+- **It is saved before the response returns,** even though `EditDocModal` may be
+  holding an unsaved draft — the call spent a page of the month's budget and a
+  cancelled modal must not throw that away. The endpoint therefore returns the
+  raw `text` alongside the updated document, and the modal appends *that* to its
+  own draft rather than overwriting it with the server's copy.
+- **A failed or empty read writes nothing** and returns 502. An empty append
+  would spend the budget and leave a blank line behind.
+
+The endpoint is the only thing here that touches `transcript_pages`: it no
+longer does. Those rows belong to the batch reader alone, which is where
+`readable`, `transcribed` and `get_document`'s transcript body still come from.
 
 ### Which provider does which job
 
@@ -1104,6 +1216,7 @@ Image-Organizer/
 │   ├── project_manager.py   # Multi-project management
 │   ├── updater.py           # Auto-update state machine + platform scripts
 │   ├── export_utils.py      # ZIP export/import pipeline
+│   ├── places.py            # Place hierarchy parser + project-wide place usage
 │   ├── gedcom_import.py     # GEDCOM .ged importer
 │   ├── gedcom_export.py     # GEDCOM 5.5.1 exporter
 │   └── image_utils.py       # HEIC conversion, thumbnail cropping
@@ -1117,6 +1230,7 @@ Image-Organizer/
 │       ├── familyContext.tsx          # Close-relative lookup + lines shown in person pickers
 │       ├── markdown.ts                # Shared Markdown renderer (@ mentions, [n] citations)
 │       ├── graphLayout.ts             # Connections graph layout (components, betweenness, packing)
+│       ├── placeKey.ts                # Place folding key, kept in step with backend/places.py
 │       ├── caretPopup.ts              # Caret coordinates in a textarea + viewport-safe popup placement
 │       ├── i18n/
 │       │   └── translations.ts        # EN/HU translation strings (flat dot-notation keys)
@@ -1139,6 +1253,7 @@ Image-Organizer/
 │           ├── DocumentViewer.tsx     # Document preview modal (renders Markdown bodies)
 │           ├── TextDocumentEditor.tsx # In-app Markdown documents + citations + photos
 │           ├── PersonSelect.tsx       # Shared person pickers (multi-select, filter combobox)
+│           ├── PlaceInput.tsx         # Shared place field with suggestions from the project
 │           ├── GedcomImportModal.tsx  # GEDCOM import wizard
 │           ├── UpdateBanner.tsx       # Auto-update icon + modal
 │           ├── StatisticsView.tsx
@@ -1179,6 +1294,7 @@ Each project has its own directory (`projects/<id>/`) with its own SQLite databa
 | v13→v14 | `transcript_pages.corroboration` — the relationship a page and the tree agree on |
 | v14→v15 | `citations.relation_id` — a marriage's sources belong to the marriage rather than to one spouse |
 | v15→v16 | `transcript_questions` — the conversation about a batch of scans |
+| v16→v17 | `transcript_pages.batch_id` becomes nullable. Nothing writes NULL any more — per-document readings go into the description instead — but the relaxation stays: undoing it in SQLite means another table rebuild, for nothing, and would leave new projects with a stricter column than existing ones |
 
 `Base.metadata.create_all()` runs before the migration block, so new *tables* appear on their own; a new *column* on an existing table still needs an explicit `ALTER TABLE` in the version block.
 
@@ -1340,6 +1456,7 @@ Each entry below is **trigger → the files that must change together**. They ex
 - **New popover opened inside the carousel's description panel** → drop it leftward (`absolute right-0`). The panel is docked to the viewport's right edge, so a `left-0` dropdown runs off-screen and its far end becomes unclickable — this shipped once in the cite picker
 - **New popup anchored to a text field's caret** (a slash menu, or anything that is not an `@` mention — those go through `mentions.tsx`) → take the position from `caretAnchor()` and `useCaretPopup()` in `frontend/src/caretPopup.ts`, which handle a `<textarea>` and a single-line `<input>` alike (an input never wraps, so its mirror is measured unconstrained and its caret's "line" is the field itself). Pinning the popup to the field's own rect and pushing it upwards is what sent the mention list off the top of the screen in the document editor, where the textarea starts high in the viewport
 - **New UI that adds a child** (a `parent` relation written from a person's page) → ask which spouse the child also belongs to and write **both** rows, the way the add-child picker in `PersonPanel.tsx` does. A couple is not stored anywhere — it *is* the child's two `parent` rows — so a screen that writes only one leaves the other parent's page wrong and the user adding the same child a second time from the spouse. Preselect the spouse when there is exactly one, keep "no co-parent" as an explicit choice rather than the default, and check the two-parents-per-child cap client-side: the server refuses the third row with a 400 that arrives as a raw error
+- **New field that holds a place** → use `PlaceInput` from `components/PlaceInput.tsx` rather than an `<input>`, add the column to `PLACE_COLUMNS` in `backend/places.py` (nothing else enumerates them, so a column missing there is a place the suggestions and the statistics cannot see), and invalidate `['places']` in the mutation that writes it alongside the resource's own keys. Never split a place string in the browser — the levels arrive already split, and a second heuristic for what a house number is drifts silently. See *Places*
 - **New person picker anywhere in the UI** → build it on `useFamilyContext` + `<FamilyContextLines>` from `familyContext.tsx`, or on `PersonMultiSelect` / `PersonFilterCombobox` from `components/PersonSelect.tsx`. Rolling a fourth hand-written relative lookup is how the pickers drifted apart last time
 - **New year/month/day date input anywhere in the UI** → use `DatePartPicker`, exported from `EventTimeline.tsx` (year field, then a month `<select>` once a year is entered, then a day `<select>` once a month is entered). It produces the same partial-ISO string (`YYYY` | `YYYY-MM` | `YYYY-MM-DD`) that `formatPartialDate()` reads, so a value it writes is a value every other date display already knows how to render
 - **New dismissible banner or other "I've seen this" UI state** → persist it, in `localStorage` for a per-device preference. `App.tsx` mounts each tab behind a ternary, so a tab is fully **unmounted** when you navigate away and plain `useState` is back to its initial value the moment you come back — a dismiss that only sets component state looks like it works and reappears a click later. Where the thing being dismissed is a *count* that can grow (the Scan tab's duplicate banner), store the count that was dismissed rather than a boolean, so the banner returns when there is genuinely something new to see
@@ -1349,6 +1466,7 @@ Each entry below is **trigger → the files that must change together**. They ex
 - **Relaxing or changing a column constraint (not adding a column)** → SQLite has no `ALTER COLUMN`, so follow `_drop_document_owner_not_null()` in `database.py`: guard on `PRAGMA table_info` for idempotency, derive the new DDL from `sqlite_master` instead of hardcoding a column list, and run it on the **raw DBAPI connection with no transaction open** — `PRAGMA foreign_keys=OFF` is silently ignored inside one, and with FKs on the `DROP TABLE` fires every child table's `ON DELETE CASCADE`. Verify by running the backend twice against a *copy* of a real project DB and comparing child-table row counts before and after
 - **A row shape that can now be NULL where it never was** (an owner column, a parent link) → the copy-then-filter export is the place it leaks: `x IN (SELECT …)` is never true of NULL, so a row the old filter caught now passes straight through into `build_export_db`'s output. Add the explicit `IS NULL` case to `_delete_persons` in `export_utils.py`, decide what `gedcom_export.py` and `merge_import.py` should do with it, and open the produced ZIP to check — the endpoint returns 200 either way
 - **New per-turn prompt parameter** (like `lang`, `name_order`, `style`) → add the field to `ChatSendRequest` in `schemas.py`, thread it through `run_turn` in `ai/orchestrator.py` into `build_system_blocks` in `ai/primer.py`, and send it from `AssistantPanel.tsx` on every `api.ai.stream()` call (update the body type in `api.ts` too). These are per-device request values, not stored on the thread or the project — and because the instructions block sits inside the cached prefix (see *Response style*), changing one mid-conversation costs a full-price prompt rather than a cached one; that is expected, not a bug
+- **A new way to produce text about a document** → append it to `documents.description` rather than giving it a field. The description is already edited, searched, exported, and handed to the assistant in full by `ai/tools.py`'s `_doc_dict`; a parallel field means two things to keep in step and nothing gained. Files: `main.py` (the endpoint), `DocumentReadButton.tsx` (`appendReading`, shared by both callers), `EditDocModal` + `DocumentViewer`. `transcript_pages` is the batch reader's, and stays that way
 - **New AI assistant tool** → register it in `build_registry()` in `ai/tools.py` with `mutates=False` (the registry rejects anything else); apply the `_priv_ok` privacy filter; return name *parts* rather than `persons.name`; add a `chat.tool.<name>` label to **both** dictionaries in `i18n/translations.ts`. Prefer one fat tool over several thin ones — push the computation into the tool, as `get_relationship_path` does with the BFS and `get_ancestors` does with the line walk. Two rules learned the hard way: an empty result must carry enough context that it cannot be read as an absent fact, and anything the model would otherwise have to *guess* — a stored enum value, or whether any material exists at all — belongs in the tool's error path, in `build_inventory()`, or in the skeleton's `material` marks (`_content_marks` in `ai/primer.py`), never in an instruction telling the model to remember to check
 - **New table holding prose** (notes, descriptions, bodies — anything a person writes) → it must reach the assistant in three places or it is invisible to every answer: the search loop and the listing in `_t_search_text` / `_t_list_written_material`, the counts in `build_inventory()`, and — if it hangs off a person — the `material` marks in `_content_marks` (`ai/primer.py`). Prose the assistant cannot see is prose it will report as never having been written.
 - **New AI tool with an external network dependency** (anything beyond a local SQLite read) → beyond the plain "New AI assistant tool" entry above: register it in its own registry (`ai/web_tools.py`'s `WEB_REGISTRY` is the worked example), never `tools.py`'s always-on `REGISTRY`; gate both its tool *definitions* and its handler on its own `config.json` block's enabled+key state (`orchestrator.py`'s `web_ready` check); give it its own consent/privacy disclosure in `AssistantSetup.tsx`. Folding it into the existing `allow_private` toggle is wrong — that toggle answers a different question (visibility of the user's own private data, not whether anything leaves the machine to a new third party)

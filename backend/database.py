@@ -500,7 +500,9 @@ class TranscriptPage(Base):
     """
     __tablename__ = "transcript_pages"
     id = Column(Integer, primary_key=True, index=True)
-    batch_id = Column(Integer, ForeignKey("transcript_batches.id", ondelete="CASCADE"), nullable=False, index=True)
+    # NULL for a transcript that belongs to a document rather than to a folder
+    # scan — see the v16 -> v17 migration.
+    batch_id = Column(Integer, ForeignKey("transcript_batches.id", ondelete="CASCADE"), nullable=True, index=True)
     source_path = Column(String, nullable=True)   # absolute path of the file on disk
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
     filename = Column(String, nullable=False)
@@ -1159,6 +1161,72 @@ def init_db_schema(engine):
             conn.execute(text("UPDATE schema_version SET version = 16"))
             conn.commit()
 
+        # v16 -> v17: transcript_pages.batch_id becomes nullable, so a document
+        # already in the project can carry a transcript without inventing a
+        # batch to hang it off. A synthetic batch would be actively dangerous:
+        # batch_id is ON DELETE CASCADE, so deleting that placeholder would
+        # take every document transcript with it.
+        #
+        # The guard is the column, not the version. The helper declines quietly
+        # in two cases — no table yet, and a stored DDL it does not recognise —
+        # and a version bump sitting next to it would record success either way,
+        # locking the database into a state a version-only check never revisits.
+        # `PRAGMA table_info` is the fact; the stored version is a claim about
+        # it. Re-checking costs one PRAGMA per startup once the column is right.
+        _drop_transcript_batch_not_null(conn.connection.dbapi_connection)
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 17:
+            conn.execute(text("UPDATE schema_version SET version = 17"))
+            conn.commit()
+
+
+
+def _drop_transcript_batch_not_null(raw) -> None:
+    """Rebuild `transcript_pages` with a nullable `batch_id`. Idempotent.
+
+    Same create-copy-drop-rename dance as `_drop_document_owner_not_null`, and
+    the same two load-bearing details: foreign keys **off** while the old table
+    is dropped, and the new DDL derived from the stored one so a column added
+    to the model later is carried over rather than silently lost.
+    """
+    cols = raw.execute("PRAGMA table_info(transcript_pages)").fetchall()
+    if not cols:
+        return                                  # fresh database — create_all already made it nullable
+    batch = next((c for c in cols if c[1] == "batch_id"), None)
+    if batch is None or not batch[3]:
+        return                                  # already nullable
+
+    ddl = raw.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='transcript_pages'"
+    ).fetchone()[0]
+    new_ddl = re.sub(r"(\bbatch_id\s+INTEGER)\s+NOT\s+NULL", r"\1", ddl, count=1, flags=re.IGNORECASE)
+    if new_ddl == ddl:
+        return                                  # unrecognised DDL — leave the table alone rather than guess
+    new_ddl = re.sub(r"^\s*CREATE\s+TABLE\s+[\"'`\[]?transcript_pages[\"'`\]]?",
+                     "CREATE TABLE transcript_pages_rebuild", new_ddl, count=1, flags=re.IGNORECASE)
+
+    col_list = ", ".join(f'"{c[1]}"' for c in cols)
+    raw.execute("PRAGMA foreign_keys=OFF")
+    raw.execute("PRAGMA legacy_alter_table=ON")
+    try:
+        raw.execute("BEGIN")
+        raw.execute(new_ddl)
+        raw.execute(f"INSERT INTO transcript_pages_rebuild ({col_list}) SELECT {col_list} FROM transcript_pages")
+        raw.execute("DROP TABLE transcript_pages")
+        raw.execute("ALTER TABLE transcript_pages_rebuild RENAME TO transcript_pages")
+        raw.execute("CREATE INDEX IF NOT EXISTS ix_transcript_pages_id ON transcript_pages (id)")
+        raw.execute("CREATE INDEX IF NOT EXISTS ix_transcript_pages_batch_id ON transcript_pages (batch_id)")
+        raw.execute("CREATE INDEX IF NOT EXISTS ix_transcript_pages_document_id ON transcript_pages (document_id)")
+        violations = raw.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(f"transcript_pages rebuild would orphan {len(violations)} row(s)")
+        raw.commit()
+    except Exception:
+        raw.rollback()
+        raise
+    finally:
+        raw.execute("PRAGMA legacy_alter_table=OFF")
+        raw.execute("PRAGMA foreign_keys=ON")
 
 def _drop_document_owner_not_null(raw) -> None:
     """Rebuild `documents` with a nullable `person_id`. Idempotent.
