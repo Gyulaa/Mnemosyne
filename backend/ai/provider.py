@@ -59,6 +59,22 @@ class ProviderError:
 ProviderEvent = TextDelta | ToolUseRequested | TurnComplete | ProviderError
 
 
+@dataclass
+class AnalysisResult:
+    """One non-streamed, tool-free call over a file. `error` set means nothing
+    was read — callers must check it rather than treating "" as an empty page.
+    """
+    text: str = ""
+    usage: Usage = field(default_factory=Usage)
+    error: ProviderError | None = None
+
+
+# file blocks handed to `analyze_files`, one of
+#   {"type": "text",  "text": str}
+#   {"type": "image", "media_type": "image/jpeg", "data": <base64 str>}
+#   {"type": "pdf",   "media_type": "application/pdf", "data": <base64 str>}
+
+
 @runtime_checkable
 class LLMProvider(Protocol):
     async def stream_turn(
@@ -70,6 +86,16 @@ class LLMProvider(Protocol):
         tools: list[dict[str, Any]],
         max_tokens: int,
     ) -> AsyncIterator[ProviderEvent]:
+        ...
+
+    async def analyze_files(
+        self,
+        *,
+        model: str,
+        system: str,
+        blocks: list[dict[str, Any]],
+        max_tokens: int,
+    ) -> AnalysisResult:
         ...
 
 
@@ -200,7 +226,114 @@ class AnthropicProvider:
                 pass
 
 
+    async def analyze_files(
+        self,
+        *,
+        model: str,
+        system: str,
+        blocks: list[dict[str, Any]],
+        max_tokens: int = 8000,
+    ) -> AnalysisResult:
+        """One shot over one page: no tools, no streaming, no history.
+
+        PDFs go up as a native `document` block rather than being rasterised
+        here — the provider renders the pages itself, which is why this app
+        needs no PDF renderer in the bundle (`PyMuPDF` would add a compiled
+        binary and an AGPL question for exactly this one job).
+        """
+        import anthropic
+
+        content: list[dict[str, Any]] = []
+        for b in blocks:
+            if b["type"] == "text":
+                content.append({"type": "text", "text": b["text"]})
+            elif b["type"] == "image":
+                content.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": b["media_type"], "data": b["data"]},
+                })
+            elif b["type"] == "pdf":
+                content.append({
+                    "type": "document",
+                    "source": {"type": "base64", "media_type": "application/pdf", "data": b["data"]},
+                })
+
+        client = self._client()
+        try:
+            msg = await client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": content}],
+                thinking={"type": "adaptive"},
+                output_config={"effort": self._effort},
+            )
+            u = msg.usage
+            text = "".join(b.text for b in msg.content if b.type == "text")
+            if not text.strip() and msg.stop_reason == "max_tokens":
+                return AnalysisResult(error=ProviderError(
+                    "The model hit its output limit before writing anything. "
+                    "Raise the budget or lower the effort.",
+                    kind="bad_request",
+                ))
+            return AnalysisResult(
+                text=text,
+                usage=Usage(
+                    input_tokens=getattr(u, "input_tokens", 0) or 0,
+                    output_tokens=getattr(u, "output_tokens", 0) or 0,
+                    cache_read_tokens=getattr(u, "cache_read_input_tokens", 0) or 0,
+                ),
+            )
+        except anthropic.AuthenticationError:
+            return AnalysisResult(error=ProviderError("Invalid API key.", kind="auth"))
+        except anthropic.PermissionDeniedError:
+            return AnalysisResult(error=ProviderError("The API key lacks access to this model.", kind="auth"))
+        except anthropic.NotFoundError:
+            return AnalysisResult(error=ProviderError(f"Unknown model: {model}", kind="bad_request"))
+        except anthropic.RateLimitError:
+            return AnalysisResult(error=ProviderError("Rate limited — try again shortly.", kind="rate_limit", retryable=True))
+        except anthropic.BadRequestError as e:
+            return AnalysisResult(error=ProviderError(f"Rejected request: {getattr(e, 'message', str(e))}", kind="bad_request"))
+        except anthropic.APIConnectionError:
+            return AnalysisResult(error=ProviderError("Could not reach the API — check the connection.", kind="connection", retryable=True))
+        except anthropic.APIStatusError as e:
+            status = getattr(e, "status_code", 500)
+            kind = "overloaded" if status == 529 else "other"
+            return AnalysisResult(error=ProviderError(f"API error ({status}).", kind=kind, retryable=status >= 500))
+        finally:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
 # ── OpenAI-compatible ─────────────────────────────────────────────────────────
+
+# Some reasoning models refuse `reasoning_effort` on `/v1/chat/completions`
+# *when the same request also carries function tools*, and say so in a 400. That
+# hits the batch report — which is an agent loop with tools — while leaving
+# transcription, which has none, working fine.
+#
+# Learned at runtime, never written down: the id that does this today is not the
+# id that will do it in three months, and a hardcoded list is wrong the day the
+# next model ships. The provider's own refusal is the authority, so the request
+# is tried as normal, the refusal is believed, and the model is remembered for
+# the life of the process so the next turn does not pay the failed round trip.
+#
+# The retry sets the field to `"none"` rather than dropping it. Dropping it was
+# the first attempt and the same 400 came back: these models do not default to
+# no reasoning, so an absent field is not the same as `none`. The error text
+# says which it wants — "set reasoning_effort to 'none'" — and that is what it
+# gets.
+_NO_EFFORT_WITH_TOOLS: set[str] = set()
+
+# What a model in that set is sent instead, when the request carries tools.
+_EFFORT_NONE = "none"
+
+
+def _rejects_effort_with_tools(message: str) -> bool:
+    text = (message or "").lower()
+    return "reasoning_effort" in text and "tool" in text
 
 
 class OpenAICompatProvider:
@@ -310,7 +443,11 @@ class OpenAICompatProvider:
         # only sent when the manifest says this model actually supports it.
         # Mirrors AnthropicProvider's `effort` — same default depth on both.
         if ai_config.model_caps(model).get("reasoning"):
-            kwargs["reasoning_effort"] = self._effort
+            kwargs["reasoning_effort"] = (
+                _EFFORT_NONE
+                if tools and model in _NO_EFFORT_WITH_TOOLS
+                else self._effort
+            )
 
         text_parts: list[str] = []
         # index -> {id, name, args}; streamed arguments arrive in fragments.
@@ -319,7 +456,22 @@ class OpenAICompatProvider:
         finish_reason: str | None = None
 
         try:
-            stream = await client.chat.completions.create(**kwargs)
+            try:
+                stream = await client.chat.completions.create(**kwargs)
+            except openai.BadRequestError as e:
+                if not (
+                    tools
+                    and kwargs.get("reasoning_effort") not in (None, _EFFORT_NONE)
+                    and _rejects_effort_with_tools(getattr(e, "message", str(e)))
+                ):
+                    raise
+                # The provider has just said this model cannot reason *and* take
+                # tools on this endpoint. Believe it, remember it, and send the
+                # request again at no depth rather than failing a turn over a
+                # parameter that only controls how hard the model thinks.
+                _NO_EFFORT_WITH_TOOLS.add(model)
+                kwargs["reasoning_effort"] = _EFFORT_NONE
+                stream = await client.chat.completions.create(**kwargs)
             async for chunk in stream:
                 if getattr(chunk, "usage", None):
                     u = chunk.usage
@@ -402,28 +554,219 @@ class OpenAICompatProvider:
                 pass
 
 
-def build_provider(provider: str, api_key: str, base_url: str | None = None) -> LLMProvider:
-    """Factory — the single place that maps a provider name to an adapter."""
+    async def analyze_files(
+        self,
+        *,
+        model: str,
+        system: str,
+        blocks: list[dict[str, Any]],
+        max_tokens: int = 8000,
+    ) -> AnalysisResult:
+        """Images only.
+
+        Chat Completions takes images as `image_url` data URIs, which is what
+        this sends. Its file-input shape for PDFs is not something this
+        adapter has been verified against, so a PDF is refused here with a
+        message naming the two ways out, rather than guessed at — a wrong wire
+        shape would surface as a 400 per page, mid-batch, for the user to
+        decode. Anthropic takes the PDF natively; everyone else can fall back
+        to the text layer.
+        """
+        import openai
+        from . import config as ai_config
+
+        content: list[dict[str, Any]] = []
+        for b in blocks:
+            if b["type"] == "text":
+                content.append({"type": "text", "text": b["text"]})
+            elif b["type"] == "image":
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{b['media_type']};base64,{b['data']}"},
+                })
+            elif b["type"] == "pdf":
+                return AnalysisResult(error=ProviderError(
+                    "This provider cannot be sent a PDF page image. Either the PDF "
+                    "has a text layer to extract, or switch the document reader to "
+                    "Anthropic.",
+                    kind="bad_request",
+                ))
+
+        client = self._client()
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": content},
+            ],
+            "max_completion_tokens": max_tokens,
+        }
+        # Capability-gated exactly as in stream_turn — a non-reasoning model
+        # rejects this field with a 400 rather than ignoring it.
+        if ai_config.model_caps(model).get("reasoning"):
+            kwargs["reasoning_effort"] = self._effort
+
+        try:
+            res = await client.chat.completions.create(**kwargs)
+            u = getattr(res, "usage", None)
+            cached = 0
+            if u is not None:
+                details = getattr(u, "prompt_tokens_details", None)
+                if details is not None:
+                    cached = getattr(details, "cached_tokens", 0) or 0
+            choice = res.choices[0] if res.choices else None
+            text = (choice.message.content or "") if choice else ""
+            finish = getattr(choice, "finish_reason", None) if choice else None
+            # A reasoning model spends `max_completion_tokens` on thinking
+            # first, so a budget that is merely tight comes back as a
+            # *successful* response with an empty string in it. Reported as
+            # "the model returned nothing", that reads as an unreadable page
+            # and sends the user to re-scan a file that was fine.
+            if not text.strip() and finish == "length":
+                return AnalysisResult(error=ProviderError(
+                    "The model used its whole output budget before writing anything — "
+                    "on a reasoning model the thinking counts against it. Raise the "
+                    "budget or lower the effort.",
+                    kind="bad_request",
+                ))
+            return AnalysisResult(
+                text=text,
+                usage=Usage(
+                    input_tokens=((getattr(u, "prompt_tokens", 0) or 0) - cached) if u else 0,
+                    output_tokens=(getattr(u, "completion_tokens", 0) or 0) if u else 0,
+                    cache_read_tokens=cached,
+                ),
+            )
+        except openai.AuthenticationError:
+            return AnalysisResult(error=ProviderError("Invalid API key.", kind="auth"))
+        except openai.PermissionDeniedError:
+            return AnalysisResult(error=ProviderError("The API key lacks access to this model.", kind="auth"))
+        except openai.NotFoundError:
+            return AnalysisResult(error=ProviderError(f"Unknown model: {model}", kind="bad_request"))
+        except openai.RateLimitError:
+            return AnalysisResult(error=ProviderError(
+                "Rate limited, or the account is out of credit.", kind="rate_limit", retryable=True))
+        except openai.BadRequestError as e:
+            return AnalysisResult(error=ProviderError(f"Rejected request: {getattr(e, 'message', str(e))}", kind="bad_request"))
+        except openai.APIConnectionError:
+            return AnalysisResult(error=ProviderError("Could not reach the API — check the connection.", kind="connection", retryable=True))
+        except openai.APIStatusError as e:
+            status = getattr(e, "status_code", 500)
+            return AnalysisResult(error=ProviderError(f"API error ({status}).", kind="other", retryable=status >= 500))
+        finally:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+
+def build_provider(
+    provider: str, api_key: str, base_url: str | None = None, effort: str = "high",
+) -> LLMProvider:
+    """Factory — the single place that maps a provider name to an adapter.
+
+    `effort` is a parameter rather than a constant because not every job is a
+    reasoning job: transcribing a page is reading, and the depth that helps an
+    ancestry question mostly buys reasoning tokens here (see `ai/doc_reader.py`).
+    """
     if provider == "anthropic":
-        return AnthropicProvider(api_key)
-    if provider in ("openai", "openai_compatible"):
-        return OpenAICompatProvider(api_key, base_url=base_url)
+        return AnthropicProvider(api_key, effort=effort)
+    # Gemini speaks OpenAI's Chat Completions API at an address of its own, so
+    # it needs no adapter — only the base_url the manifest carries. This is the
+    # case `OpenAICompatProvider` was written for.
+    if provider in ("openai", "openai_compatible", "google"):
+        return OpenAICompatProvider(api_key, base_url=base_url, effort=effort)
     raise ValueError(f"Unsupported provider: {provider}")
 
 
-async def discover_models(provider: str, api_key: str, base_url: str | None = None) -> list[str]:
-    """Model ids the key can actually use, straight from the provider.
+async def discover_models(
+    provider: str, api_key: str, base_url: str | None = None,
+) -> list[dict[str, Any]]:
+    """What this key can actually use, described as far as the provider will.
 
-    Guards against this app's curated manifest going stale: a model released
-    after the last manifest update still shows up in the picker.
+    Returns records, not bare ids, because the providers differ in what they
+    are willing to say and the picker should show whatever is on offer:
+
+    * **Gemini** gives a display name, a prose description and token limits —
+      but only from its *native* models endpoint, not the OpenAI-compatible
+      one, so that is what this asks.
+    * **Anthropic** gives a display name, a creation date and (on current API
+      versions) limits and capabilities.
+    * **OpenAI** gives an id and a creation date and nothing else. The date is
+      still worth having: it is what orders the list newest-first.
+
+    Anything absent is simply left out of the record — the caller falls back to
+    the id and to the manifest's family rules. There is deliberately no curated
+    list of models anywhere; this is the source of truth.
     """
     if provider == "anthropic":
         import anthropic
         client = anthropic.AsyncAnthropic(api_key=api_key)
         try:
-            return [m.id async for m in client.models.list()]
+            out: list[dict[str, Any]] = []
+            async for m in client.models.list():
+                rec: dict[str, Any] = {"id": m.id}
+                label = getattr(m, "display_name", None)
+                if label:
+                    rec["label"] = label
+                created = getattr(m, "created_at", None)
+                if created is not None:
+                    rec["created"] = str(created)
+                for src, dst in (("max_input_tokens", "context"), ("max_tokens", "max_output")):
+                    val = getattr(m, src, None)
+                    if isinstance(val, int) and val > 0:
+                        rec[dst] = val
+                out.append(rec)
+            return out
         finally:
             await client.close()
+
+    if provider == "google":
+        # The compatibility layer answers /models with ids alone; the native
+        # endpoint is the one that carries displayName and description.
+        import json as _json
+        import urllib.parse
+        import urllib.request
+        from . import config as ai_config
+
+        info = (ai_config.list_providers_raw() or {}).get("google") or {}
+        endpoint = info.get("metadata_url") or "https://generativelanguage.googleapis.com/v1beta/models"
+
+        def _fetch() -> list[dict[str, Any]]:
+            records: list[dict[str, Any]] = []
+            token = ""
+            for _ in range(10):                       # paginate, bounded
+                params = {"key": api_key, "pageSize": "200"}
+                if token:
+                    params["pageToken"] = token
+                url = f"{endpoint}?{urllib.parse.urlencode(params)}"
+                with urllib.request.urlopen(url, timeout=30) as resp:
+                    payload = _json.load(resp)
+                for m in payload.get("models") or []:
+                    name = (m.get("name") or "").split("/", 1)[-1]
+                    if not name:
+                        continue
+                    methods = m.get("supportedGenerationMethods") or []
+                    # Embedding and media-only endpoints are not chat models.
+                    if methods and not any(x in methods for x in ("generateContent", "streamGenerateContent")):
+                        continue
+                    rec: dict[str, Any] = {"id": name}
+                    if m.get("displayName"):
+                        rec["label"] = m["displayName"]
+                    if m.get("description"):
+                        rec["description"] = m["description"]
+                    if isinstance(m.get("inputTokenLimit"), int):
+                        rec["context"] = m["inputTokenLimit"]
+                    if isinstance(m.get("outputTokenLimit"), int):
+                        rec["max_output"] = m["outputTokenLimit"]
+                    records.append(rec)
+                token = payload.get("nextPageToken") or ""
+                if not token:
+                    break
+            return records
+
+        import asyncio
+        return await asyncio.to_thread(_fetch)
 
     if provider in ("openai", "openai_compatible"):
         import openai
@@ -433,7 +776,14 @@ async def discover_models(provider: str, api_key: str, base_url: str | None = No
         client = openai.AsyncOpenAI(**kwargs)
         try:
             res = await client.models.list()
-            return [m.id for m in res.data]
+            out = []
+            for m in res.data:
+                rec = {"id": m.id}
+                created = getattr(m, "created", None)
+                if isinstance(created, int) and created > 0:
+                    rec["created"] = created
+                out.append(rec)
+            return out
         finally:
             await client.close()
 

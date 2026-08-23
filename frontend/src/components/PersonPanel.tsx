@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
+import { useBackdropClose } from '../modalBackdrop'
 import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument, DocumentType, Source, Citation } from '../types'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
 import { useSettings, displayPersonName, displayInitials, useT, useDateLocale, formatPartialDate, monthNames } from '../SettingsContext'
@@ -11,6 +12,7 @@ import EventTimeline from './EventTimeline'
 import RelationPathModal from './RelationPathModal'
 import { docTypeLabel, builtinDocTypeOptions } from '../docTypes'
 import { plainMentions } from '../markdown'
+import { useFamilyContext, FamilyContextLines, personLifeSummary } from '../familyContext'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -190,9 +192,10 @@ function Lightbox({ images, idx, onClose, onChange, onNavigateTo }: {
     enabled: img.face_count > 0,
   })
   const exifMeta = parseMeta(img.meta_json)
+  const backdrop = useBackdropClose(onClose)
 
   return createPortal(
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/90" onClick={onClose}>
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/90" {...backdrop}>
       {/* Nav arrows */}
       <button onClick={e => { e.stopPropagation(); onChange(idx - 1) }} disabled={idx === 0}
         className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-zinc-800/80 hover:bg-zinc-700 disabled:opacity-20 flex items-center justify-center text-zinc-200 text-2xl transition-colors z-10">‹</button>
@@ -322,11 +325,13 @@ function _personLifespan(p: PersonFull): string {
   return years || p.birth_place || ''
 }
 
-function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose }: {
+function PersonPicker({ persons, excludeIds, relations, label, headerExtra, onSelect, onClose }: {
   persons: PersonFull[]
   excludeIds: Set<number>
   relations: Relation[]
   label: string
+  /** Rendered under the dialog title in both modes — the child picker's co-parent choice. */
+  headerExtra?: React.ReactNode
   onSelect: (p: PersonFull) => void
   onClose: () => void
 }) {
@@ -371,6 +376,8 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
     .filter(p => (p.name ?? '').toLowerCase().includes(search.toLowerCase()))
     .slice(0, 12)
 
+  const backdrop = useBackdropClose(onClose)
+
   async function handleCreate() {
     const displayName = deriveDisplayName(newParts).trim()
     if (creating || !displayName) return
@@ -398,11 +405,14 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
     const INPUT = 'w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400'
     const LABEL = 'block text-xs text-zinc-500 mb-0.5'
     return (
-      <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
+      <div className="fixed inset-0 z-[200] flex items-center justify-center" {...backdrop}>
         <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-96 flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
-          <div className="px-4 pt-3 pb-2 border-b border-zinc-700 flex items-center gap-2">
-            <button onClick={() => setMode('list')} className="text-zinc-500 hover:text-zinc-200 text-lg leading-none transition-colors">‹</button>
-            <p className="text-xs font-semibold text-zinc-300">{t('person.pickerTitle', { label: label.toLowerCase() })}</p>
+          <div className="px-4 pt-3 pb-2 border-b border-zinc-700">
+            <div className="flex items-center gap-2">
+              <button onClick={() => setMode('list')} className="text-zinc-500 hover:text-zinc-200 text-lg leading-none transition-colors">‹</button>
+              <p className="text-xs font-semibold text-zinc-300">{t('person.pickerTitle', { label: label.toLowerCase() })}</p>
+            </div>
+            {headerExtra}
           </div>
           <div className="px-4 py-4 space-y-2.5">
             <div className="grid grid-cols-2 gap-2">
@@ -438,10 +448,11 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
   }
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center" {...backdrop}>
       <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-96 flex flex-col overflow-hidden" style={{ maxHeight: 480 }} onClick={e => e.stopPropagation()}>
         <div className="px-4 pt-3 pb-2 border-b border-zinc-700">
           <p className="text-xs font-semibold text-zinc-300 mb-2">{label}</p>
+          {headerExtra}
           <input autoFocus value={search} onChange={e => setSearch(e.target.value)}
             placeholder={t('person.pickerSearch')}
             className="w-full bg-zinc-700 border border-zinc-600 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400" />
@@ -490,16 +501,87 @@ function PersonPicker({ persons, excludeIds, relations, label, onSelect, onClose
   )
 }
 
+// ── CoParentChoice ───────────────────────────────────────────────────────────
+
+/**
+ * Which spouse a child being added also belongs to.
+ *
+ * A child carries two `parent` rows and nothing else records a couple, so the
+ * answer to "whose child is this too?" is a second relation — and asking it
+ * here is what saves the user from opening the spouse's own panel and adding
+ * the same child a second time. Picking nobody is a real answer (a child from
+ * a partner who is not in the tree), not a skipped question, which is why the
+ * last row is an explicit choice rather than the absence of one.
+ *
+ * The options are a list of people, so they carry the life summary and the
+ * relative lines every other person list in the app carries: two of a man's
+ * wives can read identically on the name alone.
+ */
+function CoParentChoice({ options, persons, relations, value, onChange }: {
+  options: { rel: Relation; p: PersonFull }[]
+  persons: PersonFull[]
+  relations: Relation[]
+  value: number | null
+  onChange: (id: number | null) => void
+}) {
+  const t = useT()
+  const { nameOrder } = useSettings()
+  const fam = useFamilyContext(persons, relations, nameOrder)
+
+  const rowCls = (active: boolean) =>
+    `w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-left border transition-colors ${
+      active
+        ? 'bg-brand-500/15 border-brand-500/50'
+        : 'bg-zinc-700/40 border-transparent hover:bg-zinc-700'
+    }`
+
+  return (
+    <div className="mb-2">
+      <p className="text-[11px] text-zinc-500 mb-1">{t('person.otherParentLabel')}</p>
+      <div className="space-y-1 max-h-44 overflow-y-auto">
+        {options.map(({ rel, p }) => {
+          const life = personLifeSummary(p)
+          const marriage = [rel.marriage_year, rel.marriage_place].filter(Boolean).join(', ')
+          return (
+            <button key={p.id} onClick={() => onChange(p.id)} className={rowCls(value === p.id)}>
+              <Avatar person={p} size={24} />
+              <span className="flex-1 min-w-0">
+                <span className="block text-xs text-zinc-100 truncate">{displayPersonName(p, nameOrder)}</span>
+                {life && <span className="block text-xs text-zinc-500 truncate">{life}</span>}
+                {marriage && <span className="block text-xs text-zinc-500 truncate">⚭ {marriage}</span>}
+                <FamilyContextLines fam={fam.get(p.id)} dim />
+              </span>
+              {value === p.id && <span className="text-brand-300 text-xs shrink-0">✓</span>}
+            </button>
+          )
+        })}
+        <button onClick={() => onChange(null)} className={rowCls(value === null)}>
+          <span className="w-6 h-6 rounded-full bg-zinc-700 flex items-center justify-center text-zinc-500 text-xs shrink-0">?</span>
+          <span className="flex-1 text-xs text-zinc-300 leading-6 truncate">{t('person.otherParentNone')}</span>
+          {value === null && <span className="text-brand-300 text-xs shrink-0">✓</span>}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── RelRow ────────────────────────────────────────────────────────────────────
 
 type PickerMode = 'parent' | 'spouse' | 'child' | 'sibling' | null
 
 function RelRow({
-  label, persons, editing, onNavigate, onRemove, addLabel, onAdd, addDisabled,
+  label, persons, groups, editing, onNavigate, onRemove, addLabel, onAdd, addDisabled,
   relPrivacy, onTogglePrivacy,
 }: {
   label: string
   persons: PersonFull[]
+  /**
+   * Optional sub-grouping of the same people. The children row splits by
+   * co-parent once there is more than one, so a second marriage's children
+   * are not silently mixed into the first's; left undefined the row renders
+   * flat, which is what every other relation row wants.
+   */
+  groups?: { key: string; label: string; persons: PersonFull[] }[]
   editing: boolean
   onNavigate: (id: number) => void
   onRemove?: (p: PersonFull) => void
@@ -521,54 +603,70 @@ function RelRow({
     finally { setPrivacyBusy(s => { const n = new Set(s); n.delete(relId); return n }) }
   }
 
+  function chip(p: PersonFull) {
+    const priv = relPrivacy?.get(p.id)
+    const isPrivate = priv?.isPrivate ?? false
+    return (
+      <div key={p.id} className="inline-flex items-center group">
+        <button
+          onClick={() => onNavigate(p.id)}
+          className="inline-flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 hover:border-zinc-500 rounded-full transition-colors max-w-[160px]"
+        >
+          <Avatar person={p} size={20} />
+          <span className="text-xs text-zinc-200 truncate leading-none">{displayPersonName(p, nameOrder)}</span>
+        </button>
+        {priv && onTogglePrivacy && (
+          <button
+            onClick={() => !privacyBusy.has(priv.relId) && toggleRelPrivacy(priv.relId, !isPrivate)}
+            title={isPrivate ? t('person.privacyOn') : t('person.privacyOff')}
+            className={`ml-0.5 w-4 h-4 flex items-center justify-center transition-colors shrink-0 ${isPrivate ? 'text-amber-400' : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-zinc-300'}`}
+          >
+            {isPrivate ? (
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
+              </svg>
+            ) : (
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
+              </svg>
+            )}
+          </button>
+        )}
+        {editing && onRemove && (
+          <button onClick={() => onRemove(p)}
+            className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-xs text-zinc-400 hover:text-white transition-colors shrink-0"
+            title={t('person.removeRelation')}>✕</button>
+        )}
+      </div>
+    )
+  }
+
+  const addButton = editing && !addDisabled && (
+    <button onClick={onAdd}
+      className="inline-flex items-center gap-1 h-7 px-2.5 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-dashed border-zinc-700 hover:border-zinc-500 rounded-full transition-colors shrink-0">
+      + {addLabel}
+    </button>
+  )
+
   return (
     <div>
       <p className="text-xs text-zinc-600 uppercase tracking-wider mb-1.5">{label}</p>
-      <div className="flex flex-wrap gap-1.5 items-center">
-        {persons.map(p => {
-          const priv = relPrivacy?.get(p.id)
-          const isPrivate = priv?.isPrivate ?? false
-          return (
-            <div key={p.id} className="inline-flex items-center group">
-              <button
-                onClick={() => onNavigate(p.id)}
-                className="inline-flex items-center gap-1.5 pl-1.5 pr-2 py-1 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700/60 hover:border-zinc-500 rounded-full transition-colors max-w-[160px]"
-              >
-                <Avatar person={p} size={20} />
-                <span className="text-xs text-zinc-200 truncate leading-none">{displayPersonName(p, nameOrder)}</span>
-              </button>
-              {priv && onTogglePrivacy && (
-                <button
-                  onClick={() => !privacyBusy.has(priv.relId) && toggleRelPrivacy(priv.relId, !isPrivate)}
-                  title={isPrivate ? t('person.privacyOn') : t('person.privacyOff')}
-                  className={`ml-0.5 w-4 h-4 flex items-center justify-center transition-colors shrink-0 ${isPrivate ? 'text-amber-400' : 'text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-zinc-300'}`}
-                >
-                  {isPrivate ? (
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 0110 0v4" />
-                    </svg>
-                  ) : (
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                      <rect x="3" y="11" width="18" height="11" rx="2" /><path strokeLinecap="round" d="M7 11V7a5 5 0 019.9-1" />
-                    </svg>
-                  )}
-                </button>
-              )}
-              {editing && onRemove && (
-                <button onClick={() => onRemove(p)}
-                  className="ml-0.5 w-4 h-4 rounded-full bg-zinc-700 hover:bg-red-700 flex items-center justify-center text-xs text-zinc-400 hover:text-white transition-colors shrink-0"
-                  title={t('person.removeRelation')}>✕</button>
-              )}
+      {groups ? (
+        <div className="space-y-2">
+          {groups.map(g => (
+            <div key={g.key}>
+              <p className="text-xs text-zinc-600 mb-1 truncate">{g.label}</p>
+              <div className="flex flex-wrap gap-1.5 items-center">{g.persons.map(chip)}</div>
             </div>
-          )
-        })}
-        {editing && !addDisabled && (
-          <button onClick={onAdd}
-            className="inline-flex items-center gap-1 h-7 px-2.5 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-dashed border-zinc-700 hover:border-zinc-500 rounded-full transition-colors shrink-0">
-            + {addLabel}
-          </button>
-        )}
-      </div>
+          ))}
+          {addButton}
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-1.5 items-center">
+          {persons.map(chip)}
+          {addButton}
+        </div>
+      )}
     </div>
   )
 }
@@ -697,6 +795,7 @@ function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
   const filtered = search
     ? available.filter(d => [d.title ? plainMentions(d.title) : null, d.filename, ...(d.persons.map(p => p.name))].filter(Boolean).join(' ').toLowerCase().includes(search.toLowerCase()))
     : available
+  const backdrop = useBackdropClose(onClose)
 
   async function link(docId: number) {
     setLinking(docId)
@@ -711,7 +810,7 @@ function DocLinkExistingModal({ personId, linkedDocIds, onClose }: {
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" {...backdrop}>
       <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl w-[440px] max-w-[92vw] max-h-[70vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-zinc-800 shrink-0">
@@ -771,9 +870,10 @@ function DocPreviewModal({ doc, onClose }: { doc: PersonDocument; onClose: () =>
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [onClose])
+  const backdrop = useBackdropClose(onClose)
 
   return createPortal(
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/95" onClick={onClose}>
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/95" {...backdrop}>
       <button onClick={onClose}
         className="absolute top-4 right-4 w-9 h-9 rounded-full bg-zinc-800/80 hover:bg-zinc-700 flex items-center justify-center text-zinc-300 hover:text-white text-lg transition-colors">
         ✕
@@ -805,7 +905,7 @@ function DocPreviewModal({ doc, onClose }: { doc: PersonDocument; onClose: () =>
 
 // ── DocRow ────────────────────────────────────────────────────────────────────
 
-function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDelete: () => void; onNavToDocument?: (docId: number, editMode?: boolean) => void }) {
+function DocRow({ doc, onUnlink, onNavToDocument }: { doc: PersonDocument; onUnlink: () => void; onNavToDocument?: (docId: number, editMode?: boolean) => void }) {
   const t = useT()
   const qc = useQueryClient()
   const { data: docTypes = [] } = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
@@ -1000,8 +1100,8 @@ function DocRow({ doc, onDelete, onNavToDocument }: { doc: PersonDocument; onDel
               <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2.25 2.25 0 012.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-2.414a2 2 0 01.586-1.414z" />
             </svg>
           </button>
-          <button onClick={onDelete} title={t('person.deleteDocTitle')}
-            className="w-6 h-6 rounded flex items-center justify-center text-zinc-600 hover:text-red-400 hover:bg-zinc-700 transition-colors">
+          <button onClick={onUnlink} title={t('person.unlinkDocTitle')}
+            className="w-6 h-6 rounded flex items-center justify-center text-zinc-600 hover:text-amber-400 hover:bg-zinc-700 transition-colors">
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -1027,10 +1127,12 @@ const BookIcon = () => (
 )
 
 function CitationsInline({
-  personId, fact, citations, sources, onMutated,
+  personId, fact, relationId, citations, sources, onMutated,
 }: {
   personId: number
   fact: string
+  /** Set for a fact the relation owns — a marriage — so both spouses see it. */
+  relationId?: number
   citations: Citation[]
   sources: Source[]
   onMutated: () => void
@@ -1080,6 +1182,7 @@ function CitationsInline({
       await api.citations.add(personId, {
         source_id: picked.id,
         fact,
+        relation_id: relationId,
         detail: detail.trim() || undefined,
       })
       onMutated()
@@ -1349,6 +1452,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   // relations
   const [editingRelations, setEditingRelations] = useState(false)
   const [pickerMode, setPickerMode] = useState<PickerMode>(null)
+  // Whose child, besides this person's — chosen in the picker, applied as a
+  // second `parent` relation. null means "not from a spouse / unknown".
+  const [childCoParentId, setChildCoParentId] = useState<number | null>(null)
   const [expandedRelId, setExpandedRelId] = useState<number | null>(null)
   const [marriageEdits, setMarriageEdits] = useState<Record<number, { marriage_year: string; marriage_place: string; divorce_year: string; divorce_place: string }>>({})
 
@@ -1421,7 +1527,12 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   })
 
   function citationsFor(fact: string) {
-    return citations.filter(c => c.fact === fact)
+    return citations.filter(c => c.fact === fact && c.relation_id == null)
+  }
+
+  /** Sources for one marriage — the same list on either spouse's panel. */
+  function marriageCitations(relId: number) {
+    return citations.filter(c => c.relation_id === relId)
   }
 
   function invalidateCitations() {
@@ -1475,6 +1586,20 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     onSuccess: () => qc.invalidateQueries({ queryKey: ['relations'] }),
   })
 
+  // A child is two relations, not one: this person's, and — when a co-parent was
+  // chosen — the spouse's. Adding both here is the whole point of the choice;
+  // otherwise the user has to open the spouse's panel and add the same child again.
+  const addChildMut = useMutation({
+    mutationFn: async ({ childId, coParentId }: { childId: number; coParentId: number | null }) => {
+      await api.relations.create('parent', person.id, childId)
+      if (coParentId != null) await api.relations.create('parent', coParentId, childId)
+    },
+    // Two writes, so a failure can land between them: refresh either way and say
+    // so, rather than leaving the second parent silently unwritten.
+    onError: (e: unknown) => setRelWarning(String(e)),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['relations'] }),
+  })
+
   const delRelMut = useMutation({
     mutationFn: (id: number) => api.relations.delete(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['relations'] }),
@@ -1489,9 +1614,15 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     },
   })
 
-  const deleteDocMut = useMutation({
-    mutationFn: (id: number) => api.documents.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['person-docs', person.id] }),
+  // The X on a document row detaches the document from *this* person — it never
+  // deletes it. The document stays in the project, keeps its other person links
+  // and its files; deleting one for good is a Documents-tab action.
+  const unlinkDocMut = useMutation({
+    mutationFn: (id: number) => api.documents.unlinkPerson(id, person.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['person-docs', person.id] })
+      qc.invalidateQueries({ queryKey: ['docs-all'] })
+    },
   })
 
   const byId = new Map(persons.map(p => [p.id, p]))
@@ -1516,6 +1647,42 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     .map(r => byId.get(r.person_a_id === person.id ? r.person_b_id : r.person_a_id))
     .filter(Boolean) as PersonFull[])
     .sort((a, b) => birthYear(a) - birthYear(b))
+
+  // The couple a child belongs to is not stored anywhere of its own — it is the
+  // child's *other* `parent` row, read back out here. Undefined co-parent is a
+  // real state (a partner nobody recorded), not missing data.
+  const coParentOfChild = new Map<number, number | null>()
+  for (const c of children) coParentOfChild.set(c.id, null)
+  for (const r of relations) {
+    if (r.type !== 'parent' || r.person_a_id === person.id) continue
+    if (coParentOfChild.has(r.person_b_id)) coParentOfChild.set(r.person_b_id, r.person_a_id)
+  }
+
+  // Headings only earn their space once the children do not all share one
+  // co-parent; with a single family they would repeat on every row.
+  const childGroups = (() => {
+    const keys = new Set(children.map(c => coParentOfChild.get(c.id) ?? 0))
+    if (keys.size < 2) return undefined
+    const spouseIds = spouseRelations.map(x => x.p.id)
+    const order = [
+      ...spouseIds,
+      ...[...keys].filter(k => k !== 0 && !spouseIds.includes(k)),   // a co-parent who is not (or no longer) a spouse
+    ]
+    const groups: { key: string; label: string; persons: PersonFull[] }[] = []
+    for (const id of order) {
+      const list = children.filter(c => coParentOfChild.get(c.id) === id)
+      if (list.length === 0) continue
+      const co = byId.get(id)
+      groups.push({
+        key: String(id),
+        label: t('person.otherParentIs', { name: co ? displayPersonName(co, nameOrder) : '?' }),
+        persons: list,
+      })
+    }
+    const orphans = children.filter(c => coParentOfChild.get(c.id) == null)
+    if (orphans.length > 0) groups.push({ key: 'none', label: t('person.otherParentUnknown'), persons: orphans })
+    return groups
+  })()
 
   const allRelatedIds = new Set([
     person.id,
@@ -1548,9 +1715,26 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
       case 'parent':
         if (exists('parent', p.id, person.id)) { warn(t('person.alreadyListed', { name: displayPersonName(p, nameOrder) })); return }
         addRelMut.mutate({ type: 'parent',  a: p.id,      b: person.id }); break
-      case 'child':
+      case 'child': {
         if (exists('parent', person.id, p.id)) { warn(t('person.alreadyListed', { name: displayPersonName(p, nameOrder) })); return }
-        addRelMut.mutate({ type: 'parent',  a: person.id, b: p.id });      break
+        // A child carries at most two parents (the server refuses a third), so
+        // the co-parent only goes in when the slot beside this person is free.
+        const childParentIds = relations
+          .filter(r => r.type === 'parent' && r.person_b_id === p.id)
+          .map(r => r.person_a_id)
+        if (childParentIds.length >= 2) { warn(t('person.childHasTwoParents', { name: displayPersonName(p, nameOrder) })); return }
+        const co = childCoParentId
+        const coFits = co != null && (childParentIds.length === 0 || childParentIds.includes(co))
+        addChildMut.mutate({ childId: p.id, coParentId: coFits ? co : null })
+        if (co != null && !coFits) {
+          const other = byId.get(childParentIds[0])
+          setRelWarning(t('person.coParentSkipped', {
+            child: displayPersonName(p, nameOrder),
+            parent: other ? displayPersonName(other, nameOrder) : '?',
+          }))
+        }
+        break
+      }
       case 'spouse':
         if (exists('spouse', person.id, p.id)) { warn(t('person.alreadyListed', { name: displayPersonName(p, nameOrder) })); return }
         addRelMut.mutate({ type: 'spouse',  a: person.id, b: p.id });      break
@@ -1707,12 +1891,13 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
   }
 
   const SEX_LABEL: Record<string, string> = { M: t('person.sexMale'), F: t('person.sexFemale') }
+  const backdrop = useBackdropClose(onClose)
 
   return (
     <>
       <div className="absolute inset-0 transition-opacity duration-300"
         style={{ background: 'rgba(0,0,0,0.5)', opacity: visible ? 1 : 0 }}
-        onClick={onClose} />
+        {...backdrop} />
 
       <div
         className="absolute right-0 top-0 bottom-0 flex flex-col bg-zinc-900 shadow-2xl transition-transform duration-300 ease-out overflow-hidden"
@@ -2178,11 +2363,23 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                           </div>
                           <button
                             onClick={() => openMarriage(rel)}
-                            className={`text-xs px-1.5 py-0.5 rounded transition-colors ${expandedRelId === rel.id ? 'text-brand-400 bg-brand-500/10' : 'text-zinc-600 hover:text-zinc-300'}`}
+                            className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded transition-colors ${expandedRelId === rel.id ? 'text-brand-400 bg-brand-500/10' : 'text-zinc-500 hover:text-zinc-300'}`}
                           >
                             {rel.marriage_year || rel.marriage_place
                               ? `${t('person.marriagePrefix')}: ${[rel.marriage_year, rel.marriage_place].filter(Boolean).join(', ')}`
                               : t('person.addMarriageDetails')}
+                            {/* Whether the marriage is backed by a source is
+                                readable without opening the row — the same
+                                amber the citation pill uses. */}
+                            {marriageCitations(rel.id).length > 0 && (
+                              <span className="inline-flex items-center gap-0.5 text-amber-400"
+                                title={marriageCitations(rel.id).length > 1
+                                  ? t('person.citeSrcCountPlural', { n: marriageCitations(rel.id).length })
+                                  : t('person.citeSrcCount', { n: marriageCitations(rel.id).length })}>
+                                <BookIcon />
+                                {marriageCitations(rel.id).length > 1 && marriageCitations(rel.id).length}
+                              </span>
+                            )}
                           </button>
                         </div>
                         {expandedRelId === rel.id && (
@@ -2209,8 +2406,9 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                             </div>
                             <CitationsInline
                               personId={person.id}
-                              fact={`marriage_${rel.id}`}
-                              citations={citationsFor(`marriage_${rel.id}`)}
+                              fact="marriage"
+                              relationId={rel.id}
+                              citations={marriageCitations(rel.id)}
                               sources={sources}
                               onMutated={invalidateCitations}
                             />
@@ -2238,8 +2436,14 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 </div>
               )}
 
-              <RelRow label={t('person.children')} persons={children} editing={editingRelations} onNavigate={onNavigateTo}
-                onRemove={p => handleRemove('parent', p)} addLabel={t('person.addChild')} onAdd={() => setPickerMode('child')}
+              <RelRow label={t('person.children')} persons={children} groups={childGroups} editing={editingRelations} onNavigate={onNavigateTo}
+                onRemove={p => handleRemove('parent', p)} addLabel={t('person.addChild')}
+                onAdd={() => {
+                  // One spouse is not a choice worth making — preselect it, so the
+                  // common case adds the child to both parents with no extra click.
+                  setChildCoParentId(spouseRelations.length === 1 ? spouseRelations[0].p.id : null)
+                  setPickerMode('child')
+                }}
                 relPrivacy={childRelPrivacy} onTogglePrivacy={handleToggleRelPrivacy} />
               <RelRow label={t('person.siblings')} persons={siblings} editing={editingRelations} onNavigate={onNavigateTo}
                 onRemove={p => handleRemove('sibling', p)} addLabel={t('person.addSibling')} onAdd={() => setPickerMode('sibling')}
@@ -2402,7 +2606,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
             ) : (
               <div className="divide-y divide-zinc-800/60">
                 {docs.map(doc => (
-                  <DocRow key={doc.id} doc={doc} onDelete={() => deleteDocMut.mutate(doc.id)} onNavToDocument={onNavToDocument} />
+                  <DocRow key={doc.id} doc={doc} onUnlink={() => unlinkDocMut.mutate(doc.id)} onNavToDocument={onNavToDocument} />
                 ))}
               </div>
             )}
@@ -2468,6 +2672,15 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
           excludeIds={allRelatedIds}
           relations={relations}
           label={pickerLabels[pickerMode]}
+          headerExtra={pickerMode === 'child' && spouseRelations.length > 0 ? (
+            <CoParentChoice
+              options={spouseRelations}
+              persons={persons}
+              relations={relations}
+              value={childCoParentId}
+              onChange={setChildCoParentId}
+            />
+          ) : undefined}
           onSelect={handleAdd}
           onClose={() => setPickerMode(null)}
         />

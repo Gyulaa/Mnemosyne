@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { api } from '../api'
 import { useSettings, useT } from '../SettingsContext'
 import type { UpdateStatus } from '../types'
+import { useBackdropClose } from '../modalBackdrop'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -64,12 +65,13 @@ function Modal({
   onApply: () => void
 }) {
   const t = useT()
+  const backdrop = useBackdropClose(onClose)
   const pct = status.total > 0 ? Math.round((status.downloaded / status.total) * 100) : 0
 
   return createPortal(
     <div
       className="fixed inset-0 z-[600] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"

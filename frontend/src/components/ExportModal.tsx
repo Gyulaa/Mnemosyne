@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import type { PersonFull } from '../types'
 import { useT } from '../SettingsContext'
+import { useBackdropClose } from '../modalBackdrop'
 
 export type ExportSettings = {
   name: string
@@ -97,6 +98,7 @@ export default function ExportModal({
   onClose,
 }: Props) {
   const t = useT()
+  const backdrop = useBackdropClose(onClose)
   const [name, setName] = useState(defaultName)
   const [includeGenealogy, setIncludeGenealogy] = useState(true)
   const [includeNotes, setIncludeNotes] = useState(true)
@@ -137,7 +139,7 @@ export default function ExportModal({
   return (
     <div
       className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
+      {...backdrop}
     >
       <form
         onSubmit={submit}

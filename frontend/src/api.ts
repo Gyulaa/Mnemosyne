@@ -1,4 +1,4 @@
-import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, WebResearchSettings, ChatThread, ChatMessage, ChatStreamEvent } from './types'
+import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, WebResearchSettings, ChatThread, ChatMessage, ChatStreamEvent, DocumentAiSettings, TranscriptBatch, TranscriptBatchDetail, TranscriptPageFull, TranscriptStatus, TranscriptQuestion } from './types'
 
 const BASE = '/api'
 
@@ -415,6 +415,12 @@ export const api = {
       `${BASE}/documents/${docId}/files/${fileId}${download ? '?dl=1' : ''}`,
     removeFile: (docId: number, fileId: number) =>
       fetchJson<PersonDocument>(`${BASE}/documents/${docId}/files/${fileId}`, { method: 'DELETE' }),
+    /**
+     * Remove the primary file. The document's first extra file takes its place,
+     * so this is only allowed while there is one — a document always has a file.
+     */
+    removePrimaryFile: (docId: number) =>
+      fetchJson<PersonDocument>(`${BASE}/documents/${docId}/file`, { method: 'DELETE' }),
     promoteToSource: (docId: number, title?: string, sourceType?: string) =>
       post<Source>(`${BASE}/documents/${docId}/promote-to-source`, { title, source_type: sourceType }),
     linkPerson: (docId: number, personId: number) =>
@@ -458,7 +464,7 @@ export const api = {
   citations: {
     listForPerson: (personId: number) =>
       fetchJson<Citation[]>(`${BASE}/persons/${personId}/citations`),
-    add: (personId: number, fields: { source_id: number; fact?: string; detail?: string; notes?: string }) =>
+    add: (personId: number, fields: { source_id: number; fact?: string; detail?: string; notes?: string; relation_id?: number }) =>
       post<Citation>(`${BASE}/persons/${personId}/citations`, fields),
     update: (id: number, fields: Partial<Pick<Citation, 'fact' | 'detail' | 'notes'>>) =>
       patch<Citation>(`${BASE}/citations/${id}`, fields),
@@ -541,6 +547,54 @@ export const api = {
     download:  () => post<{ ok: boolean }>(`${BASE}/update/download`),
     apply:     () => post<{ ok: boolean }>(`${BASE}/update/apply`),
   },
+  /**
+   * Reading scanned documents. A batch points at a folder *outside* the
+   * project; nothing is copied in until a page is imported, which is the point
+   * — most pages in a register folder are never wanted.
+   */
+  transcripts: {
+    getSettings: () => fetchJson<DocumentAiSettings>(`${BASE}/ai/document-settings`),
+    saveSettings: (fields: Partial<{ enabled: boolean; provider: string; model: string; monthly_pages: number }>) =>
+      put<DocumentAiSettings>(`${BASE}/ai/document-settings`, fields),
+
+    listBatches: () => fetchJson<TranscriptBatch[]>(`${BASE}/transcripts/batches`),
+    createBatch: (folder: string, name?: string, recursive = true) =>
+      post<TranscriptBatch>(`${BASE}/transcripts/batches`, { folder, name: name ?? null, recursive }),
+    getBatch: (id: number) => fetchJson<TranscriptBatchDetail>(`${BASE}/transcripts/batches/${id}`),
+    deleteBatch: (id: number) =>
+      fetchJson<void>(`${BASE}/transcripts/batches/${id}`, { method: 'DELETE' }).catch(() => undefined),
+
+    /** `pageIds` reads exactly those pages whatever state they are in; omit it
+     *  to read everything still unread. */
+    start: (id: number, lang: string, nameOrder: string, retryFailed = false, pageIds?: number[]) =>
+      post<{ started: boolean; message: string }>(`${BASE}/transcripts/batches/${id}/start`, {
+        lang, name_order: nameOrder, retry_failed: retryFailed, page_ids: pageIds ?? [],
+      }),
+    /** Re-run matching and the report without paying to read every page again. */
+    analyse: (id: number, lang: string, nameOrder: string) =>
+      post<{ started: boolean; message: string }>(`${BASE}/transcripts/batches/${id}/analyse`, { lang, name_order: nameOrder }),
+    /** Recompute the relevance marks. No model call, no cost. */
+    rematch: (id: number) => post<TranscriptBatch & { changed: number }>(`${BASE}/transcripts/batches/${id}/rematch`),
+    /**
+     * One question about one batch, answered from its transcripts. The
+     * conversation is stored on the batch, so nothing is sent back with it.
+     */
+    ask: (id: number, body: { question: string; lang: string; name_order: string }) =>
+      post<TranscriptQuestion>(`${BASE}/transcripts/batches/${id}/ask`, body),
+    clearQuestions: (id: number) =>
+      fetchJson<void>(`${BASE}/transcripts/batches/${id}/questions`, { method: 'DELETE' }),
+    stop: () => post<{ stopped: boolean; message: string }>(`${BASE}/transcripts/stop`),
+    status: () => fetchJson<TranscriptStatus>(`${BASE}/transcripts/status`),
+
+    getPage: (id: number) => fetchJson<TranscriptPageFull>(`${BASE}/transcripts/pages/${id}`),
+    updatePage: (id: number, fields: Partial<{ text: string }>) =>
+      patch<TranscriptPageFull>(`${BASE}/transcripts/pages/${id}`, fields),
+    /** The scan itself, for showing next to its transcript. */
+    fileUrl: (id: number) => `${BASE}/transcripts/pages/${id}/file`,
+    importPage: (id: number, fields: { person_ids: number[]; title?: string | null; doc_type?: string; date?: string | null; description?: string | null }) =>
+      post<PersonDocument>(`${BASE}/transcripts/pages/${id}/import`, fields),
+  },
+
   ai: {
     getSettings: () => fetchJson<AiSettings>(`${BASE}/ai/settings`),
     saveSettings: (fields: Partial<{ provider: string; model: string; api_key: string; allow_private: boolean; enabled: boolean; base_url: string }>) =>

@@ -4,6 +4,7 @@ import { api } from '../api'
 import type { PersonFull, Relation } from '../types'
 import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 import type { NameOrder } from '../SettingsContext'
+import { useBackdropClose } from '../modalBackdrop'
 
 type TFn = (key: string, vars?: Record<string, string | number>) => string
 
@@ -681,6 +682,7 @@ interface Props {
 export default function RelationPathModal({ personA, personB, persons, relations, onClose, onNavigate }: Props) {
   const { nameOrder } = useSettings()
   const t = useT()
+  const backdrop = useBackdropClose(onClose)
   const [exporting, setExporting] = useState(false)
   const byId = new Map(persons.map(p => [p.id, p]))
 
@@ -741,7 +743,7 @@ export default function RelationPathModal({ personA, personB, persons, relations
   return (
     <div
       className="fixed inset-0 z-[500] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden"

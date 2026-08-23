@@ -4,6 +4,7 @@ import { api } from '../api'
 import type { PersonFull, PersonEvent, PersonDocument } from '../types'
 import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
 import { plainMentions, plainMarkdown } from '../markdown'
+import { useBackdropClose } from '../modalBackdrop'
 
 interface Props {
   open: boolean
@@ -53,6 +54,7 @@ function Avatar({ p }: { p: PersonFull }) {
 export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavToEvent, onViewDocument }: Props) {
   const { nameOrder } = useSettings()
   const t = useT()
+  const backdrop = useBackdropClose(onClose)
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -140,7 +142,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
   return (
     <div
       className="fixed inset-0 z-[600] flex items-start justify-center pt-[12vh] bg-black/50 backdrop-blur-sm"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className="w-[580px] rounded-2xl shadow-2xl overflow-hidden"

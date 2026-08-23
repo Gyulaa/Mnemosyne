@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import type { DuplicateGroup, DuplicateImageInfo } from '../types'
 import { useT } from '../SettingsContext'
+import { useBackdropClose } from '../modalBackdrop'
 
 function basename(path: string) {
   return path.replace(/\\/g, '/').split('/').pop() ?? path
@@ -169,8 +170,10 @@ export default function DuplicateReviewModal({ onClose }: { onClose: () => void 
     }
   }
 
+  const backdrop = useBackdropClose(onClose)
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70" {...backdrop}>
       <div
         className="w-full max-w-3xl flex flex-col rounded-2xl shadow-2xl"
         style={{ background: '#111117', border: '1px solid rgba(255,255,255,0.09)', maxHeight: '90vh' }}

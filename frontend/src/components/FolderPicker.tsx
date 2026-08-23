@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '../api'
 import type { FsItem } from '../types'
 import { useT } from '../SettingsContext'
+import { useBackdropClose } from '../modalBackdrop'
 
 interface Props {
   value: string
@@ -54,6 +55,7 @@ function FsBrowserModal({
 }) {
   const [path, setPath] = useState(initialPath)
   const t = useT()
+  const backdrop = useBackdropClose(onClose)
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['fs', path],
@@ -67,7 +69,7 @@ function FsBrowserModal({
   return (
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-lg flex flex-col shadow-2xl"

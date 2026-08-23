@@ -1,78 +1,66 @@
 {
-  "_comment": "Model manifest. Capability-driven: code branches on caps.*, never on a model id. Adding a model here needs no code change, and a model missing from this file still works — the picker accepts a typed id and falls back to conservative capabilities.",
-  "_pricing_note": "USD per 1M tokens, indicative only. Providers change prices; edit this file to correct them. A model with no pricing block simply shows no cost estimate.",
-  "default_provider": "anthropic",
-  "providers": {
-    "anthropic": { "label": "Anthropic", "default_model": "claude-opus-5", "key_hint": "sk-ant-…", "console": "https://console.anthropic.com" },
-    "openai": { "label": "OpenAI", "default_model": "gpt-5.1", "key_hint": "sk-proj-…", "console": "https://platform.openai.com/api-keys" }
-  },
-  "models": [
-    {
-      "id": "claude-opus-5",
-      "provider": "anthropic",
-      "label": "Claude Opus 5",
-      "note": "Strongest reasoning — best for genealogical inference",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 1000000, "max_output": 128000 },
-      "pricing": { "in": 5.0, "out": 25.0, "cache_read": 0.5, "cache_write": 6.25 }
-    },
-    {
-      "id": "claude-sonnet-5",
-      "provider": "anthropic",
-      "label": "Claude Sonnet 5",
-      "note": "Balanced speed and cost",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 1000000, "max_output": 128000 },
-      "pricing": { "in": 3.0, "out": 15.0, "cache_read": 0.3, "cache_write": 3.75 }
-    },
-    {
-      "id": "claude-haiku-4-5",
-      "provider": "anthropic",
-      "label": "Claude Haiku 4.5",
-      "note": "Fastest and cheapest",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 200000, "max_output": 64000 },
-      "pricing": { "in": 1.0, "out": 5.0, "cache_read": 0.1, "cache_write": 1.25 }
-    },
+  "_comment": "Provider manifest. It deliberately holds NO list of models: the picker asks each provider what the account can actually use, and a hand-kept list is stale the day the next model ships. What lives here is only what no provider API exposes — prices, and family-level capability rules. Code branches on caps.*, never on a model id.",
 
-    {
-      "id": "gpt-5.1",
-      "provider": "openai",
-      "label": "GPT-5.1",
-      "note": "OpenAI's strongest general model",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 400000, "max_output": 128000, "reasoning": true }
+  "_capability_note": "Rules carry only what the code actually branches on. A context window is NOT here: nothing behavioural reads it, OpenAI does not publish one, and a number written here would be displayed to the user as fact. Where a provider states its own limits (Gemini, Anthropic) they come from the provider and are shown; where it does not, nothing is shown. Rules are matched in order, first hit wins, against the model id. They are written at FAMILY level (^gpt-5, ^gemini-) rather than per model, so a point release inherits its family's capabilities instead of falling back to the conservative unknown-model defaults. Add a narrower rule above a broader one only when a model genuinely differs.",
+
+  "_pricing_note": "USD per 1M tokens, indicative only, keyed by exact model id. Providers change prices and expose none of them over the API, so this is hand-kept — a model missing from here simply shows no cost estimate, which is the correct failure. Never guess a price.",
+
+  "default_provider": "anthropic",
+
+  "providers": {
+    "anthropic": {
+      "label": "Anthropic",
+      "default_model": "claude-opus-5",
+      "key_hint": "sk-ant-…",
+      "console": "https://console.anthropic.com"
     },
-    {
-      "id": "gpt-5",
-      "provider": "openai",
-      "label": "GPT-5",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 400000, "max_output": 128000, "reasoning": true }
+    "openai": {
+      "label": "OpenAI",
+      "default_model": "gpt-5.5",
+      "key_hint": "sk-proj-…",
+      "console": "https://platform.openai.com/api-keys"
     },
-    {
-      "id": "gpt-5-mini",
-      "provider": "openai",
-      "label": "GPT-5 mini",
-      "note": "Cheaper, good for simple lookups",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 400000, "max_output": 128000, "reasoning": true }
-    },
-    {
-      "id": "gpt-4.1",
-      "provider": "openai",
-      "label": "GPT-4.1",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 1000000, "max_output": 32768 }
-    },
-    {
-      "id": "gpt-4o",
-      "provider": "openai",
-      "label": "GPT-4o",
-      "note": "Long-stable, widely available",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 128000, "max_output": 16384 },
-      "pricing": { "in": 2.5, "out": 10.0, "cache_read": 1.25 }
-    },
-    {
-      "id": "gpt-4o-mini",
-      "provider": "openai",
-      "label": "GPT-4o mini",
-      "note": "Cheapest option",
-      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "context": 128000, "max_output": 16384 },
-      "pricing": { "in": 0.15, "out": 0.6, "cache_read": 0.075 }
+    "google": {
+      "label": "Google Gemini",
+      "default_model": "gemini-3.7-flash",
+      "key_hint": "AIza…",
+      "console": "https://aistudio.google.com/apikey",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+      "metadata_url": "https://generativelanguage.googleapis.com/v1beta/models"
     }
-  ]
+  },
+
+  "capability_rules": [
+    {
+      "match": "^claude-haiku",
+      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "max_output": 64000 }
+    },
+    {
+      "match": "^claude-",
+      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "max_output": 128000 }
+    },
+    {
+      "match": "^gpt-4",
+      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "max_output": 16384, "reasoning": false }
+    },
+    {
+      "match": "^(gpt-[5-9]|o[1-9])",
+      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "max_output": 128000, "reasoning": true }
+    },
+    {
+      "match": "^gemini-",
+      "caps": { "tools": true, "vision": true, "streaming": true, "prompt_cache": true, "max_output": 64000, "reasoning": false }
+    }
+  ],
+
+  "pricing": {
+    "claude-opus-5":    { "in": 5.0,  "out": 25.0, "cache_read": 0.5,  "cache_write": 6.25 },
+    "claude-sonnet-5":  { "in": 3.0,  "out": 15.0, "cache_read": 0.3,  "cache_write": 3.75 },
+    "claude-haiku-4-5": { "in": 1.0,  "out": 5.0,  "cache_read": 0.1,  "cache_write": 1.25 },
+    "gpt-4o":           { "in": 2.5,  "out": 10.0, "cache_read": 1.25 },
+    "gpt-4o-mini":      { "in": 0.15, "out": 0.6,  "cache_read": 0.075 },
+    "gemini-3.7-flash": { "in": 0.75, "out": 3.75 },
+    "gemini-2.5-pro":   { "in": 1.25, "out": 10.0 },
+    "gemini-2.5-flash": { "in": 0.3,  "out": 2.5 }
+  }
 }

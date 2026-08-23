@@ -157,8 +157,11 @@ def read_zip_db(zip_data: bytes) -> dict:
             "SELECT id, title, source_type, author, year, publisher, location, url, description, "
             "document_id, event_id FROM sources"
         )
+        # relation_id (marriage citations) arrived in schema v15 — an older ZIP
+        # has none, and asking for the column would drop every citation row.
+        rel_col = ", relation_id" if _has_column(conn, "citations", "relation_id") else ""
         citations = _safe_rows(conn,
-            "SELECT id, source_id, person_id, fact, detail, notes FROM citations"
+            f"SELECT id, source_id, person_id, fact, detail, notes{rel_col} FROM citations"
         )
         note_citations = _safe_rows(conn,
             "SELECT id, note_id, source_id, marker, detail, custom_label FROM note_citations"
@@ -577,6 +580,7 @@ def execute_merge(
 
     # Cross-section remaps (populated by their respective sections)
     note_id_remap: dict[int, int]           = {}
+    rel_id_remap:  dict[int, int]           = {}
     ev_id_remap:   dict[int, int]           = {}
     doc_id_remap:  dict[int, int]           = {}
     src_id_remap:  dict[int, int]           = {}
@@ -659,6 +663,7 @@ def execute_merge(
                 (rtype, a, b),
             ).fetchone()
         if dup:
+            rel_id_remap[rel['id']] = dup[0]
             continue
 
         if rtype == 'parent':
@@ -674,6 +679,7 @@ def execute_merge(
              rel.get('divorce_year'), rel.get('divorce_place')),
         )
         conn.commit()
+        rel_id_remap[rel['id']] = cur.lastrowid
         rollback['added_relation_ids'].append(cur.lastrowid)
         stats['relations_added'] += 1
 
@@ -1024,15 +1030,26 @@ def execute_merge(
             local_src_id = src_id_remap.get(cit['source_id'])
             if local_pid is None or local_src_id is None:
                 continue
+            # A marriage citation names a relation by id. The incoming ids mean
+            # nothing here, so it comes across only if its marriage did — an
+            # unremapped id would point at somebody else's marriage.
+            local_rel_id = None
+            if cit.get('relation_id') is not None:
+                local_rel_id = rel_id_remap.get(cit['relation_id'])
+                if local_rel_id is None:
+                    continue
             dup = conn.execute(
-                "SELECT id FROM citations WHERE person_id = ? AND source_id = ? AND fact IS ?",
-                (local_pid, local_src_id, cit.get('fact')),
+                "SELECT id FROM citations WHERE person_id = ? AND source_id = ? AND fact IS ? "
+                "AND relation_id IS ?",
+                (local_pid, local_src_id, cit.get('fact'), local_rel_id),
             ).fetchone()
             if dup:
                 continue
             conn.execute(
-                "INSERT INTO citations (source_id, person_id, fact, detail, notes) VALUES (?,?,?,?,?)",
-                (local_src_id, local_pid, cit.get('fact'), cit.get('detail'), cit.get('notes')),
+                "INSERT INTO citations (source_id, person_id, fact, detail, notes, relation_id) "
+                "VALUES (?,?,?,?,?,?)",
+                (local_src_id, local_pid, cit.get('fact'), cit.get('detail'), cit.get('notes'),
+                 local_rel_id),
             )
         conn.commit()
 

@@ -122,7 +122,7 @@ def _build_families(
     parent_pair_to_fam: dict[frozenset, dict] = {}
 
     def new_fam(husb_id, wife_id, marr_year=None, marr_place=None,
-                div_year=None, div_place=None) -> dict:
+                div_year=None, div_place=None, rel_id=None) -> dict:
         nonlocal counter
         fam: dict = {
             'id': counter,
@@ -133,6 +133,10 @@ def _build_families(
             'marr_place': marr_place,
             'div_year': div_year,
             'div_place': div_place,
+            # The spouse relation this FAM came from, so the marriage's source
+            # citations can be found again. None for a family assembled from a
+            # parent relation alone, which cites nothing.
+            'rel_id': rel_id,
         }
         counter += 1
         families.append(fam)
@@ -154,7 +158,8 @@ def _build_families(
             husb_id, wife_id = pid_a, pid_b
         fam = new_fam(husb_id, wife_id,
                       rel['marriage_year'], rel['marriage_place'],
-                      rel['divorce_year'], rel['divorce_place'])
+                      rel['divorce_year'], rel['divorce_place'],
+                      rel_id=rel['id'])
         parent_pair_to_fam[frozenset([husb_id, wife_id])] = fam
 
     # Step 2: assign children to families
@@ -221,6 +226,14 @@ def build_gedcom_zip(
             "(SELECT id FROM documents WHERE COALESCE(is_private,0)=0 AND person_id IS NOT NULL)"
         ).fetchall() if include_documents else []
         sources       = conn.execute("SELECT * FROM sources").fetchall() if include_sources else []
+        # Marriage citations hang off the relation (schema v15+), so they can be
+        # emitted under the FAM's MARR rather than under one of the spouses.
+        try:
+            marr_cites = conn.execute(
+                "SELECT * FROM citations WHERE relation_id IS NOT NULL"
+            ).fetchall() if include_sources else []
+        except sqlite3.OperationalError:
+            marr_cites = []   # database older than v15
         notes         = conn.execute("SELECT * FROM person_notes WHERE COALESCE(is_private,0)=0").fetchall() if include_notes else []
         note_cites    = conn.execute("SELECT * FROM note_citations").fetchall() if include_notes else []
         events        = conn.execute("SELECT * FROM events WHERE COALESCE(is_private,0)=0").fetchall() if include_events else []
@@ -481,6 +494,10 @@ def build_gedcom_zip(
             lines.append(f"1 FAMC @F{fid}@")
 
     # ── FAM records ───────────────────────────────────────────────────────────
+    cites_by_relation: dict[int, list] = {}
+    for c in marr_cites:
+        cites_by_relation.setdefault(c['relation_id'], []).append(c)
+
     for fam in families:
         lines.append(f"0 @F{fam['id']}@ FAM")
         if fam['husb']: lines.append(f"1 HUSB @I{fam['husb']}@")
@@ -488,10 +505,18 @@ def build_gedcom_zip(
         for cid in fam['children']:
             lines.append(f"1 CHIL @I{cid}@")
         marr_date = _gedcom_date(None, fam['marr_year'])
-        if marr_date or fam['marr_place']:
-            lines.append("1 MARR")
+        fam_cites = cites_by_relation.get(fam['rel_id'], []) if fam['rel_id'] else []
+        if marr_date or fam['marr_place'] or fam_cites:
+            # `MARR Y` is how 5.5.1 asserts an event whose detail is unknown —
+            # needed when the only thing recorded about the marriage is what it
+            # was read from.
+            lines.append("1 MARR" if (marr_date or fam['marr_place']) else "1 MARR Y")
             if marr_date:        lines.append(f"2 DATE {marr_date}")
             if fam['marr_place']: lines.append(f"2 PLAC {_safe(fam['marr_place'])}")
+            for c in fam_cites:
+                lines.append(f"2 SOUR @S{c['source_id']}@")
+                if c['detail']:  lines.append(f"3 PAGE {_safe(c['detail'])}")
+                if c['notes']:   _emit_note(3, c['notes'], lines)
         div_date = _gedcom_date(None, fam['div_year'])
         if div_date or fam['div_place']:
             lines.append("1 DIV")

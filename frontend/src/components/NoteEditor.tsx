@@ -6,6 +6,7 @@ import { api } from '../api'
 import { renderMarkdown } from '../markdown'
 import { useFamilyContext, FamilyContextLines } from '../familyContext'
 import { caretAnchor, useCaretPopup, type CaretAnchor } from '../caretPopup'
+import { useBackdropClose } from '../modalBackdrop'
 
 // ── NoteOps — injectable API operations (supports person notes & document notes) ─
 
@@ -576,6 +577,7 @@ function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, 
   onEdit: () => void
 }) {
   const t = useT()
+  const backdrop = useBackdropClose(onClose)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -607,7 +609,7 @@ function NoteViewModal({ note, html, editedAt, navigateCitation, onNavToPerson, 
     <div
       className="fixed inset-0 z-[300] flex items-center justify-center p-4"
       style={{ background: 'rgba(0,0,0,0.72)' }}
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className="relative bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl w-full flex flex-col"

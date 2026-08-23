@@ -23,6 +23,7 @@ import { usePersonDirectory, PersonMultiSelect } from './PersonSelect'
 import { DatePartPicker } from './EventTimeline'
 import { renderMarkdown, plainMentions } from '../markdown'
 import { docTypeLabel } from '../docTypes'
+import { useBackdropClose } from '../modalBackdrop'
 
 function ToolbarBtn({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) {
   return (
@@ -49,9 +50,10 @@ function PhotoPickerModal({ attachedIds, onPick, onClose }: {
     staleTime: 60_000,
   })
   const images: ImageItem[] = page?.items ?? []
+  const backdrop = useBackdropClose(onClose)
 
   return createPortal(
-    <div className="fixed inset-0 z-[800] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[800] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" {...backdrop}>
       <div className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
         style={{ width: 520, maxHeight: '80vh' }} onClick={e => e.stopPropagation()}>
         <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-800 shrink-0">
@@ -413,10 +415,11 @@ export default function TextDocumentEditor({ doc, types, initialPersonIds = [], 
     .slice(0, 40)
 
   const previewHtml = useMemo(() => renderMarkdown(content, citations), [content, citations])
+  const backdrop = useBackdropClose(onClose)
 
   return (
     <>
-      <div className="fixed inset-0 z-[650] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="fixed inset-0 z-[650] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4" {...backdrop}>
         <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
           style={{ width: 900, maxWidth: '95vw', height: '88vh' }}
           onClick={e => e.stopPropagation()}>

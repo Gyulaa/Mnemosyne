@@ -322,7 +322,10 @@ export interface Citation {
   id: number
   source_id: number
   person_id: number
-  fact: string | null   // birth|christening|death|burial|occupation|general
+  // Set for a fact the relation carries rather than the person — a marriage.
+  // Both spouses' panels are served the same citation.
+  relation_id: number | null
+  fact: string | null   // birth|christening|death|burial|occupation|marriage|general
   detail: string | null
   notes: string | null
   source_title: string | null
@@ -526,16 +529,22 @@ export interface AiModel {
   id: string
   provider: string
   label: string
-  note?: string
-  /** True for models the bundled manifest describes; false for ones only the
-   *  provider reported, which carry fallback capabilities. */
-  curated?: boolean
+  /** The provider's own prose description, where it supplies one — Gemini
+   *  does, Anthropic gives only a display name, OpenAI neither. */
+  description?: string | null
+  /** True when a manifest capability rule covers this id, so `caps` is
+   *  trustworthy rather than the conservative unknown-model fallback. */
+  known?: boolean
+  /** False before the first successful discovery, when the list is just the
+   *  provider's default model. */
+  live?: boolean
   caps: {
     tools: boolean
     vision: boolean
     streaming: boolean
     prompt_cache: boolean
-    context: number
+    /** Only present when the provider states its own limit — OpenAI does not. */
+    context?: number
     max_output: number
   }
   pricing?: { in: number; out: number; cache_read?: number; cache_write?: number }
@@ -628,3 +637,166 @@ export type ChatStreamEvent =
   | { type: 'error'; message: string; kind: string; retryable: boolean }
   | { type: 'saved'; message_id: number }
   | { type: 'done'; usage: { input: number; output: number; cache_read: number; cache_write: number }; failed: boolean; estimated_cost_usd: number | null }
+
+
+/**
+ * Document reading — a third opt-in, separate from the assistant's own and
+ * from web research. Enabling it sends the scans themselves to the provider,
+ * and it carries its own model choice: reading old handwriting and reasoning
+ * over a family tree reward different models.
+ *
+ * `provider_choice` / `model_choice` are "" when the reader follows the
+ * assistant's choice; `provider` / `model` are what it resolved to.
+ */
+export interface DocumentAiSettings {
+  enabled: boolean
+  provider: string
+  model: string
+  provider_choice: string
+  model_choice: string
+  follows_assistant: boolean
+  configured: boolean
+  vision: boolean
+  monthly_pages: number
+  usage_month: number
+}
+
+export type TranscriptRelevance = 'high' | 'medium' | 'low' | 'none'
+
+/**
+ * The relationship a page and the tree agree on — the only evidence that
+ * reaches the top relevance level. Structured rather than a sentence so it can
+ * render in the user's language and link to the people it names.
+ */
+export interface TranscriptCorroboration {
+  kind: 'parent_child' | 'spouses' | 'siblings' | 'shared_parent'
+  roles: (string | null)[]
+  /** Which record on the page, as the register numbers it. A page holds many. */
+  entry_no: number | null
+  persons: {
+    person_id: number
+    first_name: string | null
+    last_name: string | null
+    role_on_page: string | null
+  }[]
+}
+
+/** One file in a batch. `document_id` is set once the page has been imported. */
+export interface TranscriptPage {
+  id: number
+  batch_id: number
+  filename: string
+  mime_type: string | null
+  sort_order: number
+  status: 'pending' | 'running' | 'done' | 'failed'
+  method: string | null
+  language: string | null
+  relevance: TranscriptRelevance | null
+  relevance_note: string | null
+  corroboration: TranscriptCorroboration | null
+  edited: boolean
+  error: string | null
+  model: string | null
+  document_id: number | null
+  input_tokens: number | null
+  output_tokens: number | null
+  created_at: string | null
+  has_text: boolean
+  /** The model reported more entries on the page than it transcribed. */
+  incomplete: boolean
+}
+
+/** The same page with its text — only the single-page endpoint returns these. */
+export interface TranscriptPageFull extends TranscriptPage {
+  source_path: string | null
+  text: string | null
+  extraction: TranscriptExtraction | null
+}
+
+export interface TranscriptExtractionPerson {
+  role: string | null
+  first_name: string | null
+  last_name: string | null
+  age: number | null
+  occupation: string | null
+  religion: string | null
+  residence: string | null
+  note: string | null
+}
+
+export interface TranscriptExtraction {
+  kind: string | null
+  date: string | null
+  place: string | null
+  register: string | null
+  persons: TranscriptExtractionPerson[]
+  remarks: string | null
+}
+
+/** One tool call the batch report made against the project while writing. */
+/**
+ * One question asked about a batch, with the answer and what it looked up.
+ * Stored on the batch, so opening a page an answer named does not lose it.
+ */
+export interface TranscriptQuestion {
+  id: number
+  question: string
+  answer: string | null
+  steps: TranscriptAnalysisStep[]
+  error: string | null
+  created_at: string | null
+}
+
+export interface TranscriptAnalysisStep {
+  tool: string
+  input: Record<string, unknown>
+  result_preview: string
+  result_chars: number
+  is_error: boolean
+  ms: number
+}
+
+/** A folder of scans being triaged. The files stay outside the project. */
+export interface TranscriptBatch {
+  id: number
+  name: string
+  folder: string | null
+  created_at: string | null
+  status: 'pending' | 'transcribing' | 'analysing' | 'ready' | 'failed'
+  provider: string | null
+  model: string | null
+  analysis: string | null
+  /** What the report looked up while writing — empty for a report that
+   *  needed no lookups, or one written before this was recorded. */
+  analysis_steps: TranscriptAnalysisStep[]
+  questions: TranscriptQuestion[]
+  analysis_error: string | null
+  analysed_at: string | null
+  counts: Record<string, number>
+  relevance: Partial<Record<TranscriptRelevance, number>>
+  imported: number
+  total: number
+}
+
+export interface TranscriptBatchDetail extends TranscriptBatch {
+  pages: TranscriptPage[]
+}
+
+/**
+ * Phases run in order and phase 3 starts on its own once no page is unread —
+ * the report is a statement about the whole folder, so it waits for it.
+ */
+export interface TranscriptStatus {
+  running: boolean
+  batch_id: number | null
+  phase: 'idle' | 'transcribing' | 'matching' | 'analysing' | 'done' | 'failed'
+  processed: number
+  total: number
+  failed: number
+  current_name: string | null
+  error: string | null
+  /** Seconds spent in the current phase — the analysis reports no progress
+   *  between its rounds, so this is what distinguishes thinking from hung. */
+  phase_seconds: number | null
+  quota: { used: number; limit: number; remaining: number }
+}

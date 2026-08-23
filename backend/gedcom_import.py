@@ -817,6 +817,7 @@ def execute_rollback(db_path: Path, docs_dir: Path) -> Optional[dict]:
     deleted: dict[str, int] = {k: 0 for k in ('persons', 'relations', 'events', 'sources', 'notes', 'documents', 'clusters', 'images', 'faces')}
 
     # 1. Delete created persons (manual cascade — SQLAlchemy ORM not available here)
+    touched_event_ids: set[int] = set()
     for pid in data.get('created_person_ids', []):
         # Collect document files before deletion — the primary file on the
         # document row itself, and any extra files (document_files) it holds.
@@ -831,17 +832,40 @@ def execute_rollback(db_path: Path, docs_dir: Path) -> Optional[dict]:
         conn.execute("DELETE FROM person_notes WHERE person_id = ?", (pid,))
         conn.execute("DELETE FROM citations WHERE person_id = ?", (pid,))
         conn.execute("DELETE FROM documents WHERE person_id = ?", (pid,))
+        touched_event_ids.update(
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT event_id FROM event_persons WHERE person_id = ?", (pid,)
+            ).fetchall()
+        )
         conn.execute("DELETE FROM event_persons WHERE person_id = ?", (pid,))
+        # A marriage citation can belong to the person on the *other* side of
+        # the relation, so `citations WHERE person_id` above does not cover it.
+        conn.execute(
+            "DELETE FROM citations WHERE relation_id IN "
+            "(SELECT id FROM relations WHERE person_a_id = ? OR person_b_id = ?)", (pid, pid)
+        )
         conn.execute("DELETE FROM relations WHERE person_a_id = ? OR person_b_id = ?", (pid, pid))
         conn.execute("DELETE FROM persons WHERE id = ?", (pid,))
         deleted['persons'] += 1
 
-    # Clean up events that no longer have any person links
-    conn.execute("DELETE FROM events WHERE id NOT IN (SELECT DISTINCT event_id FROM event_persons)")
+    # Clean up the imported persons' events that nobody is left in. Scoped to
+    # those events (a participant-less event created by hand is not this
+    # import's to delete) and photo links first, since `event_images` declares
+    # no ON DELETE action — see `delete_person` in main.py for the long version.
+    if touched_event_ids:
+        marks = ",".join("?" * len(touched_event_ids))
+        ids = tuple(touched_event_ids)
+        conn.execute(
+            f"DELETE FROM event_images WHERE event_id IN ({marks}) "
+            "AND event_id NOT IN (SELECT event_id FROM event_persons)", ids)
+        conn.execute(
+            f"DELETE FROM events WHERE id IN ({marks}) "
+            "AND id NOT IN (SELECT event_id FROM event_persons)", ids)
     conn.commit()
 
     # 2. Delete relations added between existing (merged) persons
     for rid in data.get('added_relation_ids', []):
+        conn.execute("DELETE FROM citations WHERE relation_id = ?", (rid,))
         cur = conn.execute("DELETE FROM relations WHERE id = ?", (rid,))
         if cur.rowcount:
             deleted['relations'] += 1
@@ -858,6 +882,7 @@ def execute_rollback(db_path: Path, docs_dir: Path) -> Optional[dict]:
     # 4. Delete events added to merged persons
     for eid in data.get('added_event_ids', []):
         conn.execute("DELETE FROM event_persons WHERE event_id = ?", (eid,))
+        conn.execute("DELETE FROM event_images WHERE event_id = ?", (eid,))
         cur = conn.execute("DELETE FROM events WHERE id = ?", (eid,))
         if cur.rowcount:
             deleted['events'] += 1

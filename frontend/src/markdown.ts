@@ -19,6 +19,21 @@ import type { NoteCitation } from './types'
 
 marked.setOptions({ breaks: true, gfm: true })
 
+// Indented code blocks are switched off. Markdown turns any line indented four
+// spaces past its surroundings into `<pre><code>`, and inside a code block
+// everything is escaped — including the anchors these bodies inject before the
+// parse. A model that indented one continuation line a little too far produced
+// a report where the person references rendered as visible `<a href=…>` text
+// nobody could click, while the same report re-run rendered correctly: the
+// output depended on whitespace nobody chose deliberately.
+//
+// Nothing in this app wants an indented code block — not a note, not a document
+// description, not a transcript imported into one, not an assistant answer.
+// Fenced blocks (```) still work, so the deliberate case is untouched and only
+// the accidental one is gone. Returning `undefined` makes marked fall through
+// to its remaining block rules, which is how a tokenizer opts out.
+marked.use({ tokenizer: { code() { return undefined } } })
+
 const MENTION_RE = /@\[([^\]]+)\]\(#pid-(\d+)\)/g
 
 /**
@@ -75,8 +90,17 @@ export function renderTitleMentions(text: string): string {
 }
 
 export function renderMarkdown(content: string, citations: NoteCitation[]): string {
-  let processed = content.replace(/@\[([^\]]+)\]\(#pid-(\d+)\)/g, (_, name, id) =>
+  // The `@` is optional because a model asked for `@[Name](#pid-7)` regularly
+  // writes `[Name](#pid-7)` instead, and the difference is invisible until the
+  // reference renders as a dead link nobody can click. The anchor target is
+  // specific enough on its own; a prompt instruction is not a mechanism.
+  let processed = content.replace(/@?\[([^\]]+)\]\(#pid-(\d+)\)/g, (_, name, id) =>
     `<a href="#person-ref-${id}" class="note-person-ref">${name}</a>`
+  )
+  // A page of a scan batch. Same shape as the others; only the scan-reading
+  // screen resolves it, and it is inert markup anywhere else.
+  processed = processed.replace(/\[([^\]]+)\]\(#page-(\d+)\)/g, (_, label, id) =>
+    `<a href="#page-ref-${id}" class="note-page-ref">${label}</a>`
   )
   processed = processed.replace(/\[([^\]]+)\]\(#img-(\d+)\)/g, (_, label, id) =>
     `<a href="#image-ref-${id}" class="note-image-ref">${label}</a>`

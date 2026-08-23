@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, downloadViaBrowser } from '../api'
+import { useBackdropClose } from '../modalBackdrop'
 import type { Cluster, ClusterConnection, FaceInfo, ImageItem, ImagePerson, PersonEvent, PersonFull, Relation, SimilarFaceInfo } from '../types'
 import ExportModal from './ExportModal'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
@@ -585,11 +586,12 @@ function ClusterModal({
       : cluster.person_name ?? t('clusters.clusterN', { n: String(cluster.label).padStart(3, '0') })
 
   const otherClusters = allClusters.filter(c => c.id !== cluster.id)
+  const backdrop = useBackdropClose(onClose)
 
   return (
     <div
       className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className="rounded-2xl w-full max-w-5xl flex flex-col shadow-2xl"
@@ -1278,6 +1280,7 @@ function FaceGrid({
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [assigning, setAssigning] = useState(false)
   const [busy, setBusy] = useState(false)
+  const backdrop = useBackdropClose(() => setEnlarged(null))
 
   function toggleSelect(e: React.MouseEvent, id: number) {
     e.stopPropagation()
@@ -1389,7 +1392,7 @@ function FaceGrid({
       {enlarged && (
         <div
           className="fixed inset-0 bg-black/85 flex items-center justify-center z-60 p-4"
-          onClick={() => setEnlarged(null)}
+          {...backdrop}
         >
           <div className="max-w-xs w-full space-y-3" onClick={e => e.stopPropagation()}>
             <img
@@ -1461,6 +1464,7 @@ function NoiseFaceGrid({
   const [showHidden, setShowHidden] = useState(false)
   const [enlarged, setEnlarged]     = useState<FaceInfo | null>(null)
   const [fullPhoto, setFullPhoto]   = useState(false)
+  const backdrop = useBackdropClose(() => setEnlarged(null))
 
   const hiddenCount   = faces.filter(f => f.dismissed).length
   const visibleFaces  = showHidden ? faces : faces.filter(f => !f.dismissed)
@@ -1746,7 +1750,7 @@ function NoiseFaceGrid({
       {enlarged && !fullPhoto && (
         <div
           className="fixed inset-0 bg-black/85 flex items-center justify-center z-60 p-4"
-          onClick={() => setEnlarged(null)}
+          {...backdrop}
         >
           <div className="max-w-xs w-full space-y-3" onClick={e => e.stopPropagation()}>
             <img
@@ -1848,9 +1852,10 @@ function NoiseImageModal({ imageId, onBack, onClose, onNavToCluster }: {
   }, [onClose])
 
   const exifMeta = _parseMeta(img?.meta_json ?? null)
+  const backdrop = useBackdropClose(onClose)
 
   return (
-    <div className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center" {...backdrop}>
       <div
         className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col mx-8"
         style={{ maxHeight: '92vh', width: 'min(860px, calc(100vw - 64px))' }}
@@ -2010,9 +2015,10 @@ function ClusterPersonPickerModal({ persons, relations, nameOrder, linking, onSe
       p.last_name?.toLowerCase().includes(q)
     )
   )
+  const backdrop = useBackdropClose(onClose)
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center" {...backdrop}>
       <div className="bg-zinc-800 border border-zinc-700 rounded-2xl shadow-2xl w-96 flex flex-col overflow-hidden"
         style={{ maxHeight: 520 }} onClick={e => e.stopPropagation()}>
         <div className="px-4 pt-3 pb-2 border-b border-zinc-700">
@@ -2163,6 +2169,8 @@ function AssignFacesOverlay({
       )
     : allClusters
 
+  const backdrop = useBackdropClose(onClose)
+
   async function finishWithSuggestions(clusterId: number, clusterName: string | null) {
     try {
       const similar = await api.cluster.similarNoise(clusterId)
@@ -2235,7 +2243,7 @@ function AssignFacesOverlay({
   return (
     <div
       className="fixed inset-0 bg-black/85 flex items-center justify-center z-60 p-4"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col"
@@ -2511,11 +2519,12 @@ function SuggestionsPanel({
   }
 
   const clusterLabel = suggestions.clusterName ?? 'this cluster'
+  const backdrop = useBackdropClose(onSkip)
 
   return (
     <div
       className="fixed inset-0 bg-black/85 flex items-center justify-center z-60 p-4"
-      onClick={onSkip}
+      {...backdrop}
     >
       <div
         className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl shadow-2xl"
@@ -2630,6 +2639,8 @@ function PhotoGallery({
     return () => window.removeEventListener('keydown', onKey)
   }, [lightboxIdx, uniqueImages.length])
 
+  const backdrop = useBackdropClose(() => setLightboxIdx(null))
+
   if (!uniqueImages.length) {
     return <p className="text-center text-zinc-600 py-10 text-sm">{t('clusters.noPhotos')}</p>
   }
@@ -2680,7 +2691,7 @@ function PhotoGallery({
       {currentImage != null && lightboxIdx != null && (
         <div
           className="fixed inset-0 bg-black/92 flex items-center justify-center z-60"
-          onClick={() => setLightboxIdx(null)}
+          {...backdrop}
         >
           {/* Prev arrow */}
           {lightboxIdx > 0 && (

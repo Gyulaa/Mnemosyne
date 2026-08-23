@@ -150,6 +150,14 @@ class Document(Base):
     body_images = relationship("DocumentImage", back_populates="document", cascade="all, delete-orphan")
     extra_files = relationship("DocumentFile", back_populates="document", cascade="all, delete-orphan")
     description_citations = relationship("DocumentDescriptionCitation", back_populates="document", cascade="all, delete-orphan")
+    # Set when the document was imported from a transcript batch. viewonly, so
+    # the ORM never writes through it: the page owns the link, and deleting the
+    # document leaves the page's own ON DELETE SET NULL to clear it — the
+    # transcript survives the document, which is the point.
+    transcript = relationship(
+        "TranscriptPage", uselist=False, viewonly=True,
+        primaryjoin="Document.id == TranscriptPage.document_id",
+    )
 
 
 class DocumentCitation(Base):
@@ -312,7 +320,11 @@ class Citation(Base):
     id = Column(Integer, primary_key=True, index=True)
     source_id = Column(Integer, ForeignKey("sources.id"), nullable=False, index=True)
     person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
-    fact = Column(String, nullable=True)   # birth|christening|death|burial|occupation|general
+    fact = Column(String, nullable=True)   # birth|christening|death|burial|occupation|marriage|general
+    # Set when the fact belongs to a relation rather than to the person alone —
+    # a marriage. Both spouses' panels then read the same citation, and
+    # `person_id` records only whose screen it was entered from.
+    relation_id = Column(Integer, ForeignKey("relations.id"), nullable=True, index=True)
     detail = Column(String, nullable=True)  # page/entry/timestamp
     notes = Column(String, nullable=True)
     source = relationship("Source", back_populates="citations")
@@ -411,6 +423,111 @@ class ChatToolCall(Base):
     duration_ms = Column(Integer, nullable=True)
     is_error = Column(Boolean, nullable=False, default=False, server_default="0")
     message = relationship("ChatMessage", back_populates="tool_calls")
+
+
+class TranscriptBatch(Base):
+    """A folder of scans being triaged before anything is imported.
+
+    The pages a batch holds are **not** documents yet, and most of them never
+    will be: a parish register folder is read to find the handful of entries
+    that concern this family. So the transcript lives here, on a row that
+    points at a file still sitting outside the project, and only a page the
+    user picks is copied into `documents/` and given a Document row.
+
+    Never exported — `build_export_db` drops both tables unconditionally, for
+    the same reason the chat tables are dropped: they are working state about
+    files that may not even belong to the project.
+    """
+    __tablename__ = "transcript_batches"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    folder = Column(String, nullable=True)       # source folder on disk, outside the project
+    created_at = Column(String, nullable=True)
+    # pending | transcribing | analysing | ready | failed
+    status = Column(String, nullable=False, default="pending", server_default="pending")
+    provider = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    analysis = Column(String, nullable=True)         # the batch-level report, Markdown
+    # JSON list of the tool calls the report made against the project — what it
+    # looked up, and what came back. Kept so the answer stays checkable after
+    # the fact, exactly as `chat_tool_calls` does for a conversation.
+    analysis_steps = Column(String, nullable=True)
+    analysis_error = Column(String, nullable=True)
+    analysed_at = Column(String, nullable=True)
+    pages = relationship(
+        "TranscriptPage", back_populates="batch",
+        cascade="all, delete-orphan", order_by="TranscriptPage.sort_order",
+    )
+    questions = relationship(
+        "TranscriptQuestion", back_populates="batch",
+        cascade="all, delete-orphan", order_by="TranscriptQuestion.id",
+    )
+
+
+class TranscriptQuestion(Base):
+    """One question asked about a batch, and the answer it got.
+
+    Stored rather than kept in the browser, which is where it started. The
+    answers name pages, and opening a page it recommended is the *first* thing
+    a reader does — at which point a conversation living in component state is
+    gone, along with the reason they opened the page. A record of what was asked
+    is also how the tool calls stay checkable after the fact, exactly as
+    `analysis_steps` does for the report.
+
+    Working state like the rest of these tables: `build_export_db` drops it
+    unconditionally. It is about a folder of files that may never belong to the
+    project, and half of it is questions the user typed while deciding.
+    """
+    __tablename__ = "transcript_questions"
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey("transcript_batches.id", ondelete="CASCADE"), index=True)
+    question = Column(String, nullable=False)
+    answer = Column(String, nullable=True)
+    # JSON list, same shape as `analysis_steps`: what the model looked up.
+    steps = Column(String, nullable=True)
+    error = Column(String, nullable=True)
+    created_at = Column(String, nullable=True)
+    batch = relationship("TranscriptBatch", back_populates="questions")
+
+
+class TranscriptPage(Base):
+    """One file that has been (or is waiting to be) read by the model.
+
+    `document_id` is NULL until the user imports the page. It is
+    ON DELETE SET NULL rather than CASCADE because deleting the imported
+    document should not destroy the transcript — the page simply returns to
+    being an un-imported candidate.
+    """
+    __tablename__ = "transcript_pages"
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey("transcript_batches.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_path = Column(String, nullable=True)   # absolute path of the file on disk
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    filename = Column(String, nullable=False)
+    mime_type = Column(String, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    # pending | running | done | failed
+    status = Column(String, nullable=False, default="pending", server_default="pending")
+    method = Column(String, nullable=True)        # 'text_layer' | 'vision'
+    text = Column(String, nullable=True)          # verbatim transcript, original language
+    modern_text = Column(String, nullable=True)   # modern rendering of the same
+    extraction = Column(String, nullable=True)    # JSON: the register entry's fields
+    language = Column(String, nullable=True)
+    # Filled by the local matching pass, never by the model — see transcriber.py.
+    relevance = Column(String, nullable=True)     # 'high' | 'medium' | 'low' | 'none'
+    relevance_note = Column(String, nullable=True)
+    # JSON: which two people, in which roles, and what relationship the record
+    # and the tree agree on. Structured rather than a sentence because it has
+    # to render in the user's language and link to the people it names — a
+    # prose string could do neither.
+    corroboration = Column(String, nullable=True)
+    edited = Column(Boolean, nullable=False, default=False, server_default="0")
+    error = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    created_at = Column(String, nullable=True)
+    batch = relationship("TranscriptBatch", back_populates="pages")
 
 
 def configure_engine(engine):
@@ -936,6 +1053,110 @@ def init_db_schema(engine):
             """))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_document_description_citations_document_id ON document_description_citations(document_id)"))
             conn.execute(text("UPDATE schema_version SET version = 11"))
+            conn.commit()
+
+        # v11 → v12: transcript_batches / transcript_pages — a folder of scans
+        # read by the model before anything is imported. The pages point at
+        # files still outside the project, so this is working state, not
+        # project content: build_export_db drops both tables.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 12:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS transcript_batches (
+                    id             INTEGER PRIMARY KEY,
+                    name           TEXT NOT NULL,
+                    folder         TEXT,
+                    created_at     TEXT,
+                    status         TEXT NOT NULL DEFAULT 'pending',
+                    provider       TEXT,
+                    model          TEXT,
+                    analysis       TEXT,
+                    analysis_error TEXT,
+                    analysed_at    TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS transcript_pages (
+                    id             INTEGER PRIMARY KEY,
+                    batch_id       INTEGER NOT NULL REFERENCES transcript_batches(id) ON DELETE CASCADE,
+                    source_path    TEXT,
+                    document_id    INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+                    filename       TEXT NOT NULL,
+                    mime_type      TEXT,
+                    sort_order     INTEGER NOT NULL DEFAULT 0,
+                    status         TEXT NOT NULL DEFAULT 'pending',
+                    method         TEXT,
+                    text           TEXT,
+                    modern_text    TEXT,
+                    extraction     TEXT,
+                    language       TEXT,
+                    relevance      TEXT,
+                    relevance_note TEXT,
+                    edited         INTEGER NOT NULL DEFAULT 0,
+                    error          TEXT,
+                    model          TEXT,
+                    input_tokens   INTEGER,
+                    output_tokens  INTEGER,
+                    created_at     TEXT
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_transcript_pages_batch_id ON transcript_pages(batch_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_transcript_pages_document_id ON transcript_pages(document_id)"))
+            conn.execute(text("UPDATE schema_version SET version = 12"))
+            conn.commit()
+
+        # v12 → v13: transcript_batches.analysis_steps — the tool calls the
+        # batch report made, so its reasoning is auditable after the fact.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 13:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(transcript_batches)"))]
+            if "analysis_steps" not in cols:
+                conn.execute(text("ALTER TABLE transcript_batches ADD COLUMN analysis_steps TEXT"))
+            conn.execute(text("UPDATE schema_version SET version = 13"))
+            conn.commit()
+
+        # v13 → v14: transcript_pages.corroboration — the relationship a page
+        # and the tree agree on, with the ids of the two people it names.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 14:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(transcript_pages)"))]
+            if "corroboration" not in cols:
+                conn.execute(text("ALTER TABLE transcript_pages ADD COLUMN corroboration TEXT"))
+            conn.execute(text("UPDATE schema_version SET version = 14"))
+            conn.commit()
+
+        # v14 -> v15: citations.relation_id — a marriage's sources belong to the
+        # marriage, not to whichever spouse's panel they were entered from. The
+        # id used to be encoded in the fact string (`marriage_<relation id>`),
+        # which only the person who entered it could see and which a merge
+        # import carried across verbatim, pointing it at an unrelated marriage.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 15:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(citations)"))]
+            if "relation_id" not in cols:
+                conn.execute(text("ALTER TABLE citations ADD COLUMN relation_id INTEGER REFERENCES relations(id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_citations_relation_id ON citations(relation_id)"))
+            # Only rows whose marriage still exists: nothing enforced the old
+            # key, so a citation can name a relation that was deleted years
+            # ago, and this connection has foreign keys ON — pointing the new
+            # column at a missing row would fail the constraint and take the
+            # whole startup migration with it. Such a citation was already
+            # unreachable in the UI; it is left exactly as it was rather than
+            # deleted, since nothing is gained by destroying it here.
+            conn.execute(text(
+                "UPDATE citations SET relation_id = CAST(substr(fact, 10) AS INTEGER), fact = 'marriage' "
+                "WHERE substr(fact, 1, 9) = 'marriage_' AND substr(fact, 10) GLOB '[0-9]*' "
+                "AND CAST(substr(fact, 10) AS INTEGER) IN (SELECT id FROM relations)"
+            ))
+            conn.execute(text("UPDATE schema_version SET version = 15"))
+            conn.commit()
+
+        # v15 -> v16: transcript_questions. A new *table*, so `create_all` has
+        # already made it — the version bump is what records that a database
+        # opened by an older build has caught up.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 16:
+            conn.execute(text("UPDATE schema_version SET version = 16"))
             conn.commit()
 
 

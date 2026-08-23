@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import { api } from '../api'
 import { useT } from '../SettingsContext'
+import { useBackdropClose } from '../modalBackdrop'
 import type {
   MergePreviewResponse, MergePersonEntry,
   MergeDecision, MergeOptions, MergeStats, MergeAction,
@@ -260,6 +261,7 @@ interface Props {
 
 export default function MergeModal({ onClose, onDone }: Props) {
   const t = useT()
+  const backdrop = useBackdropClose(onClose)
   const [step, setStep]         = useState<Step>('upload')
   const [analyzing, setAnalyzing] = useState(false)
   const [error, setError]       = useState<string | null>(null)
@@ -354,7 +356,7 @@ export default function MergeModal({ onClose, onDone }: Props) {
   return (
     <div
       className="fixed inset-0 z-[500] flex items-start justify-center pt-[5vh] bg-black/70 backdrop-blur-sm p-4"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl flex flex-col"

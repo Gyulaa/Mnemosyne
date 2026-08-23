@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import type { ImageItem, ImagePerson, PersonEvent } from '../types'
 import { api } from '../api'
 import { useT, useDateLocale } from '../SettingsContext'
+import { useBackdropClose } from '../modalBackdrop'
 
 const STATUS_CLS: Record<string, string> = {
   done:    'bg-green-900/50 text-green-400 border-green-800',
@@ -41,6 +42,7 @@ export function ImagePreviewModal({
   const imageId = imageIds[idx]
   const t = useT()
   const dateLocale = useDateLocale()
+  const backdrop = useBackdropClose(onClose)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -81,7 +83,7 @@ export function ImagePreviewModal({
   return (
     <div
       className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center"
-      onClick={onClose}
+      {...backdrop}
     >
       {/* Nav arrows */}
       <button

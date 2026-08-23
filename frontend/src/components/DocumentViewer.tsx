@@ -9,6 +9,7 @@ import NoteEditorComponent from './NoteEditor'
 import { renderMarkdown, renderTitleMentions, plainMentions } from '../markdown'
 import { docTypeLabel } from '../docTypes'
 import { DescriptionField, persistDescriptionCitations, linkMentionedPersons } from './DescriptionField'
+import { useBackdropClose } from '../modalBackdrop'
 
 function isImage(mime: string | null) { return mime?.startsWith('image/') ?? false }
 function isPdf(mime: string | null)   { return mime === 'application/pdf' }
@@ -267,8 +268,10 @@ function MediaCarousel({ items, startIndex, description, descriptionCitations, l
       ? EDGE_GAP + sidebarWidth + TAB_W + TAB_GAP
       : EDGE_GAP + 36 + TAB_GAP
 
+  const backdrop = useBackdropClose(onClose)
+
   return createPortal(
-    <div className="fixed inset-0 z-[800] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[800] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4" {...backdrop}>
       <button onClick={onClose}
         style={{ right: 16 + railReserved }}
         className="absolute top-4 z-20 w-9 h-9 rounded-full bg-zinc-800/80 hover:bg-zinc-700 flex items-center justify-center text-zinc-300 hover:text-white transition-colors">
@@ -537,10 +540,12 @@ export default function DocumentViewer({ doc, onClose, onNavToPerson, onNavToDoc
     for (const id of ids) qc.invalidateQueries({ queryKey: ['person-docs', id] })
   }
 
+  const backdrop = useBackdropClose(onClose)
+
   return createPortal(
     <div
       className="fixed inset-0 z-[600] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col"

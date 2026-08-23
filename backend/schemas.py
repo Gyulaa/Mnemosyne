@@ -98,7 +98,10 @@ class SourceUpdate(BaseModel):
 
 class CitationCreate(BaseModel):
     source_id: int
-    fact: Optional[str] = None    # birth|christening|death|burial|occupation|general
+    fact: Optional[str] = None    # birth|christening|death|burial|occupation|marriage|general
+    # Set for a fact carried by a relation rather than by the person alone — a
+    # marriage. Must name a relation the person is part of.
+    relation_id: Optional[int] = None
     detail: Optional[str] = None  # page / entry / audio timestamp
     notes: Optional[str] = None
 
@@ -224,3 +227,66 @@ class ChatSendRequest(BaseModel):
     lang: str = 'en'
     name_order: str = 'en'
     style: str = 'structured'
+
+
+class DocumentAiSettingsUpdate(BaseModel):
+    """Patch for the `document_ai` block — a third opt-in, separate again from
+    `ai` and `web_research`. Enabling it sends the scans themselves to the
+    provider, which is a larger disclosure than the tree summary the assistant
+    already sends, and it carries its own model choice because reading old
+    handwriting and reasoning over a family tree reward different models.
+
+    A `provider` or `model` of "" means "follow the assistant's choice"."""
+    enabled: Optional[bool] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    monthly_pages: Optional[int] = None
+
+
+class TranscriptBatchCreate(BaseModel):
+    """A folder of scans to be read. The files stay where they are — nothing
+    is copied into the project until a page is imported."""
+    folder: str
+    name: Optional[str] = None
+    recursive: bool = True
+
+
+class TranscriptBatchStart(BaseModel):
+    lang: str = 'en'
+    name_order: str = 'en'
+    # A failed page is not retried by default: a run that failed for a reason
+    # that has not been fixed would just spend the budget again. Asking for it
+    # is a separate button, not a side effect of pressing continue.
+    retry_failed: bool = False
+    # Read only these pages. Empty means every page still unread — the batch
+    # case. Naming pages re-reads them whatever state they are in, which is
+    # what "read this one again" means.
+    page_ids: list[int] = []
+
+
+class TranscriptPageUpdate(BaseModel):
+    """A hand-corrected transcript. Storing an edit marks the page so a later
+    re-read cannot quietly discard the user's reading of a `[?]`."""
+    text: Optional[str] = None
+
+
+class TranscriptBatchAsk(BaseModel):
+    """One question about one folder of scans.
+
+    No history field: the conversation is stored on the batch and read back
+    server-side. Letting the client send it would mean the follow-up context
+    depended on which screen happened to be open, and it would put the loop's
+    own internal message shapes within reach of anything that can post.
+    """
+    question: str
+    lang: str = 'en'
+    name_order: str = 'en'
+
+
+class TranscriptPageImport(BaseModel):
+    """Promote one page to a real Document, copying its file into the project."""
+    person_ids: list[int] = []
+    title: Optional[str] = None
+    doc_type: Optional[str] = 'other'
+    date: Optional[str] = None
+    description: Optional[str] = None

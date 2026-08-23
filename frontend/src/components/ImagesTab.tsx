@@ -6,6 +6,7 @@ import type { Cluster, ImageItem, ImagePerson, PersonEvent, PersonFull } from '.
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
 import { useT, useDateLocale, useSettings, displayPersonName } from '../SettingsContext'
 import { ImagePreviewModal } from './ImagePreviewModal'
+import { useBackdropClose } from '../modalBackdrop'
 
 type FilterType = 'all' | 'done' | 'no_face' | 'error' | 'pending' | 'private'
 type SortOrder = 'id_desc' | 'exif_date_desc' | 'exif_date_asc' | 'filename_asc'
@@ -1176,8 +1177,10 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
     refetchEvents()
   }
 
+  const backdrop = useBackdropClose(onClose)
+
   return createPortal(
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70" {...backdrop}>
       <div
         className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl flex flex-col"
         style={{ width: 520, maxHeight: '80vh' }}

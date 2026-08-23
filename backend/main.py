@@ -18,17 +18,18 @@ import numpy as np
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import update as sql_update, func, nullslast, text
+from sqlalchemy import update as sql_update, bindparam, func, nullslast, text
 from sqlalchemy.orm import Session, object_session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentDescriptionCitation as DBDocumentDescriptionCitation, DocumentImage as DBDocumentImage, DocumentFile as DBDocumentFile, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage, ChatThread as DBChatThread, ChatMessage as DBChatMessage, ChatToolCall as DBChatToolCall
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentDescriptionCitation as DBDocumentDescriptionCitation, DocumentImage as DBDocumentImage, DocumentFile as DBDocumentFile, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage, ChatThread as DBChatThread, ChatMessage as DBChatMessage, ChatToolCall as DBChatToolCall, TranscriptBatch as DBTranscriptBatch, TranscriptPage as DBTranscriptPage, TranscriptQuestion as DBTranscriptQuestion
 from . import scanner as scanner_mod
 from . import clusterer
 from .clusterer import recompute_person_subclusters
 from . import maintenance
 from . import export_utils
+from . import transcriber
 from .schemas import (
     ScanStartRequest, ScanStatusResponse,
     ClusterRunRequest, ClusterResult,
@@ -41,11 +42,14 @@ from .schemas import (
     TextDocumentCreate, TextDocumentBody, DocumentImageAdd,
     DuplicateGroup, DuplicateImageInfo,
     AiSettingsUpdate, WebResearchSettingsUpdate, ChatThreadCreate, ChatThreadUpdate, ChatSendRequest,
+    DocumentAiSettingsUpdate, TranscriptBatchCreate, TranscriptBatchStart,
+    TranscriptPageUpdate, TranscriptPageImport, TranscriptBatchAsk,
 )
 from .image_utils import load_image_bgr, crop_thumbnail, IMAGE_EXTENSIONS
 from .ai import config as ai_config
 from .ai import orchestrator as ai_orchestrator
 from .ai import provider as ai_provider
+from .ai import doc_reader
 
 app = FastAPI(title="Photo Organizer API", version="0.1.0")
 
@@ -1896,6 +1900,7 @@ def _citation_dict(c: "DBCitation") -> dict:
         "id": c.id,
         "source_id": c.source_id,
         "person_id": c.person_id,
+        "relation_id": c.relation_id,
         "fact": c.fact,
         "detail": c.detail,
         "notes": c.notes,
@@ -2093,10 +2098,23 @@ def merge_persons(source_id: int, target_id: int, db: Session = Depends(get_db))
         new_a = target_id if ra == source_id else ra
         new_b = target_id if rb == source_id else rb
         if new_a == new_b:
+            db.execute(text("DELETE FROM citations WHERE relation_id=:id"), {"id": rid})
             db.execute(text("DELETE FROM relations WHERE id=:id"), {"id": rid})
             continue
         key = _rkey(rtype, new_a, new_b)
         if key in existing_rel_keys:
+            # The two marriages have become one; its sources move to the row
+            # that survives rather than disappearing with the duplicate.
+            surv = db.execute(text(
+                "SELECT id FROM relations WHERE type=:t AND id != :id AND "
+                "((person_a_id=:a AND person_b_id=:b) OR (person_a_id=:b AND person_b_id=:a)) "
+                "ORDER BY id LIMIT 1"
+            ), {"t": rtype, "id": rid, "a": new_a, "b": new_b}).fetchone()
+            if surv:
+                db.execute(text("UPDATE citations SET relation_id=:new WHERE relation_id=:old"),
+                           {"new": surv[0], "old": rid})
+            else:
+                db.execute(text("DELETE FROM citations WHERE relation_id=:id"), {"id": rid})
             db.execute(text("DELETE FROM relations WHERE id=:id"), {"id": rid})
         else:
             db.execute(
@@ -2166,7 +2184,21 @@ def delete_person(person_id: int, db: Session = Depends(get_db)):
         raise HTTPException(400, "Cannot delete person with assigned photo clusters")
     # event_persons has no ORM cascade from Person and the actual DB table was created
     # by Base.metadata.create_all() without ON DELETE CASCADE, so delete manually.
+    # Remember which events they were in first — once the links are gone there is
+    # nothing left to tell this person's events from anyone else's (see the
+    # cleanup after the commit below).
+    event_ids = [r[0] for r in db.execute(
+        text("SELECT DISTINCT event_id FROM event_persons WHERE person_id = :pid"), {"pid": person_id}
+    ).fetchall()]
     db.execute(text("DELETE FROM event_persons WHERE person_id = :pid"), {"pid": person_id})
+    # This person's relations are about to be cascade-deleted with them, and a
+    # marriage citation entered from the *other* spouse's panel points at one of
+    # those relations while belonging to a person who survives — so it is not
+    # covered by the cascade on citations.person_id.
+    db.execute(text(
+        "DELETE FROM citations WHERE relation_id IN "
+        "(SELECT id FROM relations WHERE person_a_id = :pid OR person_b_id = :pid)"
+    ), {"pid": person_id})
 
     # Documents this person happens to own (documents.person_id) would be
     # cascade-deleted with them — including ones shared with other people.
@@ -2188,10 +2220,31 @@ def delete_person(person_id: int, db: Session = Depends(get_db)):
 
     db.delete(p)
     db.commit()
-    # Clean up events that no longer have any participants
-    with db.bind.connect() as conn:
-        conn.execute(text("DELETE FROM events WHERE id NOT IN (SELECT DISTINCT event_id FROM event_persons)"))
-        conn.commit()
+    # Clean up the events this person was in that nobody is left in.
+    #
+    # Two things this statement gets wrong if written the obvious way. It is
+    # scoped to *their* events because an event with no participants is a legal
+    # thing to own — one created from the Events tab carries a title, a date and
+    # photos on its own — and a blanket "delete every event without a
+    # participant" sweeps those away as a side effect of deleting an unrelated
+    # person. And the photo links go **first**: `event_images` declares no
+    # ON DELETE action (the table `create_all()` builds comes from the model, so
+    # the CASCADE written in the migration block never applies) and foreign keys
+    # are on, so deleting an event a photo link still points at fails the whole
+    # statement — which is what turned every person delete into a 500 as soon as
+    # one participant-less event with photos existed anywhere in the project.
+    if event_ids:
+        with db.bind.connect() as conn:
+            orphaned = {"ids": event_ids}
+            conn.execute(text(
+                "DELETE FROM event_images WHERE event_id IN :ids "
+                "AND event_id NOT IN (SELECT event_id FROM event_persons)"
+            ).bindparams(bindparam("ids", expanding=True)), orphaned)
+            conn.execute(text(
+                "DELETE FROM events WHERE id IN :ids "
+                "AND id NOT IN (SELECT event_id FROM event_persons)"
+            ).bindparams(bindparam("ids", expanding=True)), orphaned)
+            conn.commit()
     return {"ok": True}
 
 
@@ -2273,6 +2326,9 @@ def delete_relation(relation_id: int, db: Session = Depends(get_db)):
     r = db.get(DBRelation, relation_id)
     if not r:
         raise HTTPException(404, "Relation not found")
+    # citations.relation_id has no ORM relationship behind it, so nothing
+    # cascades — a marriage's sources would outlive the marriage, invisible.
+    db.execute(text("DELETE FROM citations WHERE relation_id = :rid"), {"rid": relation_id})
     db.delete(r)
     db.commit()
     return {"ok": True}
@@ -2687,6 +2743,41 @@ def serve_document(doc_id: int, dl: bool = Query(default=False), db: Session = D
     )
 
 
+@app.delete("/api/documents/{doc_id}/file")
+def delete_document_primary_file(doc_id: int, db: Session = Depends(get_db)):
+    """Remove a document's primary file, promoting its first extra file.
+
+    `documents.stored_name` is NOT NULL and every reader of a document — the
+    viewer, the exports, the bulk download, the GEDCOM media — assumes the
+    row's own file exists, so the primary slot is never emptied: the next
+    `document_files` page moves into it and its own row goes away. A document
+    whose primary file is its only file is refused for the same reason —
+    removing that is deleting the document, which has its own button.
+    """
+    d = db.get(DBDocument, doc_id)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if d.is_text:
+        # A text document's file *is* its Markdown body, edited through
+        # PUT .../text; there is nothing to promote in its place.
+        raise HTTPException(400, "A text document's body cannot be removed")
+    extras = sorted(d.extra_files or [], key=lambda f: (f.sort_order, f.id))
+    if not extras:
+        raise HTTPException(400, "A document must keep at least one file")
+    promoted = extras[0]
+    old_stored = d.stored_name
+    d.stored_name = promoted.stored_name
+    d.filename = promoted.filename
+    d.mime_type = promoted.mime_type
+    db.delete(promoted)
+    db.commit()
+    # Only once the row no longer points at it: a failed commit that had
+    # already unlinked the bytes would leave a document with no file.
+    (_docs_dir() / old_stored).unlink(missing_ok=True)
+    db.refresh(d)
+    return _doc_dict(d)
+
+
 @app.get("/api/documents/{doc_id}/files/{file_id}")
 def serve_document_file(doc_id: int, file_id: int, dl: bool = Query(default=False), db: Session = Depends(get_db)):
     f = db.get(DBDocumentFile, file_id)
@@ -3037,6 +3128,21 @@ def list_citations(person_id: int, db: Session = Depends(get_db)):
     if not p:
         raise HTTPException(404, "Person not found")
     citations = db.query(DBCitation).filter(DBCitation.person_id == person_id).all()
+    # A marriage's sources hang off the relation, so the same list is returned
+    # for both spouses however it was entered — otherwise a source added on one
+    # panel reads as a missing source on the other.
+    rel_ids = [
+        r[0] for r in db.execute(
+            text("SELECT id FROM relations WHERE person_a_id = :pid OR person_b_id = :pid"),
+            {"pid": person_id},
+        ).fetchall()
+    ]
+    if rel_ids:
+        citations += (
+            db.query(DBCitation)
+            .filter(DBCitation.relation_id.in_(rel_ids), DBCitation.person_id != person_id)
+            .all()
+        )
     return [_citation_dict(c) for c in citations]
 
 
@@ -3047,9 +3153,16 @@ def add_citation(person_id: int, body: CitationCreate, db: Session = Depends(get
         raise HTTPException(404, "Person not found")
     if not db.get(DBSource, body.source_id):
         raise HTTPException(404, "Source not found")
+    if body.relation_id is not None:
+        rel = db.get(DBRelation, body.relation_id)
+        if not rel:
+            raise HTTPException(404, "Relation not found")
+        if person_id not in (rel.person_a_id, rel.person_b_id):
+            raise HTTPException(400, "Relation does not involve this person")
     c = DBCitation(
         source_id=body.source_id,
         person_id=person_id,
+        relation_id=body.relation_id,
         fact=body.fact,
         detail=body.detail,
         notes=body.notes,
@@ -3736,9 +3849,11 @@ def ai_update_web_settings(body: WebResearchSettingsUpdate):
 async def ai_list_models(provider: Optional[str] = None, refresh: bool = False):
     """Models for the picker.
 
-    The live list from the provider is the source of truth for what exists; the
-    bundled manifest only supplies labels, notes and prices. `refresh=true`
-    forces a fetch, otherwise a cached list older than a week refreshes itself.
+    The provider's own list is the *only* source of what exists — there is no
+    curated list of models anywhere. Labels and descriptions come from the
+    provider where it gives them, capabilities from the manifest's family
+    rules, price from its hand-kept table. `refresh=true` forces a fetch,
+    otherwise a cached list older than a week refreshes itself.
     """
     target = provider or ai_config.get_settings()['provider']
     key = ai_config.provider_key(target)
@@ -3746,8 +3861,10 @@ async def ai_list_models(provider: Optional[str] = None, refresh: bool = False):
 
     if key and (refresh or ai_config.cache_is_stale(target)):
         try:
-            ids = await ai_provider.discover_models(target, key, ai_config.get_settings().get('base_url'))
-            ai_config.set_cached_models(target, ids)
+            records = await ai_provider.discover_models(
+                target, key, ai_config.provider_base_url(target),
+            )
+            ai_config.set_cached_models(target, records)
         except Exception as exc:
             # A failed refresh must not empty the picker — fall through to
             # whatever is cached, or to the manifest.
@@ -3760,7 +3877,7 @@ async def ai_list_models(provider: Optional[str] = None, refresh: bool = False):
         'providers': ai_config.list_providers(),
         'default': ai_config.default_model(target),
         'fetched_at': cache['fetched_at'],
-        'live': bool(cache['ids']),
+        'live': bool(cache['records']),
         'error': error,
     }
 
@@ -3853,6 +3970,540 @@ async def ai_stream(thread_id: int, body: ChatSendRequest):
         media_type='text/event-stream',
         headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
     )
+
+
+# ── Document reading (scans → transcripts → triage) ───────────────────────────
+#
+# A batch points at a folder *outside* the project. Nothing is copied in until
+# the user imports a page, which is the whole point: most pages in a register
+# folder are never wanted, and importing two hundred scans to find four is the
+# work this is meant to remove.
+
+
+@app.get('/api/ai/document-settings')
+def doc_get_settings():
+    # A third opt-in, separate from /api/ai/settings and /api/ai/web-settings:
+    # this one sends the scans themselves, which is a larger disclosure than
+    # the tree summary the assistant already sends.
+    return ai_config.public_doc_settings()
+
+
+@app.put('/api/ai/document-settings')
+def doc_update_settings(body: DocumentAiSettingsUpdate):
+    if body.monthly_pages is not None and body.monthly_pages < 1:
+        raise HTTPException(400, 'The page budget must be at least 1')
+    if body.provider:
+        if body.provider not in {p['id'] for p in ai_config.list_providers()}:
+            raise HTTPException(400, f'Unknown provider: {body.provider}')
+    ai_config.save_doc_settings(
+        enabled=body.enabled,
+        provider=body.provider,
+        model=body.model,
+        monthly_pages=body.monthly_pages,
+    )
+    return ai_config.public_doc_settings()
+
+
+def _question_dict(q: DBTranscriptQuestion) -> dict:
+    return {
+        'id': q.id,
+        'question': q.question,
+        'answer': q.answer,
+        'steps': json.loads(q.steps) if q.steps else [],
+        'error': q.error,
+        'created_at': q.created_at,
+    }
+
+
+def _batch_dict(b: DBTranscriptBatch, db: Session) -> dict:
+    counts: dict[str, int] = {}
+    for status, n in (
+        db.query(DBTranscriptPage.status, func.count(DBTranscriptPage.id))
+        .filter(DBTranscriptPage.batch_id == b.id)
+        .group_by(DBTranscriptPage.status).all()
+    ):
+        counts[status] = n
+    relevance: dict[str, int] = {}
+    for level, n in (
+        db.query(DBTranscriptPage.relevance, func.count(DBTranscriptPage.id))
+        .filter(DBTranscriptPage.batch_id == b.id, DBTranscriptPage.relevance.isnot(None))
+        .group_by(DBTranscriptPage.relevance).all()
+    ):
+        relevance[level] = n
+    imported = (
+        db.query(func.count(DBTranscriptPage.id))
+        .filter(DBTranscriptPage.batch_id == b.id, DBTranscriptPage.document_id.isnot(None))
+        .scalar() or 0
+    )
+    return {
+        'id': b.id,
+        'name': b.name,
+        'folder': b.folder,
+        'created_at': b.created_at,
+        'status': b.status,
+        'provider': b.provider,
+        'model': b.model,
+        'analysis': b.analysis,
+        'analysis_steps': json.loads(b.analysis_steps) if b.analysis_steps else [],
+        'analysis_error': b.analysis_error,
+        'analysed_at': b.analysed_at,
+        # The conversation about this folder, oldest first. On the batch rather
+        # than behind its own endpoint: the screen already fetches this and
+        # already invalidates it after asking, and a second query would be a
+        # second thing to remember to invalidate.
+        'questions': [
+            _question_dict(q) for q in
+            db.query(DBTranscriptQuestion)
+            .filter(DBTranscriptQuestion.batch_id == b.id)
+            .order_by(DBTranscriptQuestion.id).all()
+        ],
+        'counts': counts,
+        'relevance': relevance,
+        'imported': imported,
+        'total': sum(counts.values()),
+    }
+
+
+def _page_incomplete(p: DBTranscriptPage) -> bool:
+    """True when the model said the page held more entries than it wrote."""
+    if not p.extraction:
+        return False
+    try:
+        cov = (json.loads(p.extraction) or {}).get('coverage') or {}
+    except json.JSONDecodeError:
+        return False
+    return cov.get('complete') is False
+
+
+def _page_dict(p: DBTranscriptPage, *, full: bool = False) -> dict:
+    out = {
+        'id': p.id,
+        'batch_id': p.batch_id,
+        'filename': p.filename,
+        'mime_type': p.mime_type,
+        'sort_order': p.sort_order,
+        'status': p.status,
+        'method': p.method,
+        'language': p.language,
+        'relevance': p.relevance,
+        'relevance_note': p.relevance_note,
+        'corroboration': json.loads(p.corroboration) if p.corroboration else None,
+        'edited': bool(p.edited),
+        'error': p.error,
+        'model': p.model,
+        'document_id': p.document_id,
+        'input_tokens': p.input_tokens,
+        'output_tokens': p.output_tokens,
+        'created_at': p.created_at,
+        'has_text': bool(p.text),
+        # A transcript that stopped short looks finished unless the shortfall
+        # is carried on the row the list renders from.
+        'incomplete': _page_incomplete(p),
+    }
+    if full:
+        out['source_path'] = p.source_path
+        out['text'] = p.text
+        try:
+            out['extraction'] = json.loads(p.extraction) if p.extraction else None
+        except json.JSONDecodeError:
+            out['extraction'] = None
+    return out
+
+
+@app.get('/api/transcripts/batches')
+def list_transcript_batches(db: Session = Depends(get_db)):
+    batches = db.query(DBTranscriptBatch).order_by(DBTranscriptBatch.id.desc()).all()
+    return [_batch_dict(b, db) for b in batches]
+
+
+@app.post('/api/transcripts/batches', status_code=201)
+def create_transcript_batch(body: TranscriptBatchCreate, db: Session = Depends(get_db)):
+    folder = Path(body.folder)
+    if not folder.is_dir():
+        raise HTTPException(400, 'That folder does not exist')
+
+    exts = doc_reader.supported_extensions()
+    walker = folder.rglob('*') if body.recursive else folder.glob('*')
+    files = sorted(
+        (f for f in walker if f.is_file() and f.suffix.lower() in exts),
+        key=lambda f: str(f).lower(),
+    )
+    if not files:
+        raise HTTPException(400, 'No readable images or PDFs in that folder')
+
+    batch = DBTranscriptBatch(
+        name=(body.name or folder.name or 'Batch').strip(),
+        folder=str(folder),
+        created_at=datetime.now().isoformat(),
+        status='pending',
+    )
+    db.add(batch)
+    db.flush()
+    for i, f in enumerate(files):
+        db.add(DBTranscriptPage(
+            batch_id=batch.id,
+            source_path=str(f),
+            filename=f.name,
+            mime_type=mimetypes.guess_type(f.name)[0],
+            sort_order=i,
+            status='pending',
+        ))
+    db.commit()
+    db.refresh(batch)
+    return _batch_dict(batch, db)
+
+
+@app.get('/api/transcripts/batches/{batch_id}')
+def get_transcript_batch(batch_id: int, db: Session = Depends(get_db)):
+    batch = db.get(DBTranscriptBatch, batch_id)
+    if batch is None:
+        raise HTTPException(404, 'Batch not found')
+    pages = (
+        db.query(DBTranscriptPage)
+        .filter(DBTranscriptPage.batch_id == batch_id)
+        .order_by(DBTranscriptPage.sort_order, DBTranscriptPage.id).all()
+    )
+    return {**_batch_dict(batch, db), 'pages': [_page_dict(p) for p in pages]}
+
+
+@app.delete('/api/transcripts/batches/{batch_id}', status_code=204)
+def delete_transcript_batch(batch_id: int, db: Session = Depends(get_db)):
+    batch = db.get(DBTranscriptBatch, batch_id)
+    if batch is None:
+        raise HTTPException(404, 'Batch not found')
+    status = transcriber.get_status()
+    if status['running'] and status['batch_id'] == batch_id:
+        raise HTTPException(409, 'This batch is being read — stop it first')
+    # Only the batch and its pages go. An imported page has already been copied
+    # into documents/ and is a Document like any other; deleting the batch it
+    # came from must not touch it.
+    db.delete(batch)
+    db.commit()
+    return Response(status_code=204)
+
+
+@app.post('/api/transcripts/batches/{batch_id}/start')
+def start_transcript_batch(batch_id: int, body: TranscriptBatchStart, db: Session = Depends(get_db)):
+    batch = db.get(DBTranscriptBatch, batch_id)
+    if batch is None:
+        raise HTTPException(404, 'Batch not found')
+    settings = ai_config.get_doc_settings()
+    if not settings['enabled']:
+        raise HTTPException(400, 'Document reading is switched off in the assistant settings')
+    if not settings['api_key']:
+        raise HTTPException(400, 'No API key is configured for the document reader')
+    quota = ai_config.doc_quota_status()
+    if quota['remaining'] <= 0:
+        raise HTTPException(400, f"This month's page budget is used up ({quota['used']}/{quota['limit']})")
+
+    if body.retry_failed:
+        # Clear the error with the status: a page left saying why it failed
+        # last time, while queued to be read again, is two answers at once.
+        db.query(DBTranscriptPage).filter(
+            DBTranscriptPage.batch_id == batch_id,
+            DBTranscriptPage.status == 'failed',
+        ).update({'status': 'pending', 'error': None}, synchronize_session=False)
+        db.commit()
+
+    ok, message = transcriber.start_batch(
+        batch_id, project_manager.session_factory,
+        lang=body.lang, name_order=body.name_order,
+        page_ids=body.page_ids or None,
+    )
+    if not ok:
+        raise HTTPException(409, message)
+    return {'started': True, 'message': message}
+
+
+@app.post('/api/transcripts/batches/{batch_id}/analyse')
+def analyse_transcript_batch(batch_id: int, body: TranscriptBatchStart, db: Session = Depends(get_db)):
+    """Re-run the matching pass and the report over an already-read batch.
+
+    Separate from /start because it is the right thing to do after editing a
+    transcript by hand or after adding people to the tree — neither of which
+    should mean paying to read every page again.
+    """
+    batch = db.get(DBTranscriptBatch, batch_id)
+    if batch is None:
+        raise HTTPException(404, 'Batch not found')
+    # One readable page is enough to be worth reporting on. The guard that
+    # used to require the whole batch has moved into the report itself, which
+    # now opens by saying how much of the folder it could not see — useful
+    # early beats correct-but-unavailable.
+    read = (
+        db.query(func.count(DBTranscriptPage.id))
+        .filter(DBTranscriptPage.batch_id == batch_id,
+                DBTranscriptPage.status == 'done').scalar() or 0
+    )
+    if not read:
+        raise HTTPException(400, 'No page in this batch has been read yet')
+
+    ok, message = transcriber.start_batch(
+        batch_id, project_manager.session_factory,
+        lang=body.lang, name_order=body.name_order, analysis_only=True,
+    )
+    if not ok:
+        raise HTTPException(409, message)
+    return {'started': True, 'message': message}
+
+
+@app.post('/api/transcripts/batches/{batch_id}/rematch')
+def rematch_transcript_batch(batch_id: int, db: Session = Depends(get_db)):
+    """Recompute the relevance marks. No model, no cost, no thread.
+
+    Needed on its own because the report is manual now: correcting a transcript
+    or adding people to the tree changes what the pages match, and there is no
+    reason to pay for a write-up to see that.
+    """
+    batch = db.get(DBTranscriptBatch, batch_id)
+    if batch is None:
+        raise HTTPException(404, 'Batch not found')
+    status = transcriber.get_status()
+    if status['running'] and status['batch_id'] == batch_id:
+        raise HTTPException(409, 'This batch is being read — wait for it to finish')
+
+    changed = transcriber.rematch(db, batch_id)
+    db.commit()
+    db.refresh(batch)
+    return {**_batch_dict(batch, db), 'changed': changed}
+
+
+def _batch_inventory(batch: DBTranscriptBatch, pages: list) -> dict:
+    """What the folder holds, in the prefix, before any question is asked.
+
+    Same reasoning as the assistant's primer inventory: a model that cannot see
+    an absence will write fluently around it. Told there are 28 pages and 3 of
+    them read, it can say so; told nothing, it answers about the three as though
+    they were the folder.
+    """
+    read = [p for p in pages if p.status == 'done' and (p.text or '').strip()]
+    years: list[int] = []
+    for p in read:
+        years.extend(int(y) for y in re.findall(r'(1[4-9]\d{2}|20\d{2})', p.text or ''))
+    return {
+        'batch': batch.name,
+        'pages_total': len(pages),
+        'pages_read': len(read),
+        'pages_not_read': len([p for p in pages if p.status in ('pending', 'running')]),
+        'pages_failed': len([p for p in pages if p.status == 'failed']),
+        'pages_imported': len([p for p in pages if p.document_id is not None]),
+        'years_seen': [min(years), max(years)] if years else None,
+        'note': 'Only the read pages have any text. Say so rather than describing the rest.',
+    }
+
+
+@app.post('/api/transcripts/batches/{batch_id}/ask')
+async def ask_transcript_batch(batch_id: int, body: TranscriptBatchAsk):
+    """Ask a question about one batch of scans.
+
+    Scoped to the batch on purpose. An un-imported page is working state — the
+    export deletes it and the merge importer skips it — so folding these
+    transcripts into the assistant's always-on corpus would let a folder the
+    user has not decided to keep colour every unrelated answer about the family.
+    The question is asked where the folder is being read.
+
+    Awaited on the request rather than run in the job thread: this is one
+    question with a handful of tool calls, not a folder-long batch, and there is
+    nothing to poll or resume. The job's global "already reading" flag stays out
+    of it, so a question can be asked while pages are still being transcribed.
+    """
+    if not body.question.strip():
+        raise HTTPException(400, 'Ask a question first')
+
+    read_db = next(project_manager.get_readonly_db())
+    try:
+        batch = read_db.get(DBTranscriptBatch, batch_id)
+        if batch is None:
+            raise HTTPException(404, 'Batch not found')
+        pages = read_db.query(DBTranscriptPage).filter(
+            DBTranscriptPage.batch_id == batch_id
+        ).order_by(DBTranscriptPage.sort_order, DBTranscriptPage.id).all()
+        if not any(p.status == 'done' and (p.text or '').strip() for p in pages):
+            raise HTTPException(400, 'No page in this batch has been read yet')
+
+        # The conversation is the stored one, not one the client sends back:
+        # it is on the batch, so it survives opening a page the answer named —
+        # which is the first thing anyone does with an answer.
+        earlier = (
+            read_db.query(DBTranscriptQuestion)
+            .filter(DBTranscriptQuestion.batch_id == batch_id)
+            .order_by(DBTranscriptQuestion.id).all()
+        )
+        history: list[dict] = []
+        for turn in earlier:
+            if not turn.answer:
+                continue          # a failed turn teaches the model nothing
+            history.append({'role': 'user', 'content': turn.question})
+            history.append({'role': 'assistant', 'content': turn.answer})
+
+        answer, error, steps = await doc_reader.answer_about_batch(
+            body.question,
+            history=history[-(doc_reader.ASK_HISTORY_TURNS * 2):],
+            lang=body.lang, name_order=body.name_order,
+            read_db=read_db, batch_id=batch_id,
+            inventory=_batch_inventory(batch, pages),
+        )
+        # Filenames become links here for the same reason they do in the report:
+        # the map is known, the substitution is unambiguous, and the model was
+        # asked for it once and did not do it.
+        linked = transcriber._link_page_names(answer, pages)
+    finally:
+        read_db.close()
+
+    # A separate, writable session: the one above is read-only by construction,
+    # which is what keeps the tools unable to change anything.
+    write_db = project_manager.session_factory()
+    try:
+        row = DBTranscriptQuestion(
+            batch_id=batch_id,
+            question=body.question.strip(),
+            answer=linked or None,
+            steps=json.dumps(steps, ensure_ascii=False) if steps else None,
+            error=error or None,
+            created_at=datetime.now().isoformat(),
+        )
+        write_db.add(row)
+        write_db.commit()
+        write_db.refresh(row)
+        return _question_dict(row)
+    finally:
+        write_db.close()
+
+
+@app.delete('/api/transcripts/batches/{batch_id}/questions', status_code=204)
+def clear_transcript_questions(batch_id: int, db: Session = Depends(get_db)):
+    """Forget the conversation about a batch, keeping the batch and its report."""
+    if db.get(DBTranscriptBatch, batch_id) is None:
+        raise HTTPException(404, 'Batch not found')
+    db.query(DBTranscriptQuestion).filter(
+        DBTranscriptQuestion.batch_id == batch_id
+    ).delete(synchronize_session=False)
+    db.commit()
+    return Response(status_code=204)
+
+
+@app.post('/api/transcripts/stop')
+def stop_transcripts():
+    ok, message = transcriber.stop()
+    return {'stopped': ok, 'message': message}
+
+
+@app.get('/api/transcripts/status')
+def transcript_status():
+    return {**transcriber.get_status(), 'quota': ai_config.doc_quota_status()}
+
+
+@app.get('/api/transcripts/pages/{page_id}')
+def get_transcript_page(page_id: int, db: Session = Depends(get_db)):
+    page = db.get(DBTranscriptPage, page_id)
+    if page is None:
+        raise HTTPException(404, 'Page not found')
+    return _page_dict(page, full=True)
+
+
+@app.patch('/api/transcripts/pages/{page_id}')
+def update_transcript_page(page_id: int, body: TranscriptPageUpdate, db: Session = Depends(get_db)):
+    page = db.get(DBTranscriptPage, page_id)
+    if page is None:
+        raise HTTPException(404, 'Page not found')
+    if body.text is not None:
+        page.text = body.text or None
+    if body.text is not None:
+        page.edited = True
+        # A hand-corrected page has been read by a person; if it had failed,
+        # it has not failed any more.
+        if page.status == 'failed' and page.text:
+            page.status = 'done'
+            page.error = None
+    db.commit()
+    db.refresh(page)
+    return _page_dict(page, full=True)
+
+
+@app.get('/api/transcripts/pages/{page_id}/file')
+def get_transcript_page_file(page_id: int, db: Session = Depends(get_db)):
+    """Serve the source file so the scan can be shown next to its transcript.
+
+    The path came from a folder the user picked themselves and is stored, not
+    accepted per request — there is no path the client can supply here.
+    """
+    page = db.get(DBTranscriptPage, page_id)
+    if page is None:
+        raise HTTPException(404, 'Page not found')
+    path = Path(page.source_path or '')
+    if not path.is_file():
+        raise HTTPException(404, 'The file is no longer at that path')
+    return FileResponse(
+        str(path),
+        media_type=page.mime_type or 'application/octet-stream',
+        filename=page.filename,
+    )
+
+
+@app.post('/api/transcripts/pages/{page_id}/import', status_code=201)
+def import_transcript_page(page_id: int, body: TranscriptPageImport, db: Session = Depends(get_db)):
+    """Copy one page into the project as a Document.
+
+    **The transcript becomes the document's description**, unless the caller
+    sends one of its own. The page row keeps the transcript and gains
+    `document_id`, so the reading screen still owns the text — but the REST
+    `_doc_dict` does not carry a transcript (only the assistant's serialiser in
+    `ai/tools.py` does), so a page imported without this arrived in the
+    Documents tab as a picture of handwriting with nothing readable attached.
+    A copy that can drift from a later correction is the price, and it is the
+    right way round: the description is the part a person reads, searches and
+    edits, and an empty one made the import close to pointless.
+    """
+    page = db.get(DBTranscriptPage, page_id)
+    if page is None:
+        raise HTTPException(404, 'Page not found')
+    if page.document_id is not None:
+        raise HTTPException(409, 'This page has already been imported')
+    src = Path(page.source_path or '')
+    if not src.is_file():
+        raise HTTPException(404, 'The file is no longer at that path')
+
+    pids = list(dict.fromkeys(body.person_ids or []))
+    if pids and db.query(DBPerson).filter(DBPerson.id.in_(pids)).count() != len(pids):
+        raise HTTPException(404, 'Person not found')
+
+    extraction = {}
+    if page.extraction:
+        try:
+            extraction = json.loads(page.extraction) or {}
+        except json.JSONDecodeError:
+            extraction = {}
+
+    date = body.date if body.date is not None else (extraction.get('date') or None)
+    year = None
+    if isinstance(date, str) and date[:4].isdigit():
+        year = int(date[:4])
+
+    docs_dir = _docs_dir()
+    stored_name = f'{uuid.uuid4().hex}{src.suffix}'
+    (docs_dir / stored_name).write_bytes(src.read_bytes())
+
+    doc = DBDocument(
+        person_id=pids[0] if pids else None,
+        stored_name=stored_name,
+        filename=page.filename,
+        mime_type=page.mime_type,
+        title=(body.title or None),
+        doc_type=body.doc_type or 'other',
+        year=year,
+        date=date or None,
+        description=(body.description if body.description is not None else page.text) or None,
+        created_at=datetime.now().isoformat(),
+    )
+    db.add(doc)
+    db.flush()
+    for pid in pids:
+        db.add(DBDocumentPerson(document_id=doc.id, person_id=pid))
+
+    page.document_id = doc.id
+    db.commit()
+    db.refresh(doc)
+    return _doc_dict(doc)
 
 
 # ── Static frontend (production build) ────────────────────────────────────────

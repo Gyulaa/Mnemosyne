@@ -30,6 +30,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from .pdf_text import is_pdf
 from ..database import (
     Cluster as DBCluster,
     Document as DBDocument,
@@ -273,14 +274,37 @@ def build_inventory(db: Session, allow_private: bool = False) -> str:
     events = _visible(db.query(DBEvent).all(), allow_private)
     images = _visible(db.query(DBImage).all(), allow_private)
     sources = db.query(DBSource).all()
-    readable = [d for d in docs if bool(d.is_text)]
+
+    # This is the model's only statement about what it can open, so a kind of
+    # document left out of it is a kind of document it never opens. Two of the
+    # three readable kinds are free to count here. The third is not: whether a
+    # *particular* PDF carries a text layer means parsing it, and parsing every
+    # PDF in the project belongs nowhere near the cached prefix. Counting the
+    # PDFs is enough — it is what stops them being written off as pictures, and
+    # get_document decides each one when the model actually opens it.
+    readable = [
+        d for d in docs
+        if bool(d.is_text)
+        or (getattr(d, "transcript", None) is not None and (d.transcript.text or "").strip())
+    ]
+    readable_ids = {d.id for d in readable}
+    pdfs = [d for d in docs if d.id not in readable_ids and is_pdf(d.mime_type, d.filename)]
 
     lines = [
         "# WHAT THIS PROJECT CONTAINS",
         f"# {len(notes)} research notes, on {len({n.person_id for n in notes})} people",
-        f"# {len(docs)} documents — {len(readable)} written in the app and readable in "
-        "full with get_document; the rest are attached files whose contents you cannot "
-        "open, so their title, type and description are all there is",
+        f"# {len(docs)} documents — {len(readable)} readable in full with get_document "
+        "(written in the app, or a scan that has been transcribed)",
+    ]
+    if pdfs:
+        lines.append(
+            f"#   {len(pdfs)} more are PDFs. get_document returns the text a PDF carries "
+            "inside itself, so open one before deciding it cannot be read; only a PDF "
+            "that is pictures of pages comes back unreadable, and it says so"
+        )
+    lines += [
+        "#   anything else attached — photographs, recordings, scans not yet transcribed —",
+        "#   is title, type and description only, and you cannot open it",
         f"# {len(events)} events   {len(sources)} sources   {len(images)} photographs",
         "# Prose lives in notes, in documents and in event descriptions. Where a count",
         "# above is not zero, this project has written material in it — look at the",

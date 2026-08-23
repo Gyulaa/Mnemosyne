@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
 import { api } from '../api'
 import { useSettings, displayPersonName, useT } from '../SettingsContext'
+import { useBackdropClose } from '../modalBackdrop'
 import type {
   GedcomPreview, GedcomImportPerson, GedcomImportAction,
   GedcomImportDecision, GedcomImportStats, PersonFull, Relation,
@@ -483,8 +484,10 @@ export default function GedcomImportModal({ existingPersons, relations, onDone, 
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const backdrop = useBackdropClose(onClose)
+
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" {...backdrop}>
       <div
         className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl flex flex-col"
         style={{ width: phase === 'preview' ? '820px' : '420px', maxHeight: '90vh' }}

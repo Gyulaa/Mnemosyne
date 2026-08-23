@@ -107,6 +107,53 @@ def _delete_document_children(conn: sqlite3.Connection, where_clause: str) -> No
             pass
 
 
+def _delete_documents(conn: sqlite3.Connection, where_clause: str) -> None:
+    """Delete the documents `where_clause` selects, children first.
+
+    Every document delete in this module goes through here. The export
+    connection runs with **foreign keys on**, and the child tables disagree
+    about what that means: `document_persons`, `document_images` and
+    `document_files` cascade, `sources` and `transcript_pages` set null, and
+    `document_notes` / `document_citations` /
+    `document_description_citations` declare no action at all — so a document
+    carrying a note cannot be deleted until the note is gone, and the attempt
+    fails the whole statement. Hand-rolling the order at each call site is what
+    left a person-scoped export unable to drop anybody who had written a note
+    on a document.
+    """
+    inner = f"SELECT id FROM documents WHERE {where_clause}"
+    try:
+        conn.execute(
+            f"DELETE FROM document_note_citations WHERE note_id IN "
+            f"(SELECT id FROM document_notes WHERE document_id IN ({inner}))"
+        )
+        conn.execute(f"DELETE FROM document_notes WHERE document_id IN ({inner})")
+    except sqlite3.OperationalError:
+        pass   # export input predates document notes
+    _delete_document_children(conn, f"document_id IN ({inner})")
+    # Cascaded by the FK, but the export is explicit about its deletes so the
+    # shipped database never depends on which pragma was in force.
+    conn.execute(f"DELETE FROM document_persons WHERE document_id IN ({inner})")
+    conn.execute(f"DELETE FROM documents WHERE {where_clause}")
+
+
+def _delete_relation_citations(conn: sqlite3.Connection, rel_where: str) -> None:
+    """Drop the marriage citations of the relations `rel_where` selects.
+
+    Must run **before** the relations themselves. `citations.relation_id`
+    (v15+) is a plain FK with no cascade, and foreign keys are on for this
+    connection, so deleting the marriage first fails the constraint — and every
+    relations delete here sits in a `try: … except: pass`, which would swallow
+    it and quietly leave a private marriage in the ZIP.
+    """
+    try:
+        conn.execute(
+            f"DELETE FROM citations WHERE relation_id IN (SELECT id FROM relations WHERE {rel_where})"
+        )
+    except sqlite3.OperationalError:
+        pass   # schema older than v15
+
+
 def _delete_persons(conn: sqlite3.Connection, where_clause: str) -> None:
     """Delete persons matching where_clause after cleaning up all FK child tables."""
     conn.execute(f"""
@@ -116,26 +163,36 @@ def _delete_persons(conn: sqlite3.Connection, where_clause: str) -> None:
     conn.execute(f"DELETE FROM person_notes WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
     conn.execute(f"DELETE FROM citations WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
     conn.execute(f"DELETE FROM event_persons WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
+    # A document owned by someone leaving the export but linked to someone
+    # staying changes hands instead of being deleted — the rule `delete_person`
+    # in `main.py` already follows. `document_persons` is what every document
+    # listing joins on, so the document is on the kept person's page; deleting
+    # it because of who happens to hold `documents.person_id` would take it off
+    # a page the exported project still shows.
+    kept = f"SELECT id FROM persons WHERE NOT ({where_clause})"
+    conn.execute(f"""
+        UPDATE documents SET person_id = (
+            SELECT dp.person_id FROM document_persons dp
+            WHERE dp.document_id = documents.id AND dp.person_id IN ({kept})
+            ORDER BY dp.person_id LIMIT 1
+        )
+        WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})
+          AND EXISTS (
+            SELECT 1 FROM document_persons dp2
+            WHERE dp2.document_id = documents.id AND dp2.person_id IN ({kept})
+          )
+    """)
     conn.execute(f"DELETE FROM document_persons WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
-    _delete_document_children(
-        conn, f"document_id IN (SELECT id FROM documents WHERE person_id IN (SELECT id FROM persons WHERE {where_clause}))"
-    )
-    conn.execute(f"DELETE FROM documents WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
+    _delete_documents(conn, f"person_id IN (SELECT id FROM persons WHERE {where_clause})")
     # Documents nobody owns belong to the project as a whole, not to anyone in
     # the narrowed selection, so an export scoped to a person or cluster set
     # leaves them behind. `person_id IN (…)` above is never true of NULL, which
     # is why this needs a statement of its own.
-    unowned = "person_id IS NULL AND id NOT IN (SELECT document_id FROM document_persons)"
-    try:
-        conn.execute(
-            f"DELETE FROM document_note_citations WHERE note_id IN "
-            f"(SELECT id FROM document_notes WHERE document_id IN (SELECT id FROM documents WHERE {unowned}))"
-        )
-        conn.execute(f"DELETE FROM document_notes WHERE document_id IN (SELECT id FROM documents WHERE {unowned})")
-    except sqlite3.OperationalError:
-        pass   # export input predates document notes
-    _delete_document_children(conn, f"document_id IN (SELECT id FROM documents WHERE {unowned})")
-    conn.execute(f"DELETE FROM documents WHERE {unowned}")
+    _delete_documents(conn, "person_id IS NULL AND id NOT IN (SELECT document_id FROM document_persons)")
+    _delete_relation_citations(conn, f"""
+        person_a_id IN (SELECT id FROM persons WHERE {where_clause})
+     OR person_b_id IN (SELECT id FROM persons WHERE {where_clause})
+    """)
     conn.execute(f"""
         DELETE FROM relations
         WHERE person_a_id IN (SELECT id FROM persons WHERE {where_clause})
@@ -179,6 +236,17 @@ def build_export_db(
                 conn.execute(f"DELETE FROM {_chat_table}")
             except sqlite3.OperationalError:
                 pass  # pre-v7 database being exported — nothing to strip
+
+        # Transcript batches go for the same reason, and one more: a page row
+        # holds an absolute path into a folder on this machine and the full
+        # text of a document that may never have been imported into the
+        # project at all. Copy-then-filter means a table nobody deletes is a
+        # table that ships.
+        for _scan_table in ("transcript_questions", "transcript_pages", "transcript_batches"):
+            try:
+                conn.execute(f"DELETE FROM {_scan_table}")
+            except sqlite3.OperationalError:
+                pass  # pre-v12 database being exported — nothing to strip
 
         if person_ids is not None and len(person_ids) > 0:
             pids_str = ",".join(str(x) for x in person_ids)
@@ -302,9 +370,7 @@ def build_export_db(
 
         # ── Documents ─────────────────────────────────────────────────────────
         if not include_documents:
-            conn.execute("DELETE FROM document_persons")
-            _delete_document_children(conn, "1=1")
-            conn.execute("DELETE FROM documents")
+            _delete_documents(conn, "1=1")
             conn.commit()
 
         # ── Privacy filter (always applied) ───────────────────────────────────
@@ -335,16 +401,13 @@ def build_export_db(
             pass
         # Private relations
         try:
+            _delete_relation_citations(conn, "is_private=1")
             conn.execute("DELETE FROM relations WHERE is_private=1")
         except Exception:
             pass
         # Private documents
         try:
-            conn.execute("DELETE FROM document_note_citations WHERE note_id IN (SELECT id FROM document_notes WHERE document_id IN (SELECT id FROM documents WHERE is_private=1))")
-            conn.execute("DELETE FROM document_notes WHERE document_id IN (SELECT id FROM documents WHERE is_private=1)")
-            conn.execute("DELETE FROM document_persons WHERE document_id IN (SELECT id FROM documents WHERE is_private=1)")
-            _delete_document_children(conn, "document_id IN (SELECT id FROM documents WHERE is_private=1)")
-            conn.execute("DELETE FROM documents WHERE is_private=1")
+            _delete_documents(conn, "is_private=1")
         except Exception:
             pass
         # Private notes

@@ -9,6 +9,7 @@ import StatisticsView from './StatisticsView'
 import GedcomImportModal from './GedcomImportModal'
 import NameEditor, { NameParts, deriveDisplayName } from './NameEditor'
 import { useSettings, displayPersonName, displayInitials, useT } from '../SettingsContext'
+import { useBackdropClose } from '../modalBackdrop'
 
 // ── GEDCOM export modal ───────────────────────────────────────────────────────
 
@@ -49,8 +50,10 @@ function GedcomExportModal({ onExport, onClose }: { onExport: (opts: GedcomOpts)
     { id: 'Notes',     label: t('gedcomExport.notes'),     checked: includeNotes,     setter: setIncludeNotes },
   ]
 
+  const backdrop = useBackdropClose(onClose)
+
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" {...backdrop}>
       <form
         onSubmit={submit}
         className="rounded-2xl p-6 w-full max-w-sm shadow-2xl"
@@ -339,9 +342,10 @@ function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
   const INPUT = 'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400'
   const LABEL = 'block text-xs text-zinc-400 mb-1'
+  const backdrop = useBackdropClose(onClose)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" {...backdrop}>
       <div className="rounded-2xl shadow-2xl w-[420px] max-w-[92vw] p-5" style={{ background: '#111117', border: '1px solid rgba(255,255,255,0.08)' }} onClick={e => e.stopPropagation()}>
         <h3 className="text-sm font-semibold text-zinc-100 mb-4">{t('newPerson.heading')}</h3>
 

@@ -37,6 +37,7 @@ from ..database import (
     Citation as DBCitation,
     Cluster as DBCluster,
     Document as DBDocument,
+    DocumentFile as DBDocumentFile,
     DocumentNote as DBDocumentNote,
     DocumentPerson as DBDocumentPerson,
     Event as DBEvent,
@@ -48,6 +49,7 @@ from ..database import (
     Relation as DBRelation,
     Source as DBSource,
 )
+from .pdf_text import has_text_layer, is_pdf, text_layer as pdf_text_layer
 from .primer import PROFILE_FIELDS
 
 MAX_RESULTS = 50
@@ -175,34 +177,88 @@ def _event_dict(e: DBEvent) -> dict[str, Any]:
     }
 
 
-def _doc_dict(d: DBDocument) -> dict[str, Any]:
+def _doc_dict(ctx: ToolContext, d: DBDocument) -> dict[str, Any]:
     """Metadata only. `readable` says whether the contents can ever be reached.
 
-    A document is either prose written inside the app — which `get_document`
-    returns in full — or an uploaded file: a scan, a photograph, a recording.
-    Nothing here can open the second kind, and a title like "1908 register
-    entry" is easy to mistake for having read it. So the distinction travels
-    with every document, and the unreadable ones say what to do instead.
+    A document arrives here in one of four states, and which one it is travels
+    with every response, because a title like "1908 register entry" is easy to
+    mistake for having read the thing:
+
+    * prose written inside the app - `get_document` returns it in full;
+    * a scan that has been transcribed - `get_document` returns the transcript;
+    * a PDF that carries its own text layer - `get_document` returns that text.
+      It is pulled out of the file locally, costs nothing and never leaves the
+      machine, so there is no reason for this kind to be unreadable;
+    * everything else - a photograph, a recording, a PDF that is only pictures
+      of pages. Nothing here can open those, and they say so.
     """
-    readable = bool(d.is_text)
+    transcript = getattr(d, "transcript", None)
+    transcribed = bool(transcript is not None and (transcript.text or "").strip())
+    # A transcript outranks the raw layer: it is the reading the user has been
+    # able to correct by hand.
+    pdf_text, other_files = ("", 0) if (bool(d.is_text) or transcribed) else _pdf_body(ctx, d)
+    pdf_readable = has_text_layer(pdf_text)
+    readable = bool(d.is_text) or transcribed or pdf_readable
     out = {
         "id": d.id,
         "title": d.title,
         "doc_type": d.doc_type,
         "year": d.year,
         "description": d.description,
-        "is_text": readable,
+        "is_text": bool(d.is_text),
         "filename": d.filename,
         "mime_type": d.mime_type,
         "readable": readable,
+        "transcribed": transcribed,
     }
-    if readable:
+    if bool(d.is_text):
         out["note"] = "Written in the app — call get_document to read the whole text."
+    elif transcribed:
+        # A transcript is a reading of the page, not the page. Handwriting is
+        # read with gaps, and the gaps are marked in the text itself — so the
+        # note has to keep the distinction alive, or a `[?]` gets quoted back
+        # as if it were what the register says.
+        out["note"] = (
+            "A scanned file that has been transcribed — call get_document to read "
+            "the transcript. It is a reading of old handwriting, not a certified "
+            "copy: `[?]` marks a word that could not be read, and `word[?]` a "
+            "reading that is uncertain. Never quote one of those as settled."
+        )
+        if transcript.edited:
+            out["note"] += " This transcript has been corrected by hand."
+    elif pdf_readable:
+        out["has_text_layer"] = True
+        # The opposite failure from a transcript's. Nothing here is guessed —
+        # the characters are the file's own — but a PDF stores words with
+        # coordinates and no structure, so a two-column page or a ruled form
+        # comes back in an order nobody wrote.
+        out["note"] = (
+            "A PDF carrying its own text layer — call get_document to read it. The "
+            "text is the file's own, extracted from it rather than read off a "
+            "picture, so the words are exact. Their *order* is not: a PDF stores "
+            "no layout, so columns, form labels and marginal notes can come out "
+            "interleaved. Quote it as written, and do not reconstruct a table, or "
+            "decide which label belongs to which value, from the order alone."
+        )
+        if other_files:
+            out["note"] += (
+                f" This document has {other_files} further file(s) which are not "
+                "PDFs and were not read."
+            )
+    elif is_pdf(d.mime_type, d.filename):
+        out["note"] = (
+            "A PDF with no text layer — pictures of pages with nothing written "
+            "underneath them, which is what a scanner produces. Neither you nor any "
+            "tool here can read it. Do not summarise or characterise it: tell the "
+            "user it is there, and that the Documents tab can transcribe it if they "
+            "want it read."
+        )
     else:
         out["note"] = (
             "An attached file. Its contents cannot be read by you or by any tool "
             "here; only this metadata and the description exist. Do not summarise "
-            "or characterise it — tell the user it is there and let them open it."
+            "or characterise it — tell the user it is there and let them open it. "
+            "It can be transcribed in the Documents tab if they want it read."
         )
     return out
 
@@ -264,28 +320,131 @@ def _text_body(ctx: ToolContext, d: DBDocument) -> str:
         return ""
 
 
-def _doc_with_body(ctx: ToolContext, d: DBDocument) -> dict[str, Any]:
-    """Metadata plus the text, for documents that have text."""
-    out = _doc_dict(d)
-    if bool(d.is_text):
-        body = _text_body(ctx, d)
-        if len(body) > MAX_BODY_CHARS:
-            out["body"] = body[:MAX_BODY_CHARS]
-            out["body_truncated"] = True
-            out["body_total_chars"] = len(body)
-            out["note"] = (
-                f"Showing the first {MAX_BODY_CHARS} of {len(body)} characters. "
-                "Say so if you summarise it."
-            )
+def _transcript_body(d: DBDocument) -> str:
+    """The stored transcript of a scanned document, verbatim reading first.
+
+    Both renderings go in: the verbatim one is the evidence and carries the
+    `[?]` marks, the modern one is what makes a Latin or Kurrent entry usable.
+    Dropping either loses something the other cannot supply.
+    """
+    t = getattr(d, "transcript", None)
+    if t is None:
+        return ""
+    parts = []
+    if (t.text or "").strip():
+        parts.append("[transcript, as written]\n" + t.text.strip())
+    if (t.modern_text or "").strip():
+        parts.append("[the same, in modern language]\n" + t.modern_text.strip())
+    return "\n\n".join(parts)
+
+
+def _pdf_body(ctx: ToolContext, d: DBDocument) -> tuple[str, int]:
+    """(text of this document's PDF files, how many of its files were not PDFs).
+
+    A document is one record with one or more files on it, so "the PDF" is not
+    always a single thing: a certificate can arrive as one PDF per page. Every
+    PDF among them is read and they are concatenated in upload order, each under
+    its filename, because the alternative — reading the primary file only —
+    silently drops page two onward of a document the user thinks is whole.
+
+    The number of files left unread comes back with the text so the caller can
+    say what was skipped. A document holding a PDF and a JPEG has been *partly*
+    read, and "partly" is exactly the sort of qualifier that disappears from an
+    answer unless something states it.
+    """
+    if bool(d.is_text) or ctx.docs_dir is None:
+        return "", 0
+
+    files: list[tuple[str, str]] = []
+    others = 0
+    if is_pdf(d.mime_type, d.filename):
+        files.append((d.filename or "", d.stored_name))
+    elif d.stored_name:
+        others += 1
+    extras = (
+        ctx.db.query(DBDocumentFile)
+        .filter(DBDocumentFile.document_id == d.id)
+        .order_by(DBDocumentFile.sort_order, DBDocumentFile.id)
+        .all()
+    )
+    for f in extras:
+        if is_pdf(f.mime_type, f.filename):
+            files.append((f.filename or "", f.stored_name))
         else:
-            out["body"] = body
-            out["note"] = "Full text included below in `body`."
-        if not body:
-            out["note"] = (
-                "This document is marked as written in the app but its file could "
-                "not be read. Report that rather than describing its contents."
-            )
+            others += 1
+    if not files:
+        return "", others
+
+    parts: list[str] = []
+    for name, stored in files:
+        text = pdf_text_layer(ctx.docs_dir / stored)
+        if not text.strip():
+            continue
+        parts.append(f"[{name}]\n{text}" if len(files) > 1 and name else text)
+    return "\n\n".join(parts).strip(), others
+
+
+def _document_body(ctx: ToolContext, d: DBDocument) -> tuple[str, str]:
+    """The document's text and where it came from: 'text', 'transcript', 'pdf' or ''.
+
+    One place decides which readable kind a document is, so the listing, the
+    search haystack and the reader cannot come to different conclusions about
+    whether the same document can be opened.
+    """
+    if bool(d.is_text):
+        return _text_body(ctx, d), "text"
+    body = _transcript_body(d)
+    if body:
+        return body, "transcript"
+    body, _others = _pdf_body(ctx, d)
+    if has_text_layer(body):
+        return body, "pdf"
+    return "", ""
+
+
+def _sliced_body(out: dict[str, Any], body: str, offset: int) -> dict[str, Any]:
+    """Put a window of `body` in the payload and say what lies either side of it.
+
+    One excerpt with no way to ask for the rest is how the first page of a long
+    record gets reported as the whole record — the same reason the batch report
+    was given `read_page` rather than a smaller slice. So the total length is
+    always stated, and when there is more, so is the offset that continues it.
+    """
+    total = len(body)
+    start = max(0, min(int(offset or 0), total))
+    chunk = body[start:start + MAX_BODY_CHARS]
+    out["body"] = chunk
+    out["body_total_chars"] = total
+    note = out.get("note", "")
+    if start:
+        out["body_offset"] = start
+    if start + len(chunk) < total:
+        out["body_truncated"] = True
+        out["next_offset"] = start + len(chunk)
+        note += (
+            f" Showing characters {start}–{start + len(chunk)} of {total}. Call "
+            f"get_document again with offset={start + len(chunk)} to continue; say "
+            "you are working from an excerpt if you stop here."
+        )
+    elif start:
+        note += f" Showing characters {start}–{total} of {total} — the end of it."
+    out["note"] = note.strip()
     return out
+
+
+def _doc_with_body(ctx: ToolContext, d: DBDocument, offset: int = 0) -> dict[str, Any]:
+    """Metadata plus the text, for documents that have text."""
+    out = _doc_dict(ctx, d)
+    body, kind = _document_body(ctx, d)
+    if not kind:
+        return out
+    if kind == "text" and not body:
+        out["note"] = (
+            "This document is marked as written in the app but its file could "
+            "not be read. Report that rather than describing its contents."
+        )
+        return out
+    return _sliced_body(out, body, offset)
 
 
 # ── tool implementations ──────────────────────────────────────────────────────
@@ -950,7 +1109,7 @@ def _t_list_documents(ctx: ToolContext, a: dict[str, Any]) -> Any:
 
     docs = [d for d in q.order_by(DBDocument.year, DBDocument.id).all() if _priv_ok(ctx, d)]
     return _capped(
-        {"documents": [_doc_dict(d) for d in docs[:limit]]},
+        {"documents": [_doc_dict(ctx, d) for d in docs[:limit]]},
         "documents", limit, total=len(docs),
     )
 
@@ -972,7 +1131,7 @@ def _t_get_document(ctx: ToolContext, a: dict[str, Any]) -> Any:
             "note": "Tell the user it exists but is private rather than that it is absent.",
         }
 
-    out = _doc_with_body(ctx, d)
+    out = _doc_with_body(ctx, d, offset=int(a.get("offset") or 0))
 
     pids = {dp.person_id for dp in ctx.db.query(DBDocumentPerson).filter(DBDocumentPerson.document_id == did).all()}
     if d.person_id:
@@ -1030,7 +1189,8 @@ def _t_search_text(ctx: ToolContext, a: dict[str, Any]) -> Any:
     for d in ctx.db.query(DBDocument).order_by(DBDocument.id).all():
         if not _priv_ok(ctx, d):
             continue
-        body = "\n".join(filter(None, [d.title, d.description, _text_body(ctx, d)]))
+        text_body, _kind = _document_body(ctx, d)
+        body = "\n".join(filter(None, [d.title, d.description, text_body]))
         if q in _norm(body):
             hits.append({
                 "kind": "document", "id": d.id, "title": d.title,
@@ -1100,18 +1260,19 @@ def _t_list_written_material(ctx: ToolContext, limit: int) -> Any:
     for d in ctx.db.query(DBDocument).order_by(DBDocument.id).all():
         if not _priv_ok(ctx, d):
             continue
-        body = _text_body(ctx, d)
+        body, kind = _document_body(ctx, d)
         items.append({
             "kind": "document", "id": d.id, "title": d.title, "doc_type": d.doc_type,
-            "year": d.year, "readable": bool(d.is_text), "person_id": d.person_id,
+            "year": d.year, "readable": bool(kind),
+            "transcribed": kind == "transcript", "person_id": d.person_id,
             "description": d.description,
             "chars": len(body) if body else 0,
             "opening": opening(body) if body else None,
-            "read_with": (
-                "get_document(document_id) returns the whole text"
-                if bool(d.is_text) else
-                "an attached file — its contents cannot be read, only this metadata"
-            ),
+            "read_with": {
+                "text": "get_document(document_id) returns the whole text",
+                "transcript": "get_document(document_id) returns the transcript of this scan",
+                "pdf": "get_document(document_id) returns the text this PDF carries inside it",
+            }.get(kind, "an attached file — its contents cannot be read, only this metadata"),
         })
 
     for dn in ctx.db.query(DBDocumentNote).order_by(DBDocumentNote.id).all():
@@ -1598,7 +1759,8 @@ def build_registry() -> ToolRegistry:
         description=(
             "Document metadata (certificates, letters, records, chronicles): "
             "titles, types and years. Never the text — call get_document for "
-            "that. Summarising a document from its title invents it."
+            "that. Summarising a document from its title invents it. Each row's "
+            "`readable` flag says whether get_document can actually open it."
         ),
         input_schema={
             "type": "object",
@@ -1616,16 +1778,28 @@ def build_registry() -> ToolRegistry:
     r.register(Tool(
         name="get_document",
         description=(
-            "One document in full: the complete text of anything written inside "
-            "the app, plus its notes, the people it is about and its source. For "
-            "an uploaded file (a scan, a recording, a photograph of a record) it "
-            "returns the metadata and says plainly that the contents cannot be "
-            "read — report that rather than describing what such a document "
-            "probably says."
+            "One document in full, plus its notes, the people it is about and its "
+            "source. Returns the actual text for anything written inside the app, "
+            "for a scan that has been transcribed, and for a PDF that carries its "
+            "own text layer — so open a PDF before saying anything about it, "
+            "rather than assuming an uploaded file cannot be read. For a file that "
+            "genuinely cannot be (a photograph, a recording, a scanned PDF with no "
+            "text in it) it returns the metadata and says so plainly — report "
+            "that rather than describing what it probably says."
         ),
         input_schema={
             "type": "object",
-            "properties": {"document_id": {"type": "integer"}},
+            "properties": {
+                "document_id": {"type": "integer"},
+                "offset": {
+                    "type": "integer",
+                    "description": (
+                        "Character offset to read from, for a document longer than "
+                        "one response. The result carries the total length and the "
+                        "`next_offset` that continues it. Default 0."
+                    ),
+                },
+            },
             "required": ["document_id"],
         },
         handler=_t_get_document,

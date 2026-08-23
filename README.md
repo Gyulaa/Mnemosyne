@@ -108,6 +108,8 @@ From here you can also attach documents, write notes with citations, and find th
 - Full name, birth/death/christening/burial details
 - Age is calculated automatically
 - Parents, children, siblings, and spouses are listed with links
+- Next to a spouse: the marriage year and place, the divorce year and place, and the sources they come from — recorded once and shown on both people's profiles
+- When you add a child, you can say which spouse the child is also from — or that they are not from a spouse at all. The child then appears on both parents' profiles, so you never have to add the same child twice. If someone has children from more than one marriage, the list shows them grouped by the other parent
 - Attach documents (PDFs, images, audio) directly to a person
 - Write notes in plain text — they support **bold**, *italic*, headings, and lists
 - Add footnote citations to your notes and link them to sources
@@ -130,6 +132,19 @@ When you click **New**, Mnemosyne asks whether you want to upload a file you alr
 **Linking people is optional.** Nothing stops you from saving a document with nobody attached — start writing, and let the links build up as you mention people. A document that belongs to no one still shows up in the list, in search and in a full backup; it is left out only where it has nowhere to go: a GEDCOM file, and an export narrowed to a particular family group.
 
 Text documents behave like any other document everywhere else: they can be linked to several people, filtered, searched, downloaded, and they travel with every export.
+
+### Reading scanned records (optional)
+
+Old parish registers are hard going: the hand is unfamiliar, the language is often Latin or German, and a folder from an archive can hold hundreds of pages of which only a few concern your family. **Read scans**, on the Documents tab, is for exactly that pile.
+
+- Point it at a folder. The files **stay where they are** — nothing is copied into your project yet
+- Every page is read: you get the text **as written**, and the details pulled out of it — what kind of entry it is, its date, and everyone named in it with their role (child, father, mother, godparents, witnesses)
+- When the last page is done, the whole batch is reported on in one go: which entries match people already in your tree, which are worth a look, what the folder covers as a whole, and which pages failed to read
+- Pages are marked so you can jump straight to the ones that matter, and only those get imported into Documents as real documents
+- **The reading is a reading, not a certified copy.** A word that could not be made out is marked `[?]`, and one the model is unsure of is marked `word[?]`. You can correct any transcript by hand, and your correction is kept — nothing overwrites it
+- Once a page is imported, the assistant can read its transcript like any other document, and it turns up in search
+
+This is **off until you switch it on**, in the assistant's settings. It sends the scans themselves to the AI provider you chose, which is more than the assistant sends when you just ask it a question — so it is a separate decision, with its own monthly limit on how many pages may be read.
 
 ### Events
 - Record family events: births, marriages, military service, emigration, and more
@@ -237,10 +252,10 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 
 | | |
 |---|---|
-| Backend | FastAPI, ~130 REST endpoints in one module (`backend/main.py`), SQLAlchemy over SQLite |
+| Backend | FastAPI, ~160 REST endpoints in one module (`backend/main.py`), SQLAlchemy over SQLite |
 | Frontend | React 19 + TypeScript + Vite, Tailwind v4, react-query; one large component per tab in `frontend/src/components/` |
 | Data | one project directory per family archive: `projects/<id>/` with its own DB, documents and `project.json` |
-| Schema | version stamped in the DB, idempotent migrations at startup (currently v7) |
+| Schema | version stamped in the DB, idempotent migrations at startup (currently v16) |
 | Packaging | PyInstaller onedir; `launcher.py` starts uvicorn on a free local port and opens the browser |
 | CI | `.github/workflows/build.yml` — a push to `main` builds and publishes the Windows and macOS bundles |
 | Tests | none; changes are verified by exercising the real endpoint or screen |
@@ -262,6 +277,7 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 | ZIP export, project import, merge import | [ZIP export](#zip-export) | `export_utils.py`, `merge_import.py`, `ExportModal.tsx`, `MergeModal.tsx` |
 | GEDCOM in or out | [GEDCOM export](#gedcom-export) | `gedcom_export.py`, `gedcom_import.py`, `GedcomImportModal.tsx` |
 | The AI assistant — tools, prompt, providers, models | [AI assistant (implementation detail)](#ai-assistant-implementation-detail) | `backend/ai/`, `AssistantPanel.tsx`, `AssistantSetup.tsx` |
+| Reading scanned documents, triaging a folder of records | [Reading scanned documents](#reading-scanned-documents) | `ai/doc_reader.py`, `transcriber.py`, `ScanReadModal.tsx`, transcript endpoints in `main.py` |
 | Connections between people from shared photos | [Connections graph](#connections-graph) | `ConnectionsTab.tsx`, `graphLayout.ts`, connection endpoints in `main.py` |
 | Global search, or the relationship finder | [Global Search](#global-search), [Relationship Path Finder](#relationship-path-finder) | `SearchPalette.tsx`, `RelationPathModal.tsx` |
 | Updating, packaging, bundled files | [Auto-update](#auto-update-implementation-detail) | `updater.py`, `launcher.py`, `mnemosyne.spec`, `UpdateBanner.tsx` |
@@ -370,6 +386,12 @@ The view opens **fitted** rather than at 1:1, because the graph deliberately spr
 
 **Every document can back a fact, without being promoted first.** `CitationsInline` in `PersonPanel.tsx` — the "Cite source" pill under a person's birth, death, occupation, christening, burial and marriage facts — offers two tabs: the source library, and **all documents**. Picking a document calls `promote-to-source` and cites the resulting `Source` in one step. This matters because the library only ever contained what somebody had already promoted from a text-document editor, so a freshly scanned certificate was invisible to the one screen that most wants to cite it: the fact it proves. Promotion is idempotent, so citing the same document from several facts still yields a single `Source`. Both tabs are searchable lists rather than a `<select>`, since a project accumulates far more of either than a dropdown can be read at.
 
+**A marriage is a fact of the marriage, not of either spouse.** Year, place, divorce year/place and a *Cite source* pill live on the spouse row in `PersonPanel.tsx` — the row that names the husband or wife — and expand under the chip that was clicked. The citation is stored with `citations.relation_id` set (schema v15), and `list_citations` in `main.py` unions a person's own citations with those of every relation they are part of, so `GET /api/persons/{id}/citations` returns the same marriage sources to **both** spouses. Hanging it off one person instead — which is what encoding the relation id into the `fact` string (`marriage_<id>`) did before v15 — meant a source entered on one screen read as a missing source on the other, and a merge import copied the id across verbatim onto whatever local relation happened to carry that number.
+
+**A child belongs to a couple, and the couple is two rows.** A child carries one `parent` relation per parent and nothing in the schema names the pair, so "which marriage is this child from?" is only answerable by reading the child's *other* `parent` row. The add-child picker in `PersonPanel.tsx` therefore asks the question at the moment the child is added — `CoParentChoice` lists this person's spouses above the search box — and writes both relations in one action. With exactly one spouse that spouse is preselected, so the ordinary case costs no extra click and the child appears on both parents' pages; before this, the same child had to be added a second time from the spouse's own panel, and usually was not. Picking *nobody* is a real answer — a child from a partner who is not in the tree — which is why it is a row of its own rather than the absence of a selection. `create_relation` caps a child at two parents, so the co-parent is dropped with a warning when the picked child already has another parent recorded, rather than sent as a third row the server would refuse. The children list reads the same information back out: `RelRow` groups by co-parent as soon as the children do not all share one, and stays a flat row when they do.
+
+`relation_id` is a plain FK with no cascade behind it, so every path that removes a relation removes its citations first: `delete_relation` and `delete_person` in `main.py`, the duplicate-marriage branch of `merge_persons` (which re-points them at the surviving row rather than dropping them), `_delete_relation_citations` in `export_utils.py`, and `execute_rollback` in `gedcom_import.py`. The order is load-bearing in the export copy, where foreign keys are **on** and every relations delete sits inside a bare `except: pass` — delete the marriage first and the constraint fails, the exception is swallowed, and a marriage the user marked private stays in the ZIP.
+
 **GEDCOM interoperability**
 - **Import**: `.ged` file → persons (including occupation, education, religion, nationality, cause of death), relations, events, notes, sources, documents; preview wizard for merge/create/skip decisions per person
 - **Export**: standards-compliant GEDCOM 5.5.1 with UTF-8 encoding; see [GEDCOM export](#gedcom-export) below
@@ -410,6 +432,10 @@ The view opens **fitted** rather than at 1:1, because the graph deliberately spr
 - The **timeline row** (`ManualEventRow`, the person's life in the genealogy panel) cuts to `ROW_PHOTO_LIMIT` and ends with a plain `+N` marker. It is a glance at what the event holds, and the Events tab is one click away for the whole set, so the cut is not expandable
 - The **editor** (`EventEditor`, shared by the genealogy timeline, the Events tab and the Images tab) cuts to `EDITOR_PHOTO_LIMIT` behind a button that expands and collapses. It has to be reversible: each thumbnail carries the ✕ that detaches that photo, so a photo hidden behind a permanent cut would be impossible to remove
 
+**`create_all()` wins over the migration block, so events cascade nothing.** `init_db_schema` calls `Base.metadata.create_all()` *first* and only then runs the `CREATE TABLE IF NOT EXISTS … ON DELETE CASCADE` statements, so for `events`, `event_persons` and `event_images` those statements are dead code: the live tables are the ones SQLAlchemy built from the models, and the models declare no `ondelete`. `PRAGMA foreign_keys` is on for every project connection, so **raw SQL that deletes an event must delete its `event_images` rows first** or the statement fails the constraint — and a failed statement takes the whole delete with it, so one participant-less event holding photos was enough to make *every* person deletion return a 500. The ORM path (`delete_event`) is safe on its own, since `Event.event_images` carries `cascade="all, delete-orphan"`; the raw-SQL paths are `delete_person` in `main.py`, `execute_rollback` in `gedcom_import.py` and `build_export_db` in `export_utils.py`, and all three delete the links before the event.
+
+**Cleaning up empty events is scoped to the person being deleted.** An event with no participants is legal — one created from the Events tab holds a title, a date and photos on its own — so `delete_person` collects the event ids the person was linked to *before* dropping their `event_persons` rows, and afterwards deletes only those of them that nobody else is left in. A blanket "delete every event without a participant" runs on every person deletion and takes hand-made photo events with it; it looked harmless only because the missing `event_images` delete above made it fail before it could do anything.
+
 The event's own detail page in `EventsTab.tsx` is deliberately **not** capped — showing the whole set is what that page is for, and it is where the preview modal and the ZIP export hang off.
 
 ### Documents and text documents
@@ -423,7 +449,7 @@ The event's own detail page in `EventsTab.tsx` is deliberately **not** capped �
 - People can be named in a document's title too by typing `@`; they render as clickable links, are linked to the document, and give the AI assistant something better than a filename to read
 - Any document can be cited as the source of a person's birth, death, occupation or marriage directly from their profile, without adding it to the source library first
 
-**Multi-file documents, sorting and dates.** Several files picked in one upload action — every page of a scanned letter, front and back of a certificate — become **one document**, not one document each: `POST /api/documents/upload` takes `files: list[UploadFile]`, the first stays the row's own `stored_name`/`filename`/`mime_type` exactly as a single-file upload always has, and the rest are inserted into `document_files` (schema v10, `document_id` FK, `ON DELETE CASCADE`). A shared `title` and the rest of the metadata apply to the one resulting document, which is why the upload form's title field is never disabled by file count — one record, one title, same as it has always been. `GET /api/documents/{id}/files/{file_id}` serves an extra file the same way `GET /api/documents/{id}/file` serves the primary one; `DELETE .../files/{file_id}` removes a single mis-added page without touching the rest of the document. `POST /api/documents/bulk-delete` (`{document_ids}`) mirrors `POST /api/images/bulk-delete` and cleans up every selected document's primary file *and* its `document_files` bytes on disk before deleting the rows.
+**Multi-file documents, sorting and dates.** Several files picked in one upload action — every page of a scanned letter, front and back of a certificate — become **one document**, not one document each: `POST /api/documents/upload` takes `files: list[UploadFile]`, the first stays the row's own `stored_name`/`filename`/`mime_type` exactly as a single-file upload always has, and the rest are inserted into `document_files` (schema v10, `document_id` FK, `ON DELETE CASCADE`). A shared `title` and the rest of the metadata apply to the one resulting document, which is why the upload form's title field is never disabled by file count — one record, one title, same as it has always been. `GET /api/documents/{id}/files/{file_id}` serves an extra file the same way `GET /api/documents/{id}/file` serves the primary one; `DELETE .../files/{file_id}` removes a single mis-added page without touching the rest of the document, and `DELETE /api/documents/{id}/file` removes the **primary** one. That last one never empties the primary slot: `documents.stored_name` is `NOT NULL` and every reader of a document — the viewer, the ZIP export, the bulk download, the GEDCOM media — assumes the row's own file is on disk, so the first `document_files` page is promoted into `stored_name`/`filename`/`mime_type` and its own row is deleted. A document whose primary file is its **only** file is therefore refused (400) rather than left fileless, since removing that is deleting the document and that has its own button; a text document is refused too, because its "file" is the Markdown body itself. `POST /api/documents/bulk-delete` (`{document_ids}`) mirrors `POST /api/images/bulk-delete` and cleans up every selected document's primary file *and* its `document_files` bytes on disk before deleting the rows.
 
 The document viewer's carousel is generic (`MediaCarousel` in `DocumentViewer.tsx`) rather than photo-only: it renders whichever of the primary file, `document_files` and — for text documents — `document_images` are present, showing images inline and a filename-plus-open-link card for anything else (a PDF page mixed in with photos, say). Clicking the primary preview or the "Open" button always opens it for an image — even a document with a single photo benefits from zoom and the description panel — while a non-image primary only opens it when there is more than one file to browse; a single PDF/audio/video still opens directly, since there is nothing to browse and no zoom applies.
 
@@ -470,6 +496,8 @@ Server-side the same split applies, via `_plain_mentions()` and `_plain_markdown
 - `merge_persons` re-points `document_persons` rows at the target with `UPDATE OR IGNORE` (the plain `UPDATE` would collide when both people are linked to the same document), then deletes the leftovers. Without this the junction rows are FK-cascaded away with the source person and the document silently disappears from every listing while still existing in the table
 - `delete_person` hands ownership of that person's documents to a co-linked person before deleting them, because `Person.documents` cascades `all, delete-orphan` and would otherwise destroy documents shared with others. Only when nobody else is linked is the document dropped — and then its file is unlinked from disk, which the ORM cascade does not do
 - `link_person_to_document` fills a NULL `person_id` with the person being linked, and `unlink_person_from_document` hands the column to whoever is still linked — or clears it when the last link goes. A `person_id` left pointing at somebody no longer in the junction is not cosmetic: `delete_person` cascades on that column, so a stale owner takes the document down with them
+
+**Removing a document from a person is not deleting the document.** The X on a document row in `PersonPanel.tsx`'s Documents tab calls `DELETE /api/documents/{id}/persons/{person_id}`: the person loses the document, and the document keeps its file, its other person links, its citations and its place in the project — belonging to nobody if that was the last link, which is a valid state. Re-attaching it is the same row's *+ Link* button, so the action is undoable. Deleting a document outright is a **Documents-tab** action only, because that is the one screen that shows every person a document is attached to, so the consequence is visible before the click. This split exists because the person panel's X was wired to the delete endpoint and a user removing a document from one person's page lost it from the whole project; a row that offers both destructive and local removal behind one icon will be read as the local one.
 
 **A document may belong to no one** (schema v8, `documents.person_id` NULL and no `document_persons` row). Genealogy is not the only reason to write something down — a chronicle or a research memo often exists before anyone in it has a record, and forcing a link at save time makes the user invent one. Both creation paths accept an empty person set: `POST /api/documents/upload` with an empty `person_ids`, and `POST /api/documents/text` with an empty list. Such a document belongs to the *project*, which decides how each pipeline treats it:
 
@@ -671,6 +699,14 @@ Nothing provider-specific may leak above the protocol. Three differences are abs
 
 **Reasoning depth is capability-gated, not id-gated — same rule as everything else in the model manifest.** `OpenAICompatProvider` sends `reasoning_effort` only when `model_caps(model)["reasoning"]` is true (set on the gpt-5 family in `models.json`); a non-reasoning model rejects the field outright with a 400, and an unknown model defaults to `false` in `UNKNOWN_MODEL_CAPS` for exactly that reason — silently *not* asking for more depth is a safe degradation, silently asking a model that doesn't support it is a broken turn. `AnthropicProvider` has run at `effort: "high"` since it was written; `OpenAICompatProvider` gained the equivalent default for the same reason both exist — a research-shaped question (piecing together a lineage, judging whether a web page's names line up with the tree) benefits from more deliberation than this app is otherwise latency-sensitive about, and the shallower default depth was a real, observed cause of the assistant proposing a research plan instead of running it.
 
+**Depth and tools can be mutually exclusive, and only the provider knows when.** Some reasoning models refuse `reasoning_effort` on `/v1/chat/completions` *when the same request also carries function tools*, and say so in a 400 naming both. That hits the batch report — an agent loop with tools — while leaving transcription, which has none, working. It cannot be answered by a capability flag: the model reasons, and it takes tools; it is the **pair** that the endpoint rejects, and which ids do that changes with every release.
+
+So it is learned rather than declared. The request goes out as normal; if the refusal names `reasoning_effort` and tools, the field is set to `"none"` and the request is sent again, and the model id goes into `_NO_EFFORT_WITH_TOOLS` so later turns skip the failed round trip. Nothing is written to `models.json` — this is the same rule as *never write a model list into a file*, applied to a quirk instead of a name.
+
+**Set to `"none"`, not removed.** Dropping the field was the first fix and the same 400 came straight back: these models do not default to no reasoning, so an absent field is not the same as `none`. The error text says which of the two it wants, and it is worth reading rather than inferring.
+
+The cost is real but small where it lands. The report is explicitly a shallow job — the judgement happened in `_match_page`, and the write-up runs at `medium` for that reason — so no depth is close to free there. The **assistant** is the opposite, and on such a model it loses the deliberation that stops it proposing a research plan instead of running it. The way to keep both is OpenAI's `/v1/responses` endpoint, which takes tools and reasoning together; that is a second request/response shape inside `OpenAICompatProvider`, not a config change.
+
 ### Providers, keys and models
 
 Keys and the selected model are stored **per provider** in the `ai` block of `config.json`:
@@ -716,6 +752,246 @@ The deletion happens on the **copy**, never on the project. Exporting does not c
 `AssistantPanel.tsx` sits beside `<main>` rather than over it, so the tree stays visible while the assistant answers. Streaming is a `fetch` + `ReadableStream` read (`api.ai.stream`), deliberately not react-query — it is a long-lived body read, not a cache entry. Thread and message lists are ordinary react-query.
 
 Answers render through the existing `markdown.ts`: the system prompt requires `@[Name](#pid-ID)` mentions, which already become `a.note-person-ref` anchors, and the panel delegates clicks on them to `navToGenealogy` exactly as `NoteEditor.tsx` and `DocumentViewer.tsx` do. That is the feature's main defence against hallucination — every claim is one click from its source.
+
+---
+
+## Reading scanned documents
+
+Lives in `backend/ai/doc_reader.py` (one page), `backend/transcriber.py` (the batch job) and `frontend/src/components/ScanReadModal.tsx`. Off until switched on, and a separate switch from the assistant's own.
+
+### The shape of the problem
+
+A folder of parish-register photographs arrives with two hundred pages in it, of which perhaps four concern this family. Importing all two hundred to find those four is the work being removed, so **nothing is copied into the project until the user picks a page.** A batch points at a folder still sitting on disk; `transcript_pages.source_path` holds the absolute path, and `document_id` stays NULL until the page is promoted to a Document.
+
+### Transcribe once, store text, and every existing path picks it up
+
+The expensive call happens **once per page, not once per question.** The transcript is stored as text on the page row, and a page that has been imported carries `document_id` — which is all `_doc_dict` in `ai/tools.py` needs to flip `readable` to true, `get_document` needs to return the transcript as the body, and `search_text` / `list_written_material` need to include it in the corpus. Nothing re-reads the image.
+
+The alternative — a chat tool that opens a scan mid-conversation — was rejected twice over. It would mean widening the provider seam's neutral message shape (text only today) to carry image blocks in both adapters, and it would re-send a multi-megabyte page on every turn that touched it.
+
+Because the transcript is text, it also flows into the ZIP's Markdown, GEDCOM notes and the primer's `material` counts with no further work. That is the whole argument for the design.
+
+### Three phases, and why the third waits
+
+`transcriber.py` runs one daemon thread with the `scanner.py` shape — lock-protected state dict, `GET /api/transcripts/status` polled by the UI:
+
+1. **transcribe** — one provider call per pending page, committed as it goes, so a crash costs one page rather than the batch.
+2. **match** — pure Python. Every extracted name is compared against the tree and each page gets a `relevance` mark.
+3. **report** — the finished table goes to the model, which only writes it up.
+
+**Phase 3 starts on its own the moment no page is left unread**, because that is what the batch is for: point at the folder, walk away, come back to a report saying which handful of entries are worth importing. A stopped run does neither 2 nor 3 and leaves the batch resumable — a report over a partly-read folder is worse than no report, since it reads as a statement about the whole folder.
+
+### The matching is code, not a model
+
+`_match_page` in `transcriber.py` scores each page against the tree in Python, and the model is explicitly told not to revise the marks. This is the same reasoning that put the ancestor walk in `ai/tools.py`: given names repeat inside a family, sometimes between a father and his son, and a model ranking two hundred pages against a tree it can only see in summary conflates people confidently.
+
+The rule that earns its keep: a **name** match whose year sits outside the matched person's recorded lifespan is demoted with a note saying why, rather than dropped silently. A page from the right family and the wrong century is exactly what a same-name collision looks like, and it is information, not noise. A page where no full name matched at all still gets surfaced if a family surname appears anywhere in its transcript — a thin extraction must not read as an irrelevant page.
+
+### The prompt keeps the transcript and the data apart
+
+One call returns three sections behind `<<<MARKER>>>` lines: the document's language, a count of the entries on the page, and a **verbatim** transcript, followed by a JSON extraction. The transcript is asked to keep **one entry per line, opening with the number the register prints beside it**, and that is not a formatting preference: it is where `_entry_blocks` reads the record boundaries from, and a record that runs over several printed lines is still one line here. There is deliberately no modern-language rendering: it was a second round of tokens to paraphrase the evidence into something less exact than the evidence, and both the reader and the report work from the original. Markers rather than a provider-native structured-output mode, for two reasons: the parse is identical on both adapters, and an answer that runs long still yields a usable transcript instead of unparseable JSON — the transcript is the part worth salvaging.
+
+Two rules in that prompt exist because of how these records actually read:
+
+- **The transcript keeps the page's own wording; the JSON should not.** Latin registers decline names — a page reading `filius Stephani Nagyfalvi` records a man named `Stephanus Nagyfalvi`. The transcript must keep `Stephani`, because it is evidence; the JSON wants the nominative, because an inflected name matches nothing. The prompt asks for it, and **nothing depends on getting it** — see the next section.
+- **Uncertainty survives into storage.** `[?]` marks a word that could not be read, `word[?]` a reading that is not certain, and those marks are carried into the JSON as well. `_doc_dict`'s note then tells the assistant what they mean, so a guess is never quoted back as what the register says.
+
+### The report is an agent loop; the reading is not
+
+`read_file` is one shot with no tools — a page is a page, and nothing about the project changes how it should be transcribed. `write_batch_report` is the opposite: the matching pass says *which* tree people a page touched, but whether that is worth acting on depends on what is already recorded about them, which only the project can answer. So the report runs the assistant's own read-only `REGISTRY` in a small loop (`REPORT_MAX_ITERATIONS`, deliberately low — it is writing up a table it already has, not researching a family).
+
+The calls it makes are stored on `transcript_batches.analysis_steps` and shown beside the report, for the same reason `chat_tool_calls` exists: in genealogy the lookups are what make an answer checkable instead of merely fluent. Results are stored as a **preview** plus a length, because a few full tool results would dwarf the report they justify.
+
+It runs on the `query_only` pool (`get_readonly_db`), not the job's writable session. The read-only guarantee has three independent layers and a caller being trusted is not a reason to drop one.
+
+### Which provider does which job
+
+Three settings, and the split is perception versus prose:
+
+| Job | Provider | Why |
+|---|---|---|
+| Reading a scan | the **document reader**'s | Old handwriting is where providers differ most, so it is chosen for that alone |
+| Writing the batch report | the **assistant**'s | Prose over an already-extracted table |
+
+`_text_job_settings()` is the single place that decides, falling back to the reader when the assistant has no key so neither job simply stops. Measured on one real register page, the two providers differed by more than 5x in output tokens for the same reading — that gap is why the reader is configured separately at all.
+
+### Reading part of a folder
+
+`start` takes `page_ids`. Named pages are read **whatever state they are in** — that is what "read this one again" means — and the unnamed rest are left alone. A report can be asked for from one readable page onwards, and `_batch_coverage` puts the read/unread counts in the prompt with an instruction to open with them. Useful early beats correct-but-unavailable, but only if the partiality is impossible to miss.
+
+### A background job that cannot be restarted is broken
+
+`transcriber` holds one global "a batch is being read" flag, and for a while nothing reconciled it against the thread it described. A worker that died — a crash before its `finally`, or a process the reloader replaced under a daemon thread — left the flag set, and the only cure was restarting the app. The user saw `A batch is already being read` and no way forward.
+
+Three things fix it, and they are all the same idea: **never trust a flag over the thing it describes.**
+
+- `start_batch` and `get_status` both check `_thread.is_alive()` and clear a flag the worker has outlived. `get_status` doing it too matters: otherwise the UI keeps the buttons disabled for a run that no longer exists.
+- Every outbound call is bounded — `PAGE_TIMEOUT_SECONDS` per page, `REPORT_TIMEOUT_SECONDS` for the whole report. The SDKs default to a ten-minute timeout retried twice, so one hung call could hold the flag for half an hour.
+- The report's agent loop checks `should_stop` between rounds. An HTTP request in flight cannot be taken back, but a user who pressed stop should not wait through seven more rounds of tool use.
+
+**And the job has to look alive.** The transcription phase reports pages done; the analysis has nothing to report between rounds, so it looked identical to a hang — which is how a slow report gets reported as a bug. `phase_seconds` is in the status payload for that reason alone.
+
+The report also runs at `medium` effort, not `high`. It is writing up a table that has already been decided, and at high effort a folder of two dozen transcripts took minutes; at medium the same report took 102 seconds. Effort belongs where the reasoning is, and the reasoning here happened in `_match_page`.
+
+### The report reads the records, not a summary of them
+
+The report is handed each page's **whole transcript**, and this is the single most important thing about it. An earlier version sent a 400-character excerpt per page, which on a dense register page was 14% of the entry — and the model then wrote its assessment of the folder from an opening paragraph. It was not wrong about the names, because the names come from the matching pass; it was blind to everything a record actually says: the roles, the relationships between the people named, the marginalia, what the entry is even for. Given the full text of one page it went from listing three names to quoting the entries and correctly widening their date range from 1868 to 1868–1881, which the excerpt had cut off.
+
+The lesson generalises: **the index is not the document.** The name-and-date table exists so nothing has to be found by reading; it is not a substitute for reading.
+
+Budgeting is by characters (`REPORT_TEXT_BUDGET`), spent strongest-group-first, because a folder can be arbitrarily large and what should survive intact is what the report is mostly about. Input tokens are the cheap half and these models hold hundreds of thousands of them, so a whole folder usually fits.
+
+**Anything trimmed stays reachable.** `build_batch_registry` gives the report two tools over the batch's own transcripts — `read_page` opens one in full, `search_pages` finds a word across all of them and with no query lists every page. Same two shapes as `get_document` / `search_text`, for the same reason: a page that can only be reached by guessing is a page that gets reported as containing nothing. A trimmed page is marked `transcript_truncated` and the prompt requires `read_page` before it may be described.
+
+They are a **second registry**, built per batch and living only for the length of one report, rather than entries in `tools.py`'s always-on `REGISTRY` — they are scoped to a batch that most of the app knows nothing about.
+
+### A name match is a pointer; a relationship is a finding
+
+`_match_page` scores four levels, and the ladder is deliberately stingy:
+
+| | earns it |
+|---|---|
+| `corroborated` | **two** people on the page matched by full name, in roles that assert a relationship — a father and his child, a bride and groom, two siblings — and the tree already records that same relationship between them |
+| `candidates` | one full name matched and a year on the page falls inside that person's lifespan |
+| `weak` | a full name matched but nothing dates it — no usable year on the page, or none recorded for the person |
+| `unrelated` | only the surname matched, or the dates contradict the match |
+
+The top rung is the important one and it took two corrections to find. The first version scored a bare name match as a find. The second required the dates to agree as well — better, but on a real folder it still marked four pages of a village register "worth importing" on the strength of a name and a plausible century, and a user reading that list was being told that coincidences were discoveries. Re-cut against a real batch of 28 pages, the marks went from `4 / 16 / 5 / 3` to `1 / 4 / 16 / 7`. Scoping the pairing to one entry — and each match to its own entry's year — then took the top rung to empty on that folder, because the single page that had reached it was the false pair described below.
+
+That is the distinction the ladder now encodes. **A surname repeats across a village and a given name repeats within a family, so no amount of name agreement is evidence of identity** — but two names in the right roles, connected the same way in both the record and the tree, is something a coincidence of naming cannot produce. `_corroborating_relation` only counts full-name matches with no date conflict, and returns a sentence naming the relationship that agreed, which the write-up is required to quote as its reason.
+
+**A pair only counts inside one entry.** A register page is not one record — one real page carried nine marriages — and the first version of `_corroborating_relation` paired any groom with any bride anywhere on the page. It duly found a groom from the ninth marriage and a bride from the fifth who are indeed spouses in the tree, and marked the page a certain match. Two unrelated lines, manufactured into the strongest signal the system has.
+
+The first attempt at a fix asked the *extraction* for an entry number per person. That was the wrong place to ask: it is an index of the page written by the same model, it is not there at all for pages read before the question was added, and it cannot be checked against anything. The boundary now comes from the transcript. `_entry_blocks` cuts the text on the register's own numbering — one numbered line opens a record, an unnumbered line continues the one above it, and the column headings before the first number are not a record — and `_place` puts a person in an entry when both parts of their name are written inside it.
+
+Three properties make that the right source. It works on **every page already read**, because the numbering was transcribed the first time round. It is **checkable**: the user can see the numbered lines beside the scan. And it **refuses cleanly** — a name whose parts appear in three entries places the person in none of them, a page that does not divide places nobody, and `_corroborating_relation` pairs only two people it can place in the *same* entry. On the real folder that turned the one "certain match" into none, which is the honest answer: the groom of the ninth entry and the bride of the fifth are still there, still spouses in the tree, and still not a couple on that page.
+
+A page that does not divide is treated as one record in exactly one case: the extraction itself says the page holds a single entry. Everything else gets no pairing, because the safe answer to "are these two the same record?" is no.
+
+**The entry is also the date.** A page spanning eight years used to lend all eight to every person on it, so almost anyone could be made to "fit" one of them. `_Entry` carries the years written inside its own lines, and a person placed in an entry is scored against that entry's year — the page's full span is the fallback for people who could not be placed.
+
+The reason leads `relevance_note` and is never trimmed. One name on a page can collide with a dozen namesakes, and a note that is a wall of "predates the recorded birth" buries the one line saying why the page matters — which is the line the note is read for.
+
+**An age dates a person; a lifespan barely does.** "A year on this page falls somewhere inside their recorded life" is nearly free — most pages in a family's own parish will pass it. An age written in the entry is different in kind: 23 in an 1876 record puts the birth at about 1853, which is a fact about that person reached without reference to their name, and it can be compared with a recorded birth year directly. `_age_check` does the arithmetic in Python and hands the result to the write-up rather than asking a model to do sums.
+
+Three outcomes, and the middle one is the point. Within a year, the two **agree** and the match is dated on evidence a coincidence of naming cannot supply. Beyond `AGE_SLACK_YEARS`, they **conflict** and the match is ruled out however well the name fits. In between is **unclear**, because a register's ages are approximate — rounded, remembered, guessed by the clerk — and a two-year gap is a reason to say nothing rather than a refutation. Ruling a match out on that gap was the first version's behaviour and it discarded a true match on a real page.
+
+The age is only checked against the year of the entry the person was *placed* in, or against a page that carries one year in total. A page spanning eight years has no single year to subtract from.
+
+**Absence of evidence is not evidence, and the year has to come from the record.** An earlier ladder scored "no date to check" as "no objection", which put an 1860s disciplinary record under *worth importing* against a man born decades later. The other half of that same bug was where the year came from: `_page_years` read only the extraction's `date` field, so a page whose transcript plainly said 1868 came through as undated because the model had left the field null — an absent field read as an absent fact. It now scans the transcript for years as well.
+
+**The write-up cannot re-sort the groups.** `_capped_rows` hands the model a dict keyed by evidence level rather than one list with a `relevance` field, because when it got the flat list it moved pages between sections to suit its own reading. The prompt then requires the evidence to be stated in the same sentence as the claim: `@[…](#pid-7)` stays, so the reader can click through and check who is meant, but "matches the name of X, though nothing else places him there" and "belongs to X" are different sentences and only one of them is honest about a namesake.
+
+### The extraction is an index of the page, not the page
+
+The per-page extraction — `kind`, `date`, `place`, and a list of people with roles — was originally the whole basis of both the matching and the report. It is a genuinely useful thing and it is not going away, but it had drifted into standing *for* the page, and two failures came out of that.
+
+**It was the only place names were looked for.** A page whose extraction stopped short was scored as though the missing lines were not there. `_match_page` now takes names from two sources and treats them the same once it has them: the extraction, and the transcript itself. The transcript sweep matters on prose entries, where a name is simply written out; the extraction matters on ruled registers, where a person's surname and given name sit in different columns with the rest of the row between them and **no substring search can ever join them up**. That is the one job it keeps outright, along with the roles — reading a layout and saying "this name is the groom" is what it is good at, and reading the words does not tell you.
+
+**It was describing the page to the report.** The row handed to the report model used to carry the extraction's `kind`, its single `date`, its `place` and its first twelve people, sitting beside the full transcript as if it summarised it. On a page holding a dozen dated entries and four times that many names, that is not a summary but a contradiction — and where the two disagreed the model believed the short definite one over the long messy one, and where the index was silent it wrote that the page was silent. The row now carries only what the transcript cannot supply: the marks this code computed, the years it read, and the tree ids a name in the text has no way to carry. Everything about what the page *says* comes from `transcript`.
+
+This is the same rule as *the index is not the document*, one level up: an index may sit next to the thing it indexes, but it must never be shaped like a description of it.
+
+### Indented prose is a code block, and a code block escapes the links
+
+A report is Markdown written by a model, and `renderMarkdown` injects its anchors *before* the Markdown parse. Markdown turns any line indented four spaces past its surroundings into `<pre><code>`, and everything inside a code block is escaped — so one over-indented continuation line rendered a page's person references as visible `<a href="#person-ref-31" …>` text nobody could click, while the same report re-run rendered correctly. The output depended on whitespace nobody chose.
+
+Indented code blocks are therefore switched off for every body this app renders (`marked.use({ tokenizer: { code: () => undefined } })` in `markdown.ts`). Nothing here wants one — not a note, not a document description, not a transcript imported into one, not an assistant answer — and fenced blocks still work, so the deliberate case is untouched and only the accidental one is gone. This is the same shape as `_link_page_names`: where the rendering depends on something the model is not choosing deliberately, take the choice away from it.
+
+### Two things the prompt was asked for and did not do
+
+Both were fixed the same way — by doing them in code instead.
+
+**Phrasing the finding.** The corroboration was handed over as data (`kind: "spouses"`, two roles, two people) with an instruction to put it in the answer's language. What came back was a Hungarian sentence with an English rendering quoted inside it, because English is what the field values look like. `_corroboration_sentence` now composes it server-side, where the language, the name order and the ids are all already known, and the prompt only has to reproduce what it is given.
+
+**Linking the pages.** The prompt asked for `[DSCF1720.JPG](#page-23)` and got plain filenames. `_link_page_names` rewrites them afterwards: the filename-to-id map is known and the substitution is unambiguous, so there is nothing to ask for. The prompt now says the opposite — write the filename plainly, it will be linked.
+
+`#page-N` joins the reference forms `markdown.ts` resolves, styled as `a.note-page-ref`; only the scan-reading screen intercepts it, and it is inert markup anywhere else.
+
+### Asking about a batch
+
+The report answers a fixed question — *which of these pages is worth importing*. Everything else a reader wants to know about a folder they are looking at ("does any entry name a witness called X", "what does the third entry on that page actually say", "which years does this book cover") had no way to be asked. `POST /api/transcripts/batches/{id}/ask` is that way.
+
+It is the **same agent loop as the report**, extracted into `_run_agent` the moment there were two callers rather than after they drifted — the loop owns four things that are easy to get subtly different: which registry a tool name dispatches to, that a failing tool becomes a result instead of ending the run, that the stop flag is read between rounds and not mid-call, and that every call is recorded. What differs is the system prompt and the first message.
+
+**Scoped to the batch, deliberately.** The obvious alternative — let the main assistant see these transcripts — is wrong: an un-imported page is *working state*, which is why `build_export_db` deletes it and the merge importer skips it. Folding a folder the user has not decided to keep into the assistant's always-on corpus would change the answer to every unrelated question about the family. So the question is asked where the folder is being read, and it reaches that batch's pages plus the ordinary read-only project tools — which is what lets it tell a new record from one the tree already holds.
+
+No new consent: this sends transcript text to the provider already chosen for text work, exactly as the report does. It is not a new *kind* of payload the way a photograph of a document is, so it does not need the third `config.json` block that `document_ai` needed.
+
+**The conversation is stored on the batch** (`transcript_questions`, schema v16). It began in component state, on the reasoning that a batch is a working screen and nothing would need to survive closing it. That was wrong in the most ordinary way possible: the answers name pages, the first thing anyone does with an answer is open a page it recommended, and opening one unmounted the panel — taking the conversation with it, along with the reason they had opened the page. A feature whose output cannot be acted on without destroying it is not finished.
+
+Storing it costs the three things every table here costs, all of which the checklist names: a migration, an unconditional `DELETE` in `build_export_db` (it is working state — half of it is questions typed while deciding), and a cascade so deleting a batch takes its conversation. It also removes a hazard rather than adding one: the follow-up context is now read back server-side, so it cannot depend on which screen happens to be open and the loop's own internal message shapes are not reachable from anything that can post. `ASK_HISTORY_TURNS` still bounds how much of it travels.
+
+**Three views, not two.** The detail column shows the report, the conversation, or a page, chosen by a tab strip — the questions used to sit beneath the report, in a sliver of space, which is the other half of why following a link was destructive.
+
+A tab alone is not discoverable: it is a label on a panel nobody has opened, and the first user of this feature said plainly they would not have found it. So there are three ways in, each at a different moment — a **button in the batch toolbar** where the actions are already looked for, the **tab** itself (icon and accent, so it reads as an action rather than a heading), and a **panel at the end of the report**, which is the moment a question actually forms. All three carry the count of questions already asked, so a conversation in progress is visible from anywhere on the screen. The tool steps under each answer name what was actually read (`stepSubject` turns `page_id=29` into the filename that is on screen two columns to the left), because the entire reason for showing the steps is to let a reader tell research from assertion, and an id does not.
+
+The answer runs on the request rather than in the job thread. It is one question with a handful of tool calls, there is nothing to poll or resume, and keeping it out of the job means a question can be asked while pages are still being transcribed. The prefix carries `_batch_inventory` — how many pages the folder holds, how many have been read, how many failed, the span of years — for the same reason the assistant's primer carries totals: a model that cannot see an absence writes fluently around it, and three read pages out of twenty-eight would otherwise be described as the folder.
+
+### Matching is free; the report is not
+
+Phase 2 runs after **any** amount of transcription: it is arithmetic over data already on disk, it costs nothing, and it puts the marks on the page list. Phase 3 does not run on its own at all.
+
+A folder is read in several sittings — a few pages, a correction, a retry of what failed — and a report fired after each of those is a paid call producing a document about a batch that is about to change again. The marks are what tells the user whether a report is worth asking for, and they are on screen by the time the question arises. `POST .../rematch` re-scores a batch inline on the request, with no thread and no model, for the case that actually recurs: the tree gained a person, or a transcript was corrected by hand.
+
+### A short transcript has to announce itself
+
+"Transcribe every line" is an instruction, and a page of four ruled-off entries is exactly where a model stops after the first one and returns something that *looks* finished. So the prompt asks for one more thing before the transcript: `<<<ENTRIES>>>`, a count of the blocks on the page, made before transcribing.
+
+`parse_response` then compares that count against the blank-line-separated blocks actually written and stores the result as `coverage` inside the extraction JSON — no new column, since the extraction is already free-form. `_page_incomplete` in `main.py` lifts it onto the page payload and the list badges it.
+
+This is the same rule as everywhere else in this repo: the instruction may help, but the thing that makes it safe is that a shortfall is **visible**. A partial transcript nobody flags is worse than a failed page, because a failed page announces itself.
+
+**A short transcript is not automatically a wrong one.** A decorative title page is twenty words of calligraphy and transcribes to a couple of hundred characters; a dense register page of four entries runs to fifteen hundred. Judging the reader by length alone misdiagnoses both — which is why the count comes from the model's own reading of the page's structure rather than from a character threshold.
+
+### Providers differ most on handwriting, which is why the reader has its own
+
+The document reader carries its own provider *and* model, separate from the assistant's, and `write_batch_report` deliberately uses the **assistant's** provider instead. The two jobs reward different things: reading a two-hundred-year-old hand is a perception task where providers differ enormously, while writing up an already-extracted table is prose the user already chose a provider for. Measured on one real register page, one provider spent ~7.5k reasoning tokens and returned a partial reading where another returned a complete one for ~2.6k output tokens — that gap is the reason the setting exists.
+
+### Names are normalised in code, not in the prompt
+
+Asking the model for the nominative works often and not always: the first real run returned `Josephus` for the child and `Stephani`/`Mariae` for the parents, off the same page. A prompt instruction is not a mechanism, and this one is ignored often enough to matter — so the normalisation lives in `_given_variants` in `transcriber.py`, where it runs the same way every time.
+
+Two transformations, both **additive** — a variant is an extra key to match on, never a replacement, so a name the rules do not understand is left exactly as it was:
+
+- **Latin case endings are undone.** `-ae → -a`, `-i → -us`, `-is → -es`, and the accusative/ablative forms, longest ending first so `-is` is tried before `-i`. Applied to **given names only**: Hungarian surnames ending in `-i` are a place-name suffix and stripping it would wreck them.
+- **Latin and vernacular given names are treated as the same name.** The tree holds `István` because that is what the family calls him; the register says `Stephani` because that is what the sentence needed. `_LATIN_HU` maps the forms that actually recur in Hungarian registers, and is read in both directions so neither side has to be canonical. It is deliberately short — every wrong pair in it is a false match, and rare names buy little.
+
+Both sides of the comparison go through the same expansion, so the match works whichever way round the two spellings fall.
+
+### The output budget has to cover the thinking
+
+A transcript of one page is one or two thousand tokens, so a ceiling sized for the answer looks generous — and is wrong. On a reasoning model the thinking is charged against the **same** ceiling: a real register photograph measured ~7.5k reasoning tokens before the first character of output. At a ceiling of 8k the model spent the entire budget thinking, and the call returned `finish_reason: "length"` with an empty string in it.
+
+That is the worst shape a failure can take here, because it arrives as a *success*. Reported as "the model returned nothing", it reads as an unreadable page and sends the user to re-scan a file that was fine. So two things changed together: `MAX_OUTPUT_TOKENS` is an order of magnitude above the answer size (clamped to the model's own `max_output`), and both adapters check for an empty answer that was **cut off** and return an error saying so — `finish_reason == "length"` on the OpenAI side, `stop_reason == "max_tokens"` on Anthropic's.
+
+Effort is a second lever, and `build_provider` takes it as a parameter for this reason. Reading a page is not a reasoning task; `READ_EFFORT` is `medium`, where the assistant's own turns run at `high`. High effort here mostly buys thinking tokens, which cost money and, on a tight ceiling, crowd out the answer.
+
+### The transcript is editable, and an edit is never overwritten
+
+`PATCH /api/transcripts/pages/{id}` stores a hand-corrected transcript and sets `edited`. A corrected transcript is worth more than a perfect model, because the person correcting it is the one who knows the family's names. Re-running the report (`POST .../analyse`) re-matches and re-writes over the corrected text without paying to read any page again — which is also the right thing to do after adding people to the tree.
+
+### Consent, budget, and what actually goes out
+
+`document_ai` in `config.json` is a third sibling of `ai` and `web_research`, off by default. Enabling it sends **the scans themselves** — a photograph of a page, with whatever is written on it, including what nobody has read yet. That is a materially larger disclosure than the tree summary the assistant sends, so it is its own switch with its own disclosure in `AssistantSetup.tsx`.
+
+It has **no key of its own**: the same provider account is already configured, so it reuses the `ai` block's key. It does have its own **model** choice, because reading two-hundred-year-old handwriting and reasoning over a family tree reward different models, and being able to point them at different models is the only way to find out which reads a given hand best.
+
+The **monthly page budget** is check-and-incremented in `try_consume_doc_page()` before each outbound request — never in the prompt. Same reasoning as `try_consume_web_quota`: a batch told to be economical is still a loop, and a loop with a bug reads a thousand pages.
+
+### PDFs
+
+A PDF is checked for an embedded text layer first (`pypdf`, already a dependency for `read_web_page`). A layer over `MIN_TEXT_LAYER_CHARS` is used as-is: free, deterministic, and no quota consumed. Below that the PDF is treated as a scan and sent to the model.
+
+Anthropic takes the PDF as a native `document` block and renders the pages itself, which is why **this app needs no PDF renderer in the bundle** — `PyMuPDF` would add a compiled binary and an AGPL question for exactly this one job. The OpenAI-compatible adapter sends images only and **refuses a PDF explicitly**, naming the two ways out. A guessed wire format would have failed per page, mid-batch, as a 400 for the user to decode.
+
+### What the tables are, and what they are not
+
+`transcript_batches` / `transcript_pages` are **working state**, not project content: a page row holds an absolute path into a folder on this machine and the full text of a document that may never be imported at all. So `build_export_db` deletes both unconditionally, alongside the chat tables — copy-then-filter means a table nobody deletes is a table that ships. `merge_import.py` enumerates its tables by hand and therefore does not merge them, which is correct: the paths belong to the source machine.
+
+**Importing a page copies the transcript into `documents.description`.** It did not, originally, on the reasoning that one transcript should have one home and the document could read it back through `document_id`. That is true of the *assistant's* serialiser in `ai/tools.py` and of nothing else: the REST `_doc_dict` carries no transcript, so an imported page arrived in the Documents tab as a picture of handwriting with nothing readable attached — not searchable, not quotable, not editable. The description is the field a person reads, searches and corrects, so that is where the text goes. A caller sending its own `description` still wins; the page keeps its copy, and the two can drift if a transcript is corrected afterwards, which is the accepted cost.
+
+`transcript_pages.document_id` is `ON DELETE SET NULL`, not CASCADE. Deleting an imported document returns its page to being an un-imported candidate with its transcript intact — the reading survives the document, which is the point of storing it separately.
 
 ---
 
@@ -898,6 +1174,11 @@ Each project has its own directory (`projects/<id>/`) with its own SQLite databa
 | v8→v9 | `documents.date` — a partial date alongside the existing `documents.year` |
 | v9→v10 | `document_files` — extra files on a document beyond its primary one, from a multi-file upload |
 | v10→v11 | `document_description_citations` — `[n]` references inside any document's `description` |
+| v11→v12 | `transcript_batches`, `transcript_pages` (reading scanned documents) |
+| v12→v13 | `transcript_batches.analysis_steps` — the tool calls the batch report made |
+| v13→v14 | `transcript_pages.corroboration` — the relationship a page and the tree agree on |
+| v14→v15 | `citations.relation_id` — a marriage's sources belong to the marriage rather than to one spouse |
+| v15→v16 | `transcript_questions` — the conversation about a batch of scans |
 
 `Base.metadata.create_all()` runs before the migration block, so new *tables* appear on their own; a new *column* on an existing table still needs an explicit `ALTER TABLE` in the version block.
 
@@ -957,7 +1238,9 @@ A ZIP archive packages the database and all referenced media into a portable, se
 3. **Content toggles**: notes, sources, events, documents, images, faceless images — each independently removable
 4. **Privacy filter** (always applied, cannot be disabled): removes all rows where `is_private=1` across images, clusters, relations, documents, notes, and events; private cluster faces are moved to the noise cluster before the cluster is deleted
 
-Anywhere documents or images are deleted from the export copy, `_delete_document_children()` clears the matching `document_citations` / `document_images` / `document_files` / `document_description_citations` rows first. The export DB is written with the plain `sqlite3` module, where `PRAGMA foreign_keys` is **off**, so nothing cascades for you — dropped documents would otherwise leave dangling children behind in the shipped database. The packer collects the files to zip by reading `stored_name` back out of the already-filtered export DB (`documents` **and** `document_files`, unioned), so a document dropped here never gets its bytes packed either.
+Every document delete goes through `_delete_documents()`, which clears `document_note_citations` → `document_notes`, then `_delete_document_children()`'s `document_citations` / `document_images` / `document_files` / `document_description_citations`, then `document_persons`, and only then the document row. It is one helper rather than a sequence repeated at each call site because the export connection runs with **`PRAGMA foreign_keys=ON`** and the child tables disagree about what that means: `document_persons`, `document_images` and `document_files` cascade, `sources` and `transcript_pages` set null, and the notes and citation tables declare no action at all. A document carrying a note therefore cannot be deleted until the note is gone — the failed statement aborts the export rather than leaving a dangling row, so an ordering mistake here is a 500, not a silent leak. Images are the same shape via `_delete_images()`. The packer collects the files to zip by reading `stored_name` back out of the already-filtered export DB (`documents` **and** `document_files`, unioned), so a document dropped here never gets its bytes packed either.
+
+**A narrowed export does not orphan a shared document.** Before deleting anybody, `_delete_persons()` hands each document owned by a departing person over to a co-linked person who is staying — `documents.person_id` is only the original owner, while `document_persons` is what every listing joins on, so the document is on the kept person's page and must stay in their export. This is the same rule `delete_person` in `main.py` follows when a person is deleted outright. Only a document that nobody in the selection is linked to is deleted.
 5. **Path rewrite**: image paths updated to `images/<id>_<filename>` (absolute → relative)
 6. Pack with DEFLATE compression, streamed to the response
 
@@ -990,7 +1273,7 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
 
 **INDI records** — `NAME` with `/surname/`; `GIVN`, `SURN`, `NICK`, `NPFX`; vital events (`BIRT`, `CHR`, `DEAT`, `BURI`) with `DATE` and `PLAC`; `DEAT > CAUS` (cause of death); `OCCU`; `EDUC`; `RELI`; `NATI`; `NOTE`; `EVEN` (one per event); `OBJE` (documents + photos — a multi-file document's extra files each get their own `OBJE`, numbered in the `TITL`); `FAMS`/`FAMC`
 
-**FAM records** — `HUSB`/`WIFE` (sex-aware); `CHIL`; `MARR` and `DIV` with date and place
+**FAM records** — `HUSB`/`WIFE` (sex-aware); `CHIL`; `MARR` and `DIV` with date and place; `MARR > SOUR` pointing at the marriage's cited sources, with `PAGE` for the citation detail. A marriage known only from a source and carrying no date or place still gets a `MARR Y` to hang its `SOUR` on — that is how 5.5.1 asserts an event whose detail is unknown. Person-level facts (`BIRT`, `DEAT`, …) do **not** yet carry their citations
 
 **SOUR records** — `TITL`, `AUTH`, `PUBL`, `NOTE`, `WWW`
 
@@ -1023,8 +1306,10 @@ Produces a ZIP with `family.ged` (GEDCOM 5.5.1, UTF-8, CRLF) and a `media/` fold
   | GitHub update check | Version query only, nothing about the user | **On** | Settings → auto-check |
   | AI assistant | Questions plus the tree data needed to answer them | **Off** — inert without an API key | Settings → *Enable assistant* (`ai.enabled` in `config.json`) |
   | Web research | The names, places and years in a query, to the search provider (not the AI provider above) | **Off** — inert without its own API key | Settings → assistant setup, web research section (`web_research.enabled` in `config.json`) |
+  | Document reading | The scan itself — a photograph of a page, with everything written on it — to the AI provider | **Off** | Settings → assistant setup, document reading section (`document_ai.enabled` in `config.json`) |
 
-  The assistant and web research are the only paths by which project data leaves the machine, and they are separate switches to separate destinations. Disabling either hides its part of the UI and stops its traffic; neither discards its stored key.
+  These three are the only paths by which project data leaves the machine, and they are separate switches to separate destinations. Document reading is the largest of them by volume — a scan carries whatever is on the page, including what nobody has read yet — which is why it is its own switch and not a mode of the assistant's. Disabling any of them hides its part of the UI and stops its traffic; none discards its stored key.
+- Document reading has no key of its own: it reuses the provider key already stored in the `ai` block, and stores only its own toggle, model choice and monthly page budget in `document_ai`
 - Both API keys live in `config.json` — the AI provider key per provider, the web-research key in its own `web_research` block. Both are write-only over HTTP: `GET /api/ai/settings` and `GET /api/ai/web-settings` return them masked (`sk-ant-api…9f2a`), and no other endpoint returns either at all
 - Private records are withheld from the assistant unless `allow_private` is set — a third enforcement layer alongside ZIP and GEDCOM export (see *Privacy*)
 
@@ -1042,8 +1327,9 @@ Each entry below is **trigger → the files that must change together**. They ex
 - **New built-in document type** → add it to the migration seed in `database.py`, to `SEED_LABELS` in `docTypes.ts` (with the exact seeded English label), and add a `docType.<key>` entry to both dictionaries
 - **New file bundled into the build** → add it to `datas` in `mnemosyne.spec` **and** read it via `MNEMOSYNE_BUNDLE_DIR`, not `MNEMOSYNE_APP_DIR` — see *Auto-update* for why the two are not interchangeable
 - **New streaming ZIP endpoint** → wrap the pipe in `NonSeekableWriter` (see *ZIP export*), otherwise the archive is silently corrupt on Windows
+- **New UI that removes a shared object from one person's page** (a document row, a linked cluster, anything a second person can also be attached to) → call the *unlink* endpoint, never the delete one — for documents that is `DELETE /api/documents/{id}/persons/{person_id}` via `api.documents.unlinkPerson()`. A person's page shows one person's view of something shared, so an X there means "not on this page"; wiring it to the delete endpoint destroys the object for everybody else too, with nothing on screen to warn the user. Deleting outright belongs on the tab that lists every owner. Invalidate both `['person-docs', personId]` and `['docs-all']` afterwards
 - **New data table with `person_id` FK** → update `_delete_persons` in `export_utils.py` with an explicit `DELETE FROM <table> WHERE person_id IN (...)` line before the `DELETE FROM persons` line. If the table has `ON DELETE CASCADE` (like `person_subclusters`) the cascade would handle it automatically, but being explicit is the established pattern here
-- **New data table with `document_id` FK** → add it to `_delete_document_children()` in `export_utils.py` (FKs are off in the export copy, so nothing cascades), include it in `_doc_dict` in `main.py`, and carry it through `read_zip_db` + `execute_merge` in `merge_import.py` — a merge import copies nothing it is not told about
+- **New data table with `document_id` FK** → add it to `_delete_document_children()` in `export_utils.py`, which `_delete_documents()` calls before dropping the document row — the export connection has foreign keys **on**, so a table whose FK declares no `ON DELETE` action does not dangle, it refuses the delete and fails the export outright. Include it in `_doc_dict` in `main.py`, and carry it through `read_zip_db` + `execute_merge` in `merge_import.py` — a merge import copies nothing it is not told about
 - **New document-child table that owns files on disk** (`document_files` is the example — most document-child tables, like `document_citations`, own no files and skip this) → beyond the plain `document_id` FK checklist above: (1) delete its rows' bytes from `documents/` on document delete (`delete_document` in `main.py`) and on row-level delete (its own `DELETE .../{file_id}` endpoint); (2) add its `stored_name`s to the `doc_stored_names` query in **both** copies of the project-ZIP packer in `export_utils.py` (`build_project_zip` and the streamed `stream_project_zip`); (3) add it to the bulk-download ZIP in `bulk_download_documents` in `main.py`, including its own deduplicated archive names; (4) copy its files across in `execute_merge` (`merge_import.py`) inside the same `with zipfile.ZipFile(...)` block the primary files use, and clean up its bytes in `execute_rollback` (`gedcom_import.py`) alongside the primary file, in both the per-person and per-document rollback branches; (5) decide whether `gedcom_export.py` should emit it as additional `OBJE` records — it does for `document_files`, one per extra file, named so they still resolve inside the packed media ZIP
 - **New surface that renders note or document Markdown** → render through `renderMarkdown()` and put one of two classes on the container: `note-content` for a body being read, `note-preview` for the clamped excerpt on a card. Both live in `index.css` and share every colour and size but deliberately not their vertical rhythm, so pick one rather than hand-rolling a third set of margins. The spacing is load-bearing, not decoration: `breaks: true` in `markdown.ts` already turns a single newline into a `<br>`, so the paragraph margin is the *only* thing that distinguishes a blank line the writer typed from a plain line break — at the tight teaser value the two are indistinguishable and paragraphed prose renders as one block
 - **Any UI that lists people to pick from** (a picker, a mention popup, a search result list) → put `personLifeSummary()` and `<FamilyContextLines>` under every name, on every row, from `familyContext.tsx`. Names repeat within a family, so a name-only row cannot be chosen between — see *Person pickers*. A row that shows its context only when highlighted does not satisfy this
@@ -1053,6 +1339,7 @@ Each entry below is **trigger → the files that must change together**. They ex
 - **New card with an optional heading** → render the heading's row only when the heading exists, rather than letting an empty row hold the space. Anything else in that row (a date, a badge) moves somewhere it costs nothing when the heading is absent. `NoteCard` in `NoteEditor.tsx` is the worked example
 - **New popover opened inside the carousel's description panel** → drop it leftward (`absolute right-0`). The panel is docked to the viewport's right edge, so a `left-0` dropdown runs off-screen and its far end becomes unclickable — this shipped once in the cite picker
 - **New popup anchored to a text field's caret** (a slash menu, or anything that is not an `@` mention — those go through `mentions.tsx`) → take the position from `caretAnchor()` and `useCaretPopup()` in `frontend/src/caretPopup.ts`, which handle a `<textarea>` and a single-line `<input>` alike (an input never wraps, so its mirror is measured unconstrained and its caret's "line" is the field itself). Pinning the popup to the field's own rect and pushing it upwards is what sent the mention list off the top of the screen in the document editor, where the textarea starts high in the viewport
+- **New UI that adds a child** (a `parent` relation written from a person's page) → ask which spouse the child also belongs to and write **both** rows, the way the add-child picker in `PersonPanel.tsx` does. A couple is not stored anywhere — it *is* the child's two `parent` rows — so a screen that writes only one leaves the other parent's page wrong and the user adding the same child a second time from the spouse. Preselect the spouse when there is exactly one, keep "no co-parent" as an explicit choice rather than the default, and check the two-parents-per-child cap client-side: the server refuses the third row with a 400 that arrives as a raw error
 - **New person picker anywhere in the UI** → build it on `useFamilyContext` + `<FamilyContextLines>` from `familyContext.tsx`, or on `PersonMultiSelect` / `PersonFilterCombobox` from `components/PersonSelect.tsx`. Rolling a fourth hand-written relative lookup is how the pickers drifted apart last time
 - **New year/month/day date input anywhere in the UI** → use `DatePartPicker`, exported from `EventTimeline.tsx` (year field, then a month `<select>` once a year is entered, then a day `<select>` once a month is entered). It produces the same partial-ISO string (`YYYY` | `YYYY-MM` | `YYYY-MM-DD`) that `formatPartialDate()` reads, so a value it writes is a value every other date display already knows how to render
 - **New dismissible banner or other "I've seen this" UI state** → persist it, in `localStorage` for a per-device preference. `App.tsx` mounts each tab behind a ternary, so a tab is fully **unmounted** when you navigate away and plain `useState` is back to its initial value the moment you come back — a dismiss that only sets component state looks like it works and reappears a click later. Where the thing being dismissed is a *count* that can grow (the Scan tab's duplicate banner), store the count that was dismissed rather than a boolean, so the banner returns when there is genuinely something new to see
@@ -1066,12 +1353,20 @@ Each entry below is **trigger → the files that must change together**. They ex
 - **New table holding prose** (notes, descriptions, bodies — anything a person writes) → it must reach the assistant in three places or it is invisible to every answer: the search loop and the listing in `_t_search_text` / `_t_list_written_material`, the counts in `build_inventory()`, and — if it hangs off a person — the `material` marks in `_content_marks` (`ai/primer.py`). Prose the assistant cannot see is prose it will report as never having been written.
 - **New AI tool with an external network dependency** (anything beyond a local SQLite read) → beyond the plain "New AI assistant tool" entry above: register it in its own registry (`ai/web_tools.py`'s `WEB_REGISTRY` is the worked example), never `tools.py`'s always-on `REGISTRY`; gate both its tool *definitions* and its handler on its own `config.json` block's enabled+key state (`orchestrator.py`'s `web_ready` check); give it its own consent/privacy disclosure in `AssistantSetup.tsx`. Folding it into the existing `allow_private` toggle is wrong — that toggle answers a different question (visibility of the user's own private data, not whether anything leaves the machine to a new third party)
 - **New AI tool with its own usage quota** → enforce the check-and-increment inside the tool handler itself (`ai/config.py`'s `try_consume_web_quota` is the worked example), never as a system-prompt instruction alone. The trigger for needing this: any tool whose real-world cost scales with how often the model decides to call it — which an ambient, non-button-gated tool always does, since nothing stops the model reaching for it more than intended
+- **New table holding working state rather than project content** (a chat thread, a transcript batch — anything about files or conversations rather than about the family) → add an unconditional `DELETE FROM <table>` next to the chat/transcript blocks at the top of `build_export_db` in `export_utils.py`, children first. The merge importer enumerates its tables by hand, so a new one is correctly *not* merged by default — but say so in a comment rather than leaving the next reader to wonder whether it was forgotten
 - **New chat table** → add an unconditional `DELETE FROM <table>` to the chat block at the top of `build_export_db` in `export_utils.py`, children first. The export copies the whole database and then filters, so a table you forget here is silently exported — this is the one mistake in this area with a real privacy cost
-- **New model** → usually *nothing to do*: the list is fetched from the provider and new ids appear on the next refresh. Add an entry to `backend/ai/models.json` only to give it a friendly label, a note or a price (omit `pricing` rather than guessing — a missing block just hides the cost estimate, a wrong one misinforms). Never add a model-id branch in code; if you want one, the missing thing belongs in `caps`
+- **New model** → usually *nothing to do*: the list is fetched from the provider and new ids appear on the next refresh. Add an entry to `backend/ai/models.json` only to give it a friendly label, a note or a price (omit `pricing` rather than guessing — a missing block just hides the cost estimate, a wrong one misinforms). Never add a model-id branch in code; if you want one, the missing thing belongs in `caps`. **Never let `caps` refuse an id the manifest does not know**: `UNKNOWN_MODEL_CAPS` is conservative (`vision: false`), so a gate written as `if not caps['vision']` turns away every model released after the build. Ask `model_known()` first and let an unknown id be tried — `doc_reader.read_file` is the worked example
 - **New non-chat model type appearing in the picker** → add a substring to `_NON_CHAT_MARKERS` in `ai/config.py`. Keep it conservative — over-filtering silently hides usable models, which is the worse failure
 - **Change to family tree node size or card content** → edit `frontend/src/treeGeometry.ts`, never a component. `TreeView` computes node positions from those constants and `TreeExportModal` draws cards at those positions; a second copy makes the exported PNG place correctly-sized cards wrongly, or wrongly-sized cards correctly. Adding a line to the card also means re-checking the four-line budget documented there
-- **New provider** → add an entry to `providers` in `models.json`, and either reuse `OpenAICompatProvider` with a `base_url` (correct for anything OpenAI-compatible) or add an adapter implementing `LLMProvider`. Wire it into `build_provider` and `discover_models` in `ai/provider.py`. Nothing above the protocol should need to change; if it does, the abstraction has sprung a leak
+- **New capability that sends a new *kind* of data to the provider** (not a new destination — a new payload: files, images, audio) → it needs its own `config.json` block, its own toggle defaulting to off, its own disclosure in `AssistantSetup.tsx`, and its own budget enforced in code (`try_consume_doc_page` in `ai/config.py` is the worked example). `document_ai` is the pattern. Reusing the assistant's `enabled` flag is wrong for the same reason `allow_private` was wrong for web research: the user consented to a summary of their tree being sent, not to photographs of their documents
+- **New method on the provider seam** (anything beyond `stream_turn`) → implement it on **every** adapter in `ai/provider.py`, and where an adapter genuinely cannot do the job, return a `ProviderError` naming the way out rather than guessing a wire format. `analyze_files` is the worked example: Anthropic takes a PDF as a native `document` block, the OpenAI-compatible adapter takes images only and refuses a PDF explicitly. A guessed shape fails per item, mid-batch, as a 400 the user has to decode
+- **A model list anywhere** → there isn't one, and adding one is the mistake. `models.json` holds no models: the picker asks the provider what the key can use, labels and descriptions come from the provider where it gives them (Gemini gives prose, Anthropic a display name, OpenAI neither), capabilities come from **family-level** rules (`^gpt-[5-9]`, `^gemini-`) so a point release inherits them, and price is the one hand-kept table because no provider exposes pricing. If you find yourself writing a model id into a file, ask whether a family rule would do instead
+- **New provider** → first ask whether it speaks OpenAI's Chat Completions API at an address of its own. If it does, it needs **no adapter**: give the `providers` entry in `models.json` a `base_url` and add the id to the tuples in `build_provider` / `discover_models`. Google Gemini is the worked example — one manifest entry, no new dependency, no new code path. `base_url` is resolved per provider by `provider_base_url()` in `ai/config.py` (a user override in `ai.base_urls[<provider>]`, else the manifest's), because a URL entered for a local endpoint must not be sent to a hosted one. Otherwise add an entry to `providers` in `models.json`, and either reuse `OpenAICompatProvider` with a `base_url` (correct for anything OpenAI-compatible) or add an adapter implementing `LLMProvider`. Wire it into `build_provider` and `discover_models` in `ai/provider.py`. Nothing above the protocol should need to change; if it does, the abstraction has sprung a leak
 - **New bundled AI data file** → spec `datas` **and** read it via `MNEMOSYNE_BUNDLE_DIR` in `ai/config.py`, never `MNEMOSYNE_APP_DIR`
+- **Anything that claims two people found on one page are connected** → the boundary comes from `_entry_blocks` in `transcriber.py`, never from a field the model filled in. A register page holds many records, and a pairing made across two of them invents a relationship out of unrelated lines. Place each person with `_place` (both name parts written inside one entry, unambiguously), pair only within a single entry, and refuse where the page does not divide. The same rule applies to dates: score a placed person against **their entry's** year, not the page's span
+- **Jumping to a row that was just created** (an overlay hands control back to the table underneath: importing a scan, creating from a modal) → two things, and the first is the one that gets forgotten: **close the overlay**, or the jump looks like it did nothing because the modal is still covering the target. Then wait for the *row*, not for a timeout — the list was invalidated, not refetched, so a `setTimeout` races the network. Keep a pending id in state and let an effect keyed on the list scroll to it when it appears (`openImportedDoc` in `DocumentsTab.tsx` is the worked example)
+- **Raw SQL that deletes an `events` row** (or any row a second table points at without an ORM cascade) → delete the children first, `event_images` before `events`, and scope the sweep to the events you actually orphaned. The `ON DELETE CASCADE` in `database.py`'s `CREATE TABLE IF NOT EXISTS` block is not what the database has: `create_all()` ran first and built those tables from the models, which declare no `ondelete`. Foreign keys are on, so the constraint failure aborts the statement — and since these cleanups run *after* the main `commit()`, the row is already gone when the request 500s, which is what makes it read as "the delete half-worked". The paths are `delete_person` in `main.py`, `execute_rollback` in `gedcom_import.py`, `build_export_db` in `export_utils.py`
+- **New column with an FK into `relations`** (or into any table whose rows the export copy deletes) → delete the child rows **before** the parent in every path that removes a relation: `delete_relation`, `delete_person` and `merge_persons` in `main.py`, `_delete_relation_citations` in `export_utils.py` (called ahead of both the person-subset delete and the `is_private=1` delete), and `execute_rollback` in `gedcom_import.py`. Carry the column through `read_zip_db` + `execute_merge` in `merge_import.py` as a **remapped** id — an incoming relation id means nothing locally — and read it with the `_has_column` guard so an older ZIP does not lose the whole table. Getting the delete order wrong is silent rather than loud: foreign keys are on in the export copy and its relation deletes sit in `try: … except: pass`, so the failed constraint is swallowed and the row survives into the ZIP
 - **New `is_private` on a table** → (1) add `ALTER TABLE … ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0` to the v4→v5 migration block in `database.py`; (2) include `is_private` in the relevant `_xxx_dict` serialiser in `main.py`; (3) add the privacy-filter DELETE block for that table inside `build_export_db` in `export_utils.py`; (4) add `WHERE COALESCE(is_private,0)=0` to the relevant query in `build_gedcom_zip` in `gedcom_export.py` if applicable; (5) add `togglePrivacy` call to `api.ts`; (6) update the TypeScript interface in `types.ts`; (7) add the padlock button to the relevant component
 
 ### Maintaining the documentation itself

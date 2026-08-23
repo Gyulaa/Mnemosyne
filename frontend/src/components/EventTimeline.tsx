@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import type { PersonFull, Relation, PersonEvent, ImageItem, ImagePerson } from '../types'
 import { api } from '../api'
 import { useT, useSettings, useDateLocale, formatPartialDate, monthNames } from '../SettingsContext'
+import { useBackdropClose } from '../modalBackdrop'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -157,9 +158,10 @@ function ImagePickerModal({ personId, persons, alreadyAttachedIds = new Set(), o
   }
 
   const byId = new Map(persons.map(p => [p.id, p]))
+  const backdrop = useBackdropClose(onClose)
 
   return createPortal(
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70" {...backdrop}>
       <div
         className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col"
         style={{ width: 480, maxHeight: '80vh' }}

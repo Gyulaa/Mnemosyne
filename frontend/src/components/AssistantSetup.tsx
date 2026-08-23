@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api'
 import { useT } from '../SettingsContext'
-import type { AiModel, AiSettings, WebResearchSettings } from '../types'
+import type { AiModel, AiSettings, WebResearchSettings, DocumentAiSettings } from '../types'
 
 /** Not a real AI provider id — a pseudo-tab so the search provider sits in the
  *  same picker row as Anthropic/OpenAI instead of its own section the user has
@@ -152,8 +152,7 @@ export default function AssistantSetup({ settings, onDone }: { settings: AiSetti
 
   const providerInfo = settings.providers?.find(p => p.id === provider)
   const models = catalog?.models ?? []
-  const curated = models.filter(m => m.curated !== false)
-  const extra = models.filter(m => m.curated === false)
+  const selectedModel = customModel.trim() ? undefined : models.find(m => m.id === model)
 
   // One row, one "already configured" convention (a dot on the pill) for
   // every provider — an LLM one or the search one.
@@ -325,31 +324,36 @@ export default function AssistantSetup({ settings, onDone }: { settings: AiSetti
               )}
             </div>
 
-            <div className="space-y-1.5">
-              {curated.map(m => (
-                <ModelRow key={m.id} m={m} selected={model === m.id && !customModel.trim()}
-                          onSelect={() => { setModel(m.id); setCustomModel('') }} t={t} />
+            {/* One dropdown over whatever the provider says the key can use.
+                There is no curated shortlist here on purpose: a hand-kept
+                "best model" list is wrong the day the next one ships, and it
+                then argues with the live list right beside it. */}
+            <select
+              value={customModel.trim() ? '' : model}
+              onChange={e => { setCustomModel(''); setModel(e.target.value) }}
+              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-brand-500/60"
+            >
+              {customModel.trim() && <option value="">{t('chat.setup.customInUse')}</option>}
+              {models.map(m => (
+                <option key={m.id} value={m.id}>
+                  {m.label && m.label !== m.id ? `${m.label} — ${m.id}` : m.id}
+                </option>
               ))}
-            </div>
+            </select>
 
-            {extra.length > 0 && (
-              <div className="mt-2">
-                <p className="text-[10px] text-zinc-600 mb-1">{t('chat.setup.alsoAvailable')}</p>
-                <div className="flex flex-wrap gap-1">
-                  {extra.map(m => (
-                    <button
-                      key={m.id}
-                      onClick={() => { setCustomModel(''); setModel(m.id) }}
-                      className={`text-[10px] font-mono px-1.5 py-1 rounded border transition-colors ${
-                        model === m.id && !customModel.trim()
-                          ? 'border-brand-500/60 bg-brand-500/10 text-brand-200'
-                          : 'border-zinc-800 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300'
-                      }`}
-                    >
-                      {m.id}
-                    </button>
-                  ))}
-                </div>
+            {selectedModel && (
+              <div className="mt-1.5 space-y-0.5">
+                {selectedModel.description && (
+                  <p className="text-[10px] text-zinc-500 leading-relaxed">{selectedModel.description}</p>
+                )}
+                <p className="text-[10px] text-zinc-600 tabular-nums">
+                  {selectedModel.caps?.context
+                    ? t('chat.setup.contextTokens', { n: Math.round(selectedModel.caps.context / 1000) })
+                    : ''}
+                  {selectedModel.pricing
+                    ? ` · $${selectedModel.pricing.in} / $${selectedModel.pricing.out} ${t('chat.setup.perMillion')}`
+                    : ` · ${t('chat.setup.noPrice')}`}
+                </p>
               </div>
             )}
 
@@ -391,6 +395,120 @@ export default function AssistantSetup({ settings, onDone }: { settings: AiSetti
           </div>
         </>
       )}
+
+      <DocumentReadingSection />
+    </div>
+  )
+}
+
+/**
+ * Reading scanned documents — a third opt-in, deliberately not a provider tab.
+ *
+ * It is not a provider: it reuses a key that is already stored. What it is, is
+ * a different *disclosure* — the assistant sends a summary of the tree, this
+ * sends photographs of pages, with whatever happens to be written on them. So
+ * it gets its own switch, its own budget, and its own explanation, and it sits
+ * outside the tab switch because it applies whichever provider is selected.
+ */
+function DocumentReadingSection() {
+  const t = useT()
+  const qc = useQueryClient()
+  const { data: doc } = useQuery<DocumentAiSettings>({
+    queryKey: ['transcriptSettings'],
+    queryFn: api.transcripts.getSettings,
+  })
+  const { data: ai } = useQuery<AiSettings>({
+    queryKey: ['ai-settings'],
+    queryFn: api.ai.getSettings,
+  })
+  const [error, setError] = useState('')
+
+  const save = useMutation({
+    mutationFn: (fields: Partial<{ enabled: boolean; provider: string; model: string; monthly_pages: number }>) =>
+      api.transcripts.saveSettings(fields),
+    onSuccess: s => {
+      qc.setQueryData(['transcriptSettings'], s)
+      qc.invalidateQueries({ queryKey: ['transcriptSettings'] })
+    },
+    onError: (e: Error) => setError(e.message),
+  })
+
+  if (!doc) return null
+
+  return (
+    <div className="pt-5 border-t border-zinc-800 space-y-3">
+      <div>
+        <h4 className="text-sm font-semibold text-zinc-200">{t('settings.docAi')}</h4>
+        <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">{t('settings.docAiIntro')}</p>
+      </div>
+
+      <label className="flex items-start justify-between gap-3 cursor-pointer">
+        <span className="text-xs text-zinc-300">{t('settings.docAiEnable')}</span>
+        <Toggle checked={doc.enabled} onChange={v => { setError(''); save.mutate({ enabled: v }) }} />
+      </label>
+
+      {doc.enabled && (
+        <>
+          <div>
+            <label className="block text-[11px] text-zinc-500 mb-1.5">{t('settings.docAiProvider')}</label>
+            <select
+              value={doc.provider_choice}
+              onChange={e => { setError(''); save.mutate({ provider: e.target.value, model: '' }) }}
+              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-brand-500/60"
+            >
+              <option value="">{t('settings.docAiFollow')} — {ai?.provider ?? ''}</option>
+              {(ai?.providers ?? []).map(p => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-zinc-600 mt-1.5 leading-relaxed">{t('settings.docAiProviderHint')}</p>
+          </div>
+
+          <div>
+            <label className="block text-[11px] text-zinc-500 mb-1.5">{t('settings.docAiModel')}</label>
+            <input
+              value={doc.model_choice}
+              onChange={e => save.mutate({ model: e.target.value })}
+              placeholder={`${t('settings.docAiFollow')} — ${doc.model}`}
+              spellCheck={false}
+              className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 font-mono focus:outline-none focus:border-brand-500/60"
+            />
+            <p className="text-[10px] text-zinc-600 mt-1.5 leading-relaxed">{t('settings.docAiModelHint')}</p>
+          </div>
+
+          {/* A provider chosen here needs its own key, and the key is stored on
+              that provider's tab above — so say which one is missing rather
+              than letting the first page of a batch fail with a 401. */}
+          {!doc.configured && (
+            <p className="text-[11px] text-amber-300/90 leading-relaxed">
+              {t('settings.docAiNoKey', { provider: doc.provider })}
+            </p>
+          )}
+
+          {doc.configured && !doc.vision && (
+            <p className="text-[11px] text-amber-300/90 leading-relaxed">{t('settings.docAiNoVision')}</p>
+          )}
+
+          <div>
+            <label className="block text-[11px] text-zinc-500 mb-1.5">{t('settings.docAiBudget')}</label>
+            <input
+              type="number"
+              min={1}
+              defaultValue={doc.monthly_pages}
+              onBlur={e => {
+                const n = parseInt(e.target.value, 10)
+                if (Number.isFinite(n) && n !== doc.monthly_pages) save.mutate({ monthly_pages: n })
+              }}
+              className="w-24 bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-200 focus:outline-none focus:border-brand-500/60"
+            />
+            <p className="text-[10px] text-zinc-600 mt-1.5">
+              {t('settings.docAiBudgetHint')} — {doc.usage_month} / {doc.monthly_pages}
+            </p>
+          </div>
+
+          {error && <p className="text-xs text-red-400 break-words">{error}</p>}
+        </>
+      )}
     </div>
   )
 }
@@ -408,33 +526,6 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
         className="inline-block w-3.5 h-3.5 rounded-full bg-white shadow transition-transform"
         style={{ transform: checked ? 'translateX(16px)' : 'translateX(2px)' }}
       />
-    </button>
-  )
-}
-
-function ModelRow({ m, selected, onSelect, t }: {
-  m: AiModel
-  selected: boolean
-  onSelect: () => void
-  t: (k: string) => string
-}) {
-  return (
-    <button
-      onClick={onSelect}
-      className={[
-        'w-full text-left rounded-lg border px-3 py-2 transition-colors',
-        selected ? 'border-brand-500/60 bg-brand-500/10' : 'border-zinc-800 bg-zinc-900/40 hover:border-zinc-700',
-      ].join(' ')}
-    >
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-sm text-zinc-200 font-medium">{m.label}</span>
-        {m.pricing && (
-          <span className="text-[10px] text-zinc-600 tabular-nums shrink-0">
-            ${m.pricing.in} / ${m.pricing.out} {t('chat.setup.perMillion')}
-          </span>
-        )}
-      </div>
-      {m.note && <p className="text-[10px] text-zinc-500 mt-0.5">{m.note}</p>}
     </button>
   )
 }

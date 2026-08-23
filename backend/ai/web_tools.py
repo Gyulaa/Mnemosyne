@@ -23,16 +23,15 @@ rely on one gate alone.
 
 from __future__ import annotations
 
-import io
 import json
 import urllib.error
 import urllib.request
 from typing import Any
 
 from bs4 import BeautifulSoup
-from pypdf import PdfReader
 
 from . import config as ai_config
+from .pdf_text import extract_text as extract_pdf_text
 from .tools import Tool, ToolContext, ToolRegistry
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
@@ -129,12 +128,6 @@ def _t_search_web(ctx: ToolContext, a: dict[str, Any]) -> Any:
     }
 
 
-def _extract_pdf_text(data: bytes) -> str:
-    reader = PdfReader(io.BytesIO(data))
-    parts = [page.extract_text() or "" for page in reader.pages]
-    return "\n\n".join(p for p in parts if p.strip())
-
-
 def _extract_html_text(data: bytes, encoding: str | None) -> tuple[str, str]:
     html = data.decode(encoding or "utf-8", errors="replace")
     soup = BeautifulSoup(html, "html.parser")
@@ -174,7 +167,7 @@ def _t_read_web_page(ctx: ToolContext, a: dict[str, Any]) -> Any:
     title = ""
     if is_pdf:
         try:
-            text = _extract_pdf_text(data)
+            text = extract_pdf_text(data)
         except Exception as exc:
             return {"url": url, "content_type": "pdf", "error": f"Could not parse this PDF: {exc}"}
         if not text.strip():
@@ -197,17 +190,30 @@ def _t_read_web_page(ctx: ToolContext, a: dict[str, Any]) -> Any:
         "title": title,
         "content_type": "pdf" if is_pdf else "html",
     }
-    if len(text) > MAX_BODY_CHARS:
-        out["text"] = text[:MAX_BODY_CHARS]
+    # A long source is read in windows rather than cut off once. A research
+    # paper or a digitised register index runs to tens of thousands of
+    # characters, and a tool that can only ever show the opening turns the rest
+    # of the source into something the model has no way to know it has not
+    # read. Continuing costs another fetch and no quota — only `search_web`
+    # spends that.
+    total = len(text)
+    start = max(0, min(int(a.get("offset") or 0), total))
+    chunk = text[start:start + MAX_BODY_CHARS]
+    out["text"] = chunk
+    out["body_total_chars"] = total
+    if start:
+        out["body_offset"] = start
+    if start + len(chunk) < total:
         out["body_truncated"] = True
-        out["body_total_chars"] = len(text)
+        out["next_offset"] = start + len(chunk)
         out["note"] = (
-            f"Showing the first {MAX_BODY_CHARS} of {len(text)} characters. If the "
-            "part you need may be further in, say so rather than assuming this "
-            "excerpt is the whole document."
+            f"Showing characters {start}–{start + len(chunk)} of {total}. Call "
+            f"read_web_page on the same url with offset={start + len(chunk)} to "
+            "continue; if the part you need may be further in, read on rather than "
+            "treating this excerpt as the whole document."
         )
-    else:
-        out["text"] = text
+    elif start:
+        out["note"] = f"Showing characters {start}–{total} of {total} — the end of it."
     return out
 
 
@@ -247,13 +253,25 @@ def build_web_registry() -> ToolRegistry:
             "Read one web page or PDF in full — normally a URL returned by "
             "search_web. Extracts the actual text, including from PDFs; a "
             "scanned PDF with no OCR text layer is reported as unreadable "
-            "rather than returned empty. This is the only way to know what a "
+            "rather than returned empty. A long source comes back one window at "
+            "a time with the offset that continues it, so read on rather than "
+            "stopping at the first excerpt. This is the only way to know what a "
             "page actually says — a search snippet is not enough to report as "
             "fact."
         ),
         input_schema={
             "type": "object",
-            "properties": {"url": {"type": "string", "description": "The exact URL to fetch."}},
+            "properties": {
+                "url": {"type": "string", "description": "The exact URL to fetch."},
+                "offset": {
+                    "type": "integer",
+                    "description": (
+                        "Character offset to read from, for a source longer than one "
+                        "response. The result carries the total length and the "
+                        "`next_offset` that continues it. Default 0."
+                    ),
+                },
+            },
             "required": ["url"],
         },
         handler=_t_read_web_page,

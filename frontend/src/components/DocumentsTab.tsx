@@ -12,6 +12,8 @@ import { docTypeLabel } from '../docTypes'
 import { useAtMention } from '../mentions'
 import { plainMentions, plainMarkdown, renderTitleMentions } from '../markdown'
 import { DescriptionField, persistDescriptionCitations } from './DescriptionField'
+import ScanReadModal from './ScanReadModal'
+import { useBackdropClose } from '../modalBackdrop'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -88,6 +90,7 @@ function CreateChooserModal({ onPick, onClose }: {
   onClose: () => void
 }) {
   const t = useT()
+  const backdrop = useBackdropClose(onClose)
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', h)
@@ -114,7 +117,7 @@ function CreateChooserModal({ onPick, onClose }: {
   ]
 
   return (
-    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" {...backdrop}>
       <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden w-[520px] max-w-[92vw]"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-zinc-800">
@@ -155,6 +158,7 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
   const { data: types = [] } = useQuery<DocumentType[]>({ queryKey: ['doc-types'], queryFn: api.documentTypes.list })
   const t = useT()
+  const backdrop = useBackdropClose(onClose)
   const [newKey, setNewKey] = useState('')
   const [newLabel, setNewLabel] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -179,7 +183,7 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
   })
 
   return (
-    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" {...backdrop}>
       {/* 560px, not 420: the add-type row packs two inputs and a button on one
           line, and at 420 the longer localised placeholders were clipped. */}
       <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden w-[560px] max-w-[92vw] max-h-[85vh] flex flex-col"
@@ -345,6 +349,7 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
   const t = useT()
   const qc = useQueryClient()
   const { nameOrder } = useSettings()
+  const backdrop = useBackdropClose(onClose)
   const fileRef = useRef<HTMLInputElement>(null)
   const [files, setFiles] = useState<File[]>([])
   const [title, setTitle] = useState('')
@@ -395,7 +400,7 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
   }
 
   return (
-    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" {...backdrop}>
       <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl overflow-hidden w-[480px] max-w-[92vw] max-h-[90vh] flex flex-col"
         onClick={e => e.stopPropagation()}>
         {/* Header */}
@@ -507,6 +512,7 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
   const t = useT()
   const qc = useQueryClient()
   const { nameOrder } = useSettings()
+  const backdrop = useBackdropClose(onClose)
   const [title, setTitle]           = useState(doc.title ?? '')
   const [docType, setDocType]       = useState(doc.doc_type ?? 'other')
   const [date, setDate]             = useState(doc.date ?? (doc.year ? String(doc.year) : ''))
@@ -514,6 +520,9 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
   const [descCitations, setDescCitations] = useState(doc.description_citations ?? [])
   const [linkedIds, setLinkedIds]   = useState(() => new Set(doc.persons.map(p => p.id)))
   const [extraFiles, setExtraFiles] = useState(doc.files)
+  // The primary file is a column on the document row, not a list entry, so it
+  // needs its own state: removing it promotes the next file into that slot.
+  const [primaryFile, setPrimaryFile] = useState({ filename: doc.filename, mime_type: doc.mime_type })
   const [saving, setSaving]         = useState(false)
 
   // What the description's citations were when the modal opened — the save
@@ -531,6 +540,17 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
     const updated = await api.documents.removeFile(doc.id, fileId)
     setExtraFiles(updated.files)
     qc.invalidateQueries({ queryKey: ['docs-all'] })
+  }
+
+  // Removing the primary file promotes the first extra one into its place, so
+  // it is confirmed: it changes which file the document shows everywhere.
+  async function removePrimaryFile() {
+    if (!confirm(t('docs.removePrimaryConfirm'))) return
+    const updated = await api.documents.removePrimaryFile(doc.id)
+    setPrimaryFile({ filename: updated.filename, mime_type: updated.mime_type })
+    setExtraFiles(updated.files)
+    qc.invalidateQueries({ queryKey: ['docs-all'] })
+    for (const pid of linkedIds) qc.invalidateQueries({ queryKey: ['person-docs', pid] })
   }
 
   async function togglePerson(personId: number) {
@@ -568,7 +588,7 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
   }
 
   return (
-    <div className="fixed inset-0 z-[650] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[650] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" {...backdrop}>
       <div className="bg-zinc-900 border border-zinc-700/80 rounded-2xl shadow-2xl w-[480px] max-w-[92vw] max-h-[85vh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between px-5 pt-5 pb-4 border-b border-zinc-800 shrink-0">
@@ -606,9 +626,14 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
             <p className="text-xs text-zinc-500 uppercase tracking-wider font-semibold mb-2">{t('docs.attachedFiles')}</p>
             <ul className="space-y-1">
               <li className="flex items-center gap-2 bg-zinc-800/60 border border-zinc-700/60 rounded-lg px-2.5 py-1.5">
-                {fileIcon(doc.mime_type)}
-                <span className="text-xs text-zinc-200 truncate flex-1">{doc.filename}</span>
+                {fileIcon(primaryFile.mime_type)}
+                <span className="text-xs text-zinc-200 truncate flex-1">{primaryFile.filename}</span>
                 <span className="text-xs text-zinc-600 shrink-0">{t('docs.primaryFile')}</span>
+                <button onClick={removePrimaryFile} disabled={extraFiles.length === 0}
+                  title={extraFiles.length === 0 ? t('docs.removePrimaryOnly') : t('docs.removeFile')}
+                  className="shrink-0 w-5 h-5 rounded flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-zinc-700 disabled:opacity-30 disabled:hover:text-zinc-500 disabled:hover:bg-transparent disabled:cursor-not-allowed transition-colors">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" d="M6 6l12 12M6 18L18 6"/></svg>
+                </button>
               </li>
               {extraFiles.map(f => (
                 <li key={f.id} className="flex items-center gap-2 bg-zinc-800/60 border border-zinc-700/60 rounded-lg px-2.5 py-1.5">
@@ -804,8 +829,11 @@ export default function DocumentsTab({
   const [showUpload, setShowUpload]   = useState(false)
   const [creatingText, setCreatingText] = useState(false)
   const [showTypeManager, setShowTypeManager] = useState(false)
+  const [showScanRead, setShowScanRead] = useState(false)
   const [editingDocId, setEditingDocId] = useState<number | null>(null)
   const [highlightedId, setHighlightedId] = useState<number | null>(null)
+  /** A row asked for before the list contained it — see `openImportedDoc`. */
+  const [pendingDocId, setPendingDocId] = useState<number | null>(null)
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map())
 
   const typeMap = new Map(types.map(dt => [dt.key, dt.label]))
@@ -826,6 +854,29 @@ export default function DocumentsTab({
     }, 80)
     return () => clearTimeout(timer)
   }, [navTarget?.key]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Scroll to and flash a document row — same path navTarget uses. */
+  const openImportedDoc = (docId: number) => {
+    // The reading modal sits over this table. Leaving it open made "open the
+    // document" look like it did nothing at all.
+    setShowScanRead(false)
+    setSearch(''); setFilterType('__all__'); setFilterPerson(null)
+    // And the row cannot be scrolled to until the document list that was just
+    // invalidated has come back carrying it. That is a refetch, not a fixed
+    // number of milliseconds — the effect below waits for the row itself.
+    setPendingDocId(docId)
+  }
+
+  useEffect(() => {
+    if (pendingDocId == null) return
+    const el = rowRefs.current.get(pendingDocId)
+    if (!el) return                      // not in the list yet; `docs` will re-run this
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setHighlightedId(pendingDocId)
+    setPendingDocId(null)
+    const timer = setTimeout(() => setHighlightedId(null), 2000)
+    return () => clearTimeout(timer)
+  }, [pendingDocId, docs])
 
   const editingDoc = editingDocId != null ? docs.find(d => d.id === editingDocId) ?? null : null
 
@@ -952,12 +1003,25 @@ export default function DocumentsTab({
         )
       )}
 
+      {showScanRead && (
+        <ScanReadModal
+          onClose={() => setShowScanRead(false)}
+          onOpenDocument={openImportedDoc}
+          onOpenPerson={onNavToGenealogy}
+        />
+      )}
+
       {/* Header */}
       <div className="shrink-0 border-b" style={{ background: '#111117', borderColor: 'rgba(255,255,255,0.06)' }}>
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-3">
           <h1 className="text-sm font-semibold text-zinc-100">{t('docs.heading')}</h1>
           <span className="text-xs text-zinc-600 tabular-nums">{t('docs.totalCount', { n: docs.length })}</span>
           <div className="ml-auto flex items-center gap-2">
+            <button onClick={() => setShowScanRead(true)}
+              className="h-7 px-2.5 rounded-lg border border-zinc-700 bg-zinc-800/60 hover:bg-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12"/></svg>
+              {t('scanread.open')}
+            </button>
             <button onClick={() => setShowTypeManager(true)}
               className="h-7 px-2.5 rounded-lg border border-zinc-700 bg-zinc-800/60 hover:bg-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5">
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z"/><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
