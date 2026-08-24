@@ -535,6 +535,27 @@ export interface PlaceUsage {
   country: string | null
 }
 
+/**
+ * One value already used in a small-vocabulary text field (occupation,
+ * religion, nationality, education, cause of death, title).
+ *
+ * Which columns are registered is decided in `backend/field_values.py`; the
+ * frontend never names a column.
+ */
+export interface FieldValue {
+  /** The value as written — the most common spelling of its variants. */
+  value: string
+  /** Accent- and case-folded `value`, for matching a typed query against. */
+  key: string
+  /** How many records use it. */
+  count: number
+  /** True for a single term taken out of a value that lists several. */
+  is_part: boolean
+}
+
+/** `GET /api/field-values` — field name → the values it already holds. */
+export type FieldValueMap = Record<string, FieldValue[]>
+
 export interface UpdateStatus {
   status: 'idle' | 'checking' | 'up_to_date' | 'dev_build' | 'update_available' | 'downloading' | 'ready' | 'applying' | 'error'
   current_version: string

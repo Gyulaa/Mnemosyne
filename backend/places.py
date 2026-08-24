@@ -160,6 +160,23 @@ def place_parts(raw: str | None) -> dict:
     }
 
 
+def dominant_spelling(variants: dict[str, int]) -> str:
+    """Pick the spelling that represents a group of folded-equal values.
+
+    Most used wins.  A tie goes to the quieter capitalisation (`Kadar` over
+    `KADAR`) and then to alphabetical order — a tie has to be broken by
+    *something*, and breaking it by dict order means the suggestion list changes
+    shape whenever an unrelated row is added.
+
+    `field_values.py` groups its rows the same way and imports this rather than
+    keeping a second copy of the rule.
+    """
+    return min(
+        variants.items(),
+        key=lambda kv: (-kv[1], sum(1 for c in kv[0][1:] if c.isupper()), kv[0]),
+    )[0]
+
+
 def normalize_raw(raw: str | None) -> str:
     """The string as written, with the comma spacing regularised.
 
@@ -241,7 +258,7 @@ def collect_place_usage(db) -> list[dict]:
     exact_settlements: set[str] = set()
 
     for key, variants in spellings.items():
-        value = max(variants.items(), key=lambda kv: (kv[1], -len(kv[0])))[0]
+        value = dominant_spelling(variants)
         count = sum(variants.values())
         parts = place_parts(value)
         skey = settlement_key(value)

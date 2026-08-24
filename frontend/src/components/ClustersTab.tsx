@@ -563,6 +563,8 @@ function ClusterModal({
       setSavedName(derivedName)
       setEditingName(false)
       queryClient.invalidateQueries({ queryKey: ['clusters'] })
+      // A title entered here is a suggestion in every other name editor.
+      queryClient.invalidateQueries({ queryKey: ['field-values'] })
     } finally {
       setSaving(false)
     }
@@ -2095,6 +2097,7 @@ function AssignFacesOverlay({
 }) {
   const { nameOrder } = useSettings()
   const t = useT()
+  const queryClient = useQueryClient()
   const [tab, setTab] = useState<'cluster' | 'person'>('cluster')
   const [nameParts, setNameParts] = useState<NameParts>({ title: '', last_name: '', first_name: '', middle_name: '', nickname: '' })
   const [busy, setBusy] = useState(false)
@@ -2190,6 +2193,7 @@ function AssignFacesOverlay({
     try {
       const displayName = deriveDisplayName(nameParts)
       const result = await api.cluster.create(faceIds, displayName || undefined, displayName ? nameParts : undefined)
+      queryClient.invalidateQueries({ queryKey: ['field-values'] })
       await finishWithSuggestions(result.cluster_id, result.person_name)
     } finally {
       setBusy(false)

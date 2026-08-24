@@ -100,6 +100,7 @@ Test data: copy a project directory into the scratchpad and point the app at tha
 - **Prefer the field that already exists to a new one beside it.** Text produced *about* a document belongs in its description, not in a field of its own: the description is already editable with mentions and citations, already searched, already exported, and `ai/tools.py`'s `_doc_dict` hands the assistant the whole of it with every document it lists. A parallel field buys nothing and creates two things that must be kept in step — the same failure as the second copy below, one layer down. `DocumentReadButton.tsx` is the worked example: the vision reading is appended to the description, and `transcript_pages` stays the batch reader's alone.
 - **The second copy is the bug.** When the same interaction exists on two screens, extract it *then* — not later. Every inconsistency the user has had to report here (a mention list showing relatives on one screen and bare names on another, a rich description editor on one screen and a plain textarea on another) was a near-copy that drifted, and each was cheaper to prevent than to reconcile. If a screen needs the same thing shaped slightly differently, parameterise the difference instead of forking the component.
 - **Layout maths is the exception to "keep it in the tab".** `treeGeometry.ts` and `graphLayout.ts` have one caller each and still live outside their component, because a pure function taking data and returning coordinates can be *run and measured* — against a copy of a real project, outside the browser — and in a repo with no test suite that is the only way to check a layout beyond looking at it. If you write one, keep it free of React and of `api.ts` imports so it can be imported by a plain Node script.
+- **A text field whose values repeat is `VocabInput`, not an `<input>` or a `datalist`.** Occupation, religion, nationality, education, cause of death and title already are; which columns count is a registry (`FIELD_SOURCES` in `backend/field_values.py`), and the frontend never names a column. `SuggestInput` is the **one** dropdown implementation — `PlaceInput` and `VocabInput` are wrappers that supply options and row decoration and nothing else. Do not register names or event titles: a name field is not a vocabulary, and offering existing people while a new person is being typed invites picking the wrong one.
 - **A place field is `PlaceInput`, never a bare `<input>`.** It offers what the project already uses, so the same village stops accumulating a spelling per typist. The comma levels (`house number, settlement, region, country`) are split **server-side** in `backend/places.py` and arrive already divided — never parse a place string in a component, and never add a place column without adding it to `PLACE_COLUMNS`.
 - **Three renderings are never done by hand:** strings through `useT()`, dates through `formatPartialDate()` / `monthNames()` with `useDateLocale()`, names through `displayPersonName(person, nameOrder)`.
 - **Markdown bodies** render through `renderMarkdown()` into a container classed `note-content` (reading rhythm) or `note-preview` (clamped card excerpt). Those two classes carry the spacing; don't add margins on the container instead.
@@ -193,6 +194,7 @@ A push to `main` triggers `.github/workflows/build.yml`, which builds and publis
 | Tree layout, person profile, notes, sources | *Features → Genealogy* |
 | Documents, text documents, ownership columns | *Features → Documents and text documents* |
 | Place names, autocomplete, the place hierarchy | *Features → Places* |
+| A field that should suggest earlier values | *Features → Suggesting what the project already uses* |
 | Person pickers, relative context, name order | *Features → Person pickers* |
 | `is_private` — how it works and how to add it | *Privacy enforcement* |
 | Schema versions and migrations | *Projects and database* |
@@ -230,7 +232,7 @@ A push to `main` triggers `.github/workflows/build.yml`, which builds and publis
 - [ ] New user strings exist in **both** dictionaries and render through `useT()`
 - [ ] README → *Keeping this document up to date* walked; every file it names for this kind of change was edited
 - [ ] README section for the area updated if behaviour changed; a new pattern added its own checklist entry
-- [ ] A new table that is working state (not project content) is deleted unconditionally in `build_export_db`
+- [ ] A new table that is working state (not project content) is deleted in `build_export_db` by default; any way to keep it is an explicit flag defaulting to off (`include_scans` is the one)
 - [ ] Nothing derived from real project data appears in any file or message
 - [ ] No commit unless it was asked for
 

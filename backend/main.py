@@ -29,6 +29,7 @@ from . import clusterer
 from .clusterer import recompute_person_subclusters
 from . import maintenance
 from . import export_utils
+from . import field_values as field_values_mod
 from . import places as places_mod
 from . import transcriber
 from .schemas import (
@@ -172,8 +173,15 @@ def export_project(
     include_events: bool = Query(default=True),
     include_documents: bool = Query(default=True),
     include_images: bool = Query(default=True),
+    include_scans: bool = Query(default=False),
 ):
-    """Download the active project as a self-contained ZIP (DB + images)."""
+    """Download the active project as a self-contained ZIP (DB + images).
+
+    `include_scans` is off unless asked for: it carries the source photographs
+    of every transcript batch, which is the largest thing this archive can hold.
+    With it, a half-triaged folder of registers — transcripts, marks, report and
+    questions — opens on another machine with its scans intact.
+    """
     project_id = project_manager.active_id
     if not project_id:
         raise HTTPException(404, "No active project")
@@ -203,7 +211,7 @@ def export_project(
             source_db, project_info, parsed_cluster_ids,
             include_genealogy, parsed_person_ids, include_faceless,
             include_notes, include_sources, include_events,
-            include_documents, include_images,
+            include_documents, include_images, include_scans,
         ),
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{filename_utf8}"},
@@ -3836,6 +3844,23 @@ def list_places(db: Session = Depends(get_db)):
     Deliberately **not** privacy-filtered — see `collect_place_usage`.
     """
     return [_place_dict(r) for r in places_mod.collect_place_usage(db)]
+
+
+@app.get("/api/field-values")
+def list_field_values(db: Session = Depends(get_db)):
+    """Values already used in the project's small-vocabulary text fields.
+
+    `{ "<field>": [{ value, key, count, is_part }] }` for every column in
+    `FIELD_SOURCES` (`backend/field_values.py`) — occupation, religion,
+    nationality, education, cause of death, title. One request for all of them
+    rather than one per field: together they are a few kilobytes, and a field
+    that only becomes visible when a form is opened would otherwise fetch on
+    first focus, which is the one moment the suggestion needs to be there
+    already.
+
+    Like the place list, deliberately not privacy-filtered.
+    """
+    return field_values_mod.collect_field_values(db)
 
 
 # ── Auto-update ───────────────────────────────────────────────────────────────

@@ -107,13 +107,13 @@ export default function ProjectSwitcher({
     onError: (e) => alert(t('projects.deleteFailed', { e: String(e) })),
   })
 
-  async function handleExport({ name, includeGenealogy, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages }: { name: string; includeGenealogy: boolean; includeFaceless: boolean; includeNotes: boolean; includeSources: boolean; includeEvents: boolean; includeDocuments: boolean; includeImages: boolean }) {
+  async function handleExport({ name, includeGenealogy, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, includeScans }: { name: string; includeGenealogy: boolean; includeFaceless: boolean; includeNotes: boolean; includeSources: boolean; includeEvents: boolean; includeDocuments: boolean; includeImages: boolean; includeScans: boolean }) {
     if (exporting) return
     setShowExportModal(false)
     // Native download: the browser streams the archive to disk and shows its own
     // progress/cancel UI, so there is nothing here to await or abort.
     downloadViaBrowser(
-      api.project.exportUrl(undefined, name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages),
+      api.project.exportUrl(undefined, name, includeGenealogy, undefined, includeFaceless, includeNotes, includeSources, includeEvents, includeDocuments, includeImages, includeScans),
     )
   }
 
@@ -203,6 +203,7 @@ export default function ProjectSwitcher({
         <ExportModal
           defaultName={active?.name ?? 'project'}
           showFacelessOption
+          showScansOption
           onExport={handleExport}
           onClose={() => setShowExportModal(false)}
         />

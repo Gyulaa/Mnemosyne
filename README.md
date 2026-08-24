@@ -103,6 +103,7 @@ From here you can also attach documents, write notes with citations, and find th
 - Click any person to see their full profile
 - Control how many generations and cousins are shown
 - Export the tree as a PNG image (screen or print quality)
+- A Statistics view shows names, places, decades and how complete your data is — click any bar, percentage or "longest lived" entry to jump straight to the matching people, so a gap like "20% have no birth year" becomes a list you can work through
 
 ### People profiles
 - Full name, birth/death/christening/burial details
@@ -280,6 +281,7 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 | Reading scanned documents, triaging a folder of records | [Reading scanned documents](#reading-scanned-documents) | `ai/doc_reader.py`, `transcriber.py`, `ScanReadModal.tsx`, transcript endpoints in `main.py` |
 | Connections between people from shared photos | [Connections graph](#connections-graph) | `ConnectionsTab.tsx`, `graphLayout.ts`, connection endpoints in `main.py` |
 | Place names, autocomplete, the place hierarchy | [Places](#places) | `backend/places.py`, `components/PlaceInput.tsx`, `frontend/src/placeKey.ts` |
+| A field that should offer what was typed before | [Suggesting what the project already uses](#suggesting-what-the-project-already-uses) | `backend/field_values.py`, `components/SuggestInput.tsx`, `components/VocabInput.tsx` |
 | Global search, or the relationship finder | [Global Search](#global-search), [Relationship Path Finder](#relationship-path-finder) | `SearchPalette.tsx`, `RelationPathModal.tsx` |
 | Updating, packaging, bundled files | [Auto-update](#auto-update-implementation-detail) | `updater.py`, `launcher.py`, `mnemosyne.spec`, `UpdateBanner.tsx` |
 | A user-visible string, a date, a language issue | [Keeping this document up to date](#keeping-this-document-up-to-date) | `i18n/translations.ts`, `SettingsContext.tsx` |
@@ -362,6 +364,11 @@ The view opens **fitted** rather than at 1:1, because the graph deliberately spr
 - Shift+click any node to refocus the tree on that person
 - **Pin a default proband** with the pin button in the bottom-right controls: the tree opens on that person instead of the first in the list. Stored server-side as `default_proband_id` in `projects/<id>/project.json` — it belongs to the project rather than to one browser profile, travels with `projects/` through an auto-update, and is what the AI assistant reads to know who "I" means. A value left in `localStorage` by an older build is migrated on first load. Precedence: in-session selection > pin > first person; a pin naming a deleted person falls back silently
 - Export as PNG: 1× or 2× DPI, dark or light background, with or without face photos
+
+**Statistics**
+- A second view next to the tree (`tree.viewStats` toggle in `FamilyTreeTab.tsx`), computed client-side from the same `persons`/`relations` the tree already has — no separate endpoint, and it respects the active family-group filter
+- Every bar, stat card and completeness row in `StatisticsView.tsx` is clickable: it hands `FamilyTreeTab` a set of person ids plus a label, which switches to the tree view, opens the sidebar, and isolates that set — a `personFilter` that composes with the existing search box, shown as a dismissible chip above the person list. "Longest lived" rows skip the filter and jump straight to that one person's profile
+- `StatisticsView.tsx` splits `occupation` by the same three separators as `field_values.py` for a different job — see [Suggesting what the project already uses](#suggesting-what-the-project-already-uses)
 
 **Person profile**
 - Full name: title, given, middle, surname, nickname
@@ -591,10 +598,10 @@ a suggestion like any other.
 **Every place field in the UI is `components/PlaceInput.tsx`**, never a bare
 `<input>`: the four on the person's details form, the two on the spouse row, and the
 one in `EventEditor` — which is shared by three tabs, so that single field covers
-all of them. The dropdown never overrides what was typed (free text is always a
-valid place) and only swallows Enter when a row has actually been arrowed onto,
-so typing a brand-new place does not need an Escape first. After any mutation that
-writes a place, `['places']` is invalidated alongside the resource's own keys.
+all of them. `PlaceInput` is a thin wrapper over `SuggestInput` (see
+*Suggesting what the project already uses*) that adds the settlement-only rows and
+nothing else. After any mutation that writes a place, `['places']` is invalidated
+alongside the resource's own keys.
 
 `frontend/src/placeKey.ts` holds the one client-side helper — folding a *typed
 query*, or a raw column value being looked up among the returned rows. It is a
@@ -602,6 +609,64 @@ plain module with no React and no `api.ts` import so it can be run from a Node
 script and checked against `fold(normalize_raw(…))` in `backend/places.py`; the two
 have to agree exactly, and Hungarian `ő`/`ű` decompose differently from plain
 acutes, which is precisely the sort of disagreement nothing on screen would show.
+
+### Suggesting what the project already uses
+
+Places were the first field to offer back what had already been typed, but the
+problem is not specific to them. A handful of columns hold a **vocabulary** — a
+few values that repeat across the whole family — and typing one of those out
+again is pure cost, while typing it slightly differently the second time is worse
+than cost: it silently splits one group into two everywhere the field is counted,
+grouped or searched, and no later cleanup fixes that retroactively.
+
+**One implementation, in `components/SuggestInput.tsx`.** It owns the input, the
+dropdown, the keyboard cursor, the blur rules and the matching. Two wrappers
+supply options and row decoration and nothing else:
+
+| Wrapper | Options from | What it adds |
+|---|---|---|
+| `PlaceInput.tsx` | `GET /api/places` | settlement-only rows (see [Places](#places)) |
+| `VocabInput.tsx` | `GET /api/field-values`, by field name | list-term rows, and an optional `seed` of values offered before the project has any of its own |
+
+The extraction happened when the second wrapper was written rather than after —
+three hand-rolled copies is what made the `@` mention lists disagree with each
+other, and reconciling them cost more than sharing would have.
+
+**Which columns are a vocabulary is decided in `backend/field_values.py`**, in
+`FIELD_SOURCES`. Currently `persons.occupation` (a list column), `religion`,
+`nationality`, `education`, `cause_of_death` and `title`. Adding a row there is
+the whole backend change; the frontend never names a column, it passes the
+registry key to `VocabInput`.
+
+**Names are deliberately not registered, and neither are event titles.** A
+surname repeats far more often than a religion does, but a name field is not a
+vocabulary: offering existing people's names while somebody types a *new* person's
+name invites picking the wrong one, and choosing an existing person is what the
+person pickers are for. Event titles are descriptions rather than terms — in
+practice almost every one is distinct, so a suggestion list is noise.
+
+**A list column offers its terms as well as its whole values.** `occupation` can
+hold several trades separated by `,`, `;` or `/`; each term comes back as its own
+row flagged `is_part`, so somebody with one trade can take a single term out of
+another person's pair without editing it down by hand. A term identical to a whole
+value is not repeated. `StatisticsView.tsx` splits the same column with the same
+three separators for a different job — counting terms, not suggesting them — so
+those two rules are alike on purpose and should change together.
+
+**Spellings are grouped, and one of them represents the group.**
+`dominant_spelling()` in `backend/places.py` picks it, and both the place list and
+the field-value list use it: most used wins, a tie goes to the quieter
+capitalisation (`Kadar` over `KADAR`) and then to alphabetical order. Breaking the
+tie by dictionary order instead would make the suggestion list reshuffle whenever
+an unrelated row was added.
+
+**Both lists are fetched whole and filtered in the browser** — no `q` parameter.
+Together they are a few kilobytes, and a field that only becomes visible when a
+form is opened would otherwise fetch on first focus, which is the one moment the
+suggestion needs to already be there. Matching is accent- and case-insensitive
+anywhere in the string, through `foldPlace()` in `frontend/src/placeKey.ts`.
+Neither list is privacy-filtered: `is_private` governs what leaves the machine,
+not what its owner sees in their own project.
 
 ### Global Search
 - **Ctrl+K** / **Cmd+K** — searches persons (name, nickname), events, documents, and note content simultaneously
@@ -1099,7 +1164,11 @@ Anthropic takes the PDF as a native `document` block and renders the pages itsel
 
 ### What the tables are, and what they are not
 
-`transcript_batches` / `transcript_pages` are **working state**, not project content: a page row holds an absolute path into a folder on this machine and the full text of a document that may never be imported at all. So `build_export_db` deletes both unconditionally, alongside the chat tables — copy-then-filter means a table nobody deletes is a table that ships. `merge_import.py` enumerates its tables by hand and therefore does not merge them, which is correct: the paths belong to the source machine.
+`transcript_batches` / `transcript_pages` / `transcript_questions` are **working state**, not project content: a page row holds an absolute path into a folder on this machine and the full text of a document that may never be imported at all. So `build_export_db` deletes all three by default, alongside the chat tables — copy-then-filter means a table nobody deletes is a table that ships. `merge_import.py` enumerates its tables by hand and therefore does not merge them, which is correct: the paths belong to the source machine.
+
+**`include_scans` is the deliberate exception**, and it is off unless asked for. Carrying a half-triaged folder of registers to another machine is a real thing to want — the transcripts, the marks, the report and the questions are hours of work — but it only works if the *photographs* travel too, and they are the largest thing this archive can hold. So it is a checkbox on the whole-project export, labelled with the batch and page count so the size is not a surprise, and offered nowhere else: a batch is not divisible by cluster or by person, so on a subset export it would quietly widen what "these people only" means.
+
+The mechanism is the one `images.path` already uses. `_stage_scan_files` runs **on the exported copy, before the database is written into the archive** — the streaming builder writes `project.db` first, so a rewrite afterwards would miss the stream — copying each page's file in as `scans/<page id>_<filename>` and rewriting `source_path` to that relative name. `_restore_scan_paths` turns it back into an absolute path at import, and only for rows whose file actually arrived: an archive exported without the scans has no such rows, and a page whose file had already gone on the source machine keeps its original path rather than being given a fabricated one that resolves to nothing here.
 
 **Importing a page copies the transcript into `documents.description`.** It did not, originally, on the reasoning that one transcript should have one home and the document could read it back through `document_id`. That is true of the *assistant's* serialiser in `ai/tools.py` and of nothing else: the REST `_doc_dict` carries no transcript, so an imported page arrived in the Documents tab as a picture of handwriting with nothing readable attached — not searchable, not quotable, not editable. The description is the field a person reads, searches and corrects, so that is where the text goes. A caller sending its own `description` still wins; the page keeps its copy, and the two can drift if a transcript is corrected afterwards, which is the accepted cost.
 
@@ -1216,6 +1285,7 @@ Image-Organizer/
 │   ├── project_manager.py   # Multi-project management
 │   ├── updater.py           # Auto-update state machine + platform scripts
 │   ├── export_utils.py      # ZIP export/import pipeline
+│   ├── field_values.py      # Registry of small-vocabulary columns + their used values
 │   ├── places.py            # Place hierarchy parser + project-wide place usage
 │   ├── gedcom_import.py     # GEDCOM .ged importer
 │   ├── gedcom_export.py     # GEDCOM 5.5.1 exporter
@@ -1254,6 +1324,8 @@ Image-Organizer/
 │           ├── TextDocumentEditor.tsx # In-app Markdown documents + citations + photos
 │           ├── PersonSelect.tsx       # Shared person pickers (multi-select, filter combobox)
 │           ├── PlaceInput.tsx         # Shared place field with suggestions from the project
+│           ├── SuggestInput.tsx       # The one text-field-with-suggestions implementation
+│           ├── VocabInput.tsx         # Vocabulary field (occupation, religion, …) on SuggestInput
 │           ├── GedcomImportModal.tsx  # GEDCOM import wizard
 │           ├── UpdateBanner.tsx       # Auto-update icon + modal
 │           ├── StatisticsView.tsx
@@ -1456,6 +1528,7 @@ Each entry below is **trigger → the files that must change together**. They ex
 - **New popover opened inside the carousel's description panel** → drop it leftward (`absolute right-0`). The panel is docked to the viewport's right edge, so a `left-0` dropdown runs off-screen and its far end becomes unclickable — this shipped once in the cite picker
 - **New popup anchored to a text field's caret** (a slash menu, or anything that is not an `@` mention — those go through `mentions.tsx`) → take the position from `caretAnchor()` and `useCaretPopup()` in `frontend/src/caretPopup.ts`, which handle a `<textarea>` and a single-line `<input>` alike (an input never wraps, so its mirror is measured unconstrained and its caret's "line" is the field itself). Pinning the popup to the field's own rect and pushing it upwards is what sent the mention list off the top of the screen in the document editor, where the textarea starts high in the viewport
 - **New UI that adds a child** (a `parent` relation written from a person's page) → ask which spouse the child also belongs to and write **both** rows, the way the add-child picker in `PersonPanel.tsx` does. A couple is not stored anywhere — it *is* the child's two `parent` rows — so a screen that writes only one leaves the other parent's page wrong and the user adding the same child a second time from the spouse. Preselect the spouse when there is exactly one, keep "no co-parent" as an explicit choice rather than the default, and check the two-parents-per-child cap client-side: the server refuses the third row with a 400 that arrives as a raw error
+- **A text field whose values repeat across the project** (an occupation, a religion, anything with a small vocabulary) → add a `FieldSource` to `FIELD_SOURCES` in `backend/field_values.py` and render the field with `VocabInput` passing that registry key; invalidate `['field-values']` in the mutation that writes it. Do **not** build a second suggestion dropdown — `SuggestInput` is the one implementation, and a wrapper supplies options and row decoration only. Names and event titles do not belong in the registry; see *Suggesting what the project already uses* for why
 - **New field that holds a place** → use `PlaceInput` from `components/PlaceInput.tsx` rather than an `<input>`, add the column to `PLACE_COLUMNS` in `backend/places.py` (nothing else enumerates them, so a column missing there is a place the suggestions and the statistics cannot see), and invalidate `['places']` in the mutation that writes it alongside the resource's own keys. Never split a place string in the browser — the levels arrive already split, and a second heuristic for what a house number is drifts silently. See *Places*
 - **New person picker anywhere in the UI** → build it on `useFamilyContext` + `<FamilyContextLines>` from `familyContext.tsx`, or on `PersonMultiSelect` / `PersonFilterCombobox` from `components/PersonSelect.tsx`. Rolling a fourth hand-written relative lookup is how the pickers drifted apart last time
 - **New year/month/day date input anywhere in the UI** → use `DatePartPicker`, exported from `EventTimeline.tsx` (year field, then a month `<select>` once a year is entered, then a day `<select>` once a month is entered). It produces the same partial-ISO string (`YYYY` | `YYYY-MM` | `YYYY-MM-DD`) that `formatPartialDate()` reads, so a value it writes is a value every other date display already knows how to render
@@ -1485,6 +1558,7 @@ Each entry below is **trigger → the files that must change together**. They ex
 - **Jumping to a row that was just created** (an overlay hands control back to the table underneath: importing a scan, creating from a modal) → two things, and the first is the one that gets forgotten: **close the overlay**, or the jump looks like it did nothing because the modal is still covering the target. Then wait for the *row*, not for a timeout — the list was invalidated, not refetched, so a `setTimeout` races the network. Keep a pending id in state and let an effect keyed on the list scroll to it when it appears (`openImportedDoc` in `DocumentsTab.tsx` is the worked example)
 - **Raw SQL that deletes an `events` row** (or any row a second table points at without an ORM cascade) → delete the children first, `event_images` before `events`, and scope the sweep to the events you actually orphaned. The `ON DELETE CASCADE` in `database.py`'s `CREATE TABLE IF NOT EXISTS` block is not what the database has: `create_all()` ran first and built those tables from the models, which declare no `ondelete`. Foreign keys are on, so the constraint failure aborts the statement — and since these cleanups run *after* the main `commit()`, the row is already gone when the request 500s, which is what makes it read as "the delete half-worked". The paths are `delete_person` in `main.py`, `execute_rollback` in `gedcom_import.py`, `build_export_db` in `export_utils.py`
 - **New column with an FK into `relations`** (or into any table whose rows the export copy deletes) → delete the child rows **before** the parent in every path that removes a relation: `delete_relation`, `delete_person` and `merge_persons` in `main.py`, `_delete_relation_citations` in `export_utils.py` (called ahead of both the person-subset delete and the `is_private=1` delete), and `execute_rollback` in `gedcom_import.py`. Carry the column through `read_zip_db` + `execute_merge` in `merge_import.py` as a **remapped** id — an incoming relation id means nothing locally — and read it with the `_has_column` guard so an older ZIP does not lose the whole table. Getting the delete order wrong is silent rather than loud: foreign keys are on in the export copy and its relation deletes sit in `try: … except: pass`, so the failed constraint is swallowed and the row survives into the ZIP
+- **A new kind of file travelling in the project ZIP** → three places, and the third is the one that bites: copy it under its own prefix in **both** `create_project_zip` and `stream_project_zip`, rewrite the absolute path stored in the DB to the archive-relative one *before* `project.db` is written (the streaming builder writes the database first), and add the inverse rewrite to `import_project_zip`. `_stage_scan_files` / `_restore_scan_paths` are the worked pair. Anything large enough to matter also needs an opt-in flag threaded through `build_export_db` → both ZIP builders → the endpoint → `ExportModal`, defaulting to off
 - **New `is_private` on a table** → (1) add `ALTER TABLE … ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0` to the v4→v5 migration block in `database.py`; (2) include `is_private` in the relevant `_xxx_dict` serialiser in `main.py`; (3) add the privacy-filter DELETE block for that table inside `build_export_db` in `export_utils.py`; (4) add `WHERE COALESCE(is_private,0)=0` to the relevant query in `build_gedcom_zip` in `gedcom_export.py` if applicable; (5) add `togglePrivacy` call to `api.ts`; (6) update the TypeScript interface in `types.ts`; (7) add the padlock button to the relevant component
 
 ### Maintaining the documentation itself

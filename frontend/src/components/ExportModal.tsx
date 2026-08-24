@@ -1,4 +1,6 @@
 import { useState, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '../api'
 import type { PersonFull } from '../types'
 import { useT } from '../SettingsContext'
 import { useBackdropClose } from '../modalBackdrop'
@@ -13,6 +15,7 @@ export type ExportSettings = {
   includeEvents: boolean
   includeDocuments: boolean
   includeImages: boolean
+  includeScans: boolean
 }
 
 type Props = {
@@ -21,6 +24,12 @@ type Props = {
   subtitle?: string
   hideGenealogyOption?: boolean
   showFacelessOption?: boolean
+  /**
+   * Offer to carry the scan batches. Only the whole-project export does: a
+   * batch is not divisible by cluster or by person, so on a subset export the
+   * option would quietly widen what "these people only" means.
+   */
+  showScansOption?: boolean
   persons?: PersonFull[]
   onExport: (settings: ExportSettings) => void
   onClose: () => void
@@ -92,6 +101,7 @@ export default function ExportModal({
   clusterCount,
   subtitle,
   hideGenealogyOption,
+  showScansOption,
   showFacelessOption,
   persons,
   onExport,
@@ -107,7 +117,17 @@ export default function ExportModal({
   const [includeDocuments, setIncludeDocuments] = useState(true)
   const [includeImages, setIncludeImages] = useState(true)
   const [includeFaceless, setIncludeFaceless] = useState(true)
+  const [includeScans, setIncludeScans] = useState(false)
   const [excludeLiving, setExcludeLiving] = useState(false)
+
+  // Only asked for when the option is on screen, and it shares its key with the
+  // reading screen, so opening this after reading a folder costs no request.
+  const { data: batches } = useQuery({
+    queryKey: ['transcriptBatches'],
+    queryFn: () => api.transcripts.listBatches(),
+    enabled: !!showScansOption,
+  })
+  const scanPages = (batches ?? []).reduce((n, b) => n + b.total, 0)
 
   const { livingCount, deceasedCount } = useMemo(() => {
     if (!persons) return { livingCount: 0, deceasedCount: 0 }
@@ -130,6 +150,7 @@ export default function ExportModal({
       includeEvents: !showGenealogy || includeGenealogy ? includeEvents : true,
       includeDocuments: !showGenealogy || includeGenealogy ? includeDocuments : true,
       includeImages,
+      includeScans: showScansOption ? includeScans : false,
     })
   }
 
@@ -195,6 +216,19 @@ export default function ExportModal({
               onChange={setIncludeFaceless}
               disabled={!includeImages}
             />
+          )}
+
+          {/* Scanned records — whole-project export only */}
+          {showScansOption && (batches?.length ?? 0) > 0 && (
+            <>
+              <SectionLabel>{t('export.sectionScans')}</SectionLabel>
+              <Row
+                label={t('export.includeScans')}
+                desc={t('export.includeScansDesc', { batches: batches!.length, pages: scanPages })}
+                checked={includeScans}
+                onChange={setIncludeScans}
+              />
+            </>
           )}
 
           {/* Privacy */}

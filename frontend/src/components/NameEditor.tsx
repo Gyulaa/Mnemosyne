@@ -1,4 +1,5 @@
 import { useT } from '../SettingsContext'
+import VocabInput from './VocabInput'
 
 export interface NameParts {
   title: string
@@ -31,7 +32,9 @@ export function namePartsFromPerson(p: {
   }
 }
 
-const TITLE_SUGGESTIONS = ['Dr.', 'Prof.', 'Sr.', 'Jr.', 'Rev.', 'PhD', 'MD', 'Esq.']
+// Offered before the project has any titles of its own; a title already used
+// here outranks them, because it carries a count and these do not.
+const TITLE_SUGGESTIONS = ['Dr.', 'Prof.', 'Sr.', 'Jr.', 'Rev.', 'PhD', 'MD', 'Esq.'] as const
 
 const SIZES = {
   sm: {
@@ -110,16 +113,14 @@ export default function NameEditor({
       </div>
       <div>
         <label className={s.label}>{t('nameEditor.titleSuffix')}</label>
-        <input
-          list="name-editor-titles"
+        <VocabInput
+          field="title"
+          seed={TITLE_SUGGESTIONS}
           value={value.title}
-          onChange={set('title')}
+          onChange={v => onChange({ ...value, title: v })}
           placeholder={t('nameEditor.titlePh')}
           className={s.input}
         />
-        <datalist id="name-editor-titles">
-          {TITLE_SUGGESTIONS.map(t => <option key={t} value={t} />)}
-        </datalist>
       </div>
     </div>
   )

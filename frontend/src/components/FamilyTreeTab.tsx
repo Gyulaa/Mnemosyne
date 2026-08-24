@@ -337,7 +337,13 @@ function NewPersonModal({ onClose, onCreated }: { onClose: () => void; onCreated
       birth_year:  birthYear ? parseInt(birthYear) : null,
       death_year:  deathYear ? parseInt(deathYear) : null,
     }),
-    onSuccess: p => { qc.invalidateQueries({ queryKey: ['persons'] }); onCreated(p) },
+    // The title typed here is a suggestion in every other name editor from
+    // now on — the create path has to say so, not only the edit path.
+    onSuccess: p => {
+      qc.invalidateQueries({ queryKey: ['persons'] })
+      qc.invalidateQueries({ queryKey: ['field-values'] })
+      onCreated(p)
+    },
   })
 
   const INPUT = 'w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400'
@@ -470,6 +476,7 @@ export default function FamilyTreeTab({
   const [showNew, setShowNew] = useState(false)
   const [search, setSearch] = useState('')
   const [showOnlyUnlinked, setShowOnlyUnlinked] = useState(false)
+  const [personFilter, setPersonFilter] = useState<{ ids: Set<number>; label: string } | null>(null)
 
   const queryClient = useQueryClient()
   const { data: persons = [], isLoading } = useQuery({ queryKey: ['persons'], queryFn: api.persons.list })
@@ -498,10 +505,25 @@ export default function FamilyTreeTab({
     return relations.filter(r => ids.has(r.person_a_id) && ids.has(r.person_b_id))
   }, [activeGroup, relations])
 
-  // Sidebar list: search + optional unlinked filter
+  // Sidebar list: search + optional unlinked filter + a filter set applied from Statistics
   const sidebarPersons = (selectedGroupKey ? displayPersons : persons)
     .filter(p => !showOnlyUnlinked || !linkedIds.has(p.id))
+    .filter(p => !personFilter || personFilter.ids.has(p.id))
     .filter(p => (p.name ?? '').toLowerCase().includes(search.toLowerCase()))
+
+  // Statistics → clicking a stat bar/row jumps here with the matching people isolated
+  function applyStatsFilter(ids: number[], label: string) {
+    setPersonFilter({ ids: new Set(ids), label })
+    setSearch('')
+    setActiveView('tree')
+    setSidebarOpen(true)
+  }
+  function selectPersonFromStats(id: number) {
+    setPersonFilter(null)
+    setSelectedId(id)
+    setActiveView('tree')
+    setSidebarOpen(true)
+  }
 
   const selected = persons.find(p => p.id === selectedId) ?? null
 
@@ -644,7 +666,7 @@ export default function FamilyTreeTab({
               groupNames={groupNames}
               selectedKey={selectedGroupKey}
               allCount={persons.length}
-              onSelect={key => { setSelectedGroupKey(key); setSelectedId(null) }}
+              onSelect={key => { setSelectedGroupKey(key); setSelectedId(null); setPersonFilter(null) }}
               onRename={renameGroup}
             />
           </>
@@ -726,12 +748,22 @@ export default function FamilyTreeTab({
                 <span className="tabular-nums">{unlinkedCount}</span>
               </button>
             )}
+            {/* Filter applied from the Statistics view */}
+            {personFilter && (
+              <div className="w-full flex items-center justify-between gap-1.5 px-2.5 py-1 rounded-lg text-xs bg-brand-500/20 text-brand-300 border border-brand-500/30">
+                <span className="truncate" title={personFilter.label}>{personFilter.label}</span>
+                <span className="flex items-center gap-1.5 shrink-0">
+                  <span className="tabular-nums">{personFilter.ids.size}</span>
+                  <button onClick={() => setPersonFilter(null)} title={t('common.close')} className="text-brand-400 hover:text-brand-100 transition-colors">✕</button>
+                </span>
+              </div>
+            )}
           </div>
           <div className="flex-1 overflow-y-auto">
             {isLoading && <p className="px-4 py-6 text-center text-zinc-500 text-sm">{t('tree.loading')}</p>}
             {!isLoading && sidebarPersons.length === 0 && (
               <p className="px-4 py-6 text-center text-zinc-500 text-sm">
-                {search || showOnlyUnlinked ? t('tree.noResults') : t('tree.noPersons')}
+                {search || showOnlyUnlinked || personFilter ? t('tree.noResults') : t('tree.noPersons')}
               </p>
             )}
             {sidebarPersons.map(p => (
@@ -753,7 +785,12 @@ export default function FamilyTreeTab({
         {/* Tree + panel  /  Statistics */}
         <div className="flex-1 relative min-w-0 overflow-hidden">
           {activeView === 'stats' ? (
-            <StatisticsView persons={displayPersons} relations={displayRelations} />
+            <StatisticsView
+              persons={displayPersons}
+              relations={displayRelations}
+              onSelectPersons={applyStatsFilter}
+              onSelectPerson={selectPersonFromStats}
+            />
           ) : displayPersons.length === 0 && !isLoading ? (
             <div className="h-full flex flex-col items-center justify-center gap-3 text-center">
               <div className="text-5xl opacity-15">🌳</div>

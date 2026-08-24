@@ -215,6 +215,7 @@ def build_export_db(
     include_events: bool = True,
     include_documents: bool = True,
     include_images: bool = True,
+    include_scans: bool = False,
 ) -> dict[int, tuple[str, str]]:
     """
     Copy source DB to dest, optionally filter to specific cluster IDs, rewrite image
@@ -237,16 +238,22 @@ def build_export_db(
             except sqlite3.OperationalError:
                 pass  # pre-v7 database being exported — nothing to strip
 
-        # Transcript batches go for the same reason, and one more: a page row
-        # holds an absolute path into a folder on this machine and the full
-        # text of a document that may never have been imported into the
-        # project at all. Copy-then-filter means a table nobody deletes is a
-        # table that ships.
-        for _scan_table in ("transcript_questions", "transcript_pages", "transcript_batches"):
-            try:
-                conn.execute(f"DELETE FROM {_scan_table}")
-            except sqlite3.OperationalError:
-                pass  # pre-v12 database being exported — nothing to strip
+        # Transcript batches go the same way **by default**, and for one more
+        # reason: a page row holds an absolute path into a folder on this
+        # machine and the full text of a document that may never have been
+        # imported into the project at all. Copy-then-filter means a table
+        # nobody deletes is a table that ships.
+        #
+        # `include_scans` is the deliberate exception, asked for and off unless
+        # asked for: carrying a folder of half-triaged register photographs to
+        # another machine means carrying the photographs too, and that is the
+        # single largest thing this archive can contain.
+        if not include_scans:
+            for _scan_table in ("transcript_questions", "transcript_pages", "transcript_batches"):
+                try:
+                    conn.execute(f"DELETE FROM {_scan_table}")
+                except sqlite3.OperationalError:
+                    pass  # pre-v12 database being exported — nothing to strip
 
         if person_ids is not None and len(person_ids) > 0:
             pids_str = ",".join(str(x) for x in person_ids)
@@ -458,6 +465,51 @@ def build_export_db(
     return path_map
 
 
+def _stage_scan_files(tmp_db: Path) -> dict[int, tuple[str, str]]:
+    """Point every transcript page at a copy inside the archive.
+
+    A page row's `source_path` is an absolute path into a folder on **this**
+    machine, which is exactly the thing that does not survive being carried to
+    another one. So the file travels with the archive and the column is
+    rewritten to the archive-relative name, the same shape `images.path` uses;
+    `import_project_zip` turns it back into an absolute path on arrival.
+
+    Returns `{page_id: (path on this machine, path inside the ZIP)}` for the
+    caller to write. A page whose file has already gone keeps its original path:
+    the transcript is still readable and the path still says where it came from,
+    which is more use than a null.
+    """
+    out: dict[int, tuple[str, str]] = {}
+    conn = sqlite3.connect(str(tmp_db))
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT id, source_path, filename FROM transcript_pages"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return out                      # pre-v12 database — no such table
+        for page_id, source_path, filename in rows:
+            if not source_path:
+                continue
+            src = Path(source_path)
+            if not src.is_file():
+                continue
+            # The id prefix keeps two pages with the same filename apart, and
+            # the substitution keeps a register's own naming out of the archive
+            # path where it might not be a legal filename on the other machine.
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename or src.name)
+            rel = f"scans/{page_id}_{safe}"
+            out[page_id] = (str(src), rel)
+            conn.execute(
+                "UPDATE transcript_pages SET source_path=? WHERE id=?", (rel, page_id)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+        gc.collect()
+    return out
+
+
 def create_project_zip(
     source_db_path: Path,
     project_info: dict,
@@ -470,6 +522,7 @@ def create_project_zip(
     include_events: bool = True,
     include_documents: bool = True,
     include_images: bool = True,
+    include_scans: bool = False,
 ) -> io.BytesIO:
     """Build a self-contained project ZIP (DB + images + documents) and return it as a BytesIO."""
     import tempfile
@@ -486,8 +539,10 @@ def create_project_zip(
             source_db_path, tmp_db, cluster_ids,
             include_genealogy, person_ids, include_faceless,
             include_notes, include_sources, include_events,
-            include_documents, include_images,
+            include_documents, include_images, include_scans,
         )
+        # Before the DB is written into the archive: the rewrite happens inside it.
+        scan_map = _stage_scan_files(tmp_db) if include_scans else {}
 
         # Collect document files that are still referenced in the exported DB.
         doc_stored_names: list[str] = []
@@ -522,6 +577,12 @@ def create_project_zip(
                 doc_file = docs_dir / stored_name
                 if doc_file.exists():
                     zf.write(str(doc_file), f"documents/{stored_name}")
+
+            # Scans — the source files of a transcript batch, when asked for
+            for _pid, (orig_path, new_rel) in scan_map.items():
+                sp = Path(orig_path)
+                if sp.is_file():
+                    zf.write(str(sp), new_rel)
 
     buf.seek(0)
     return buf
@@ -561,6 +622,7 @@ def stream_project_zip(
     include_events: bool = True,
     include_documents: bool = True,
     include_images: bool = True,
+    include_scans: bool = False,
 ):
     """Generator that yields ZIP bytes progressively via OS pipe.
 
@@ -593,8 +655,12 @@ def stream_project_zip(
                             source_db_path, tmp_db, cluster_ids,
                             include_genealogy, person_ids, include_faceless,
                             include_notes, include_sources, include_events,
-                            include_documents, include_images,
+                            include_documents, include_images, include_scans,
                         )
+                        # This must happen **before** `project.db` is written
+                        # into the stream — the streaming builder writes the
+                        # database first, and the rewrite is inside it.
+                        scan_map = _stage_scan_files(tmp_db) if include_scans else {}
                         print(f"[export] build_export_db done ({time.monotonic()-t0:.2f}s), {len(path_map)} images", flush=True)
 
                         doc_stored_names: list[str] = []
@@ -625,7 +691,13 @@ def stream_project_zip(
                             doc_file = docs_dir / stored_name
                             if doc_file.exists():
                                 zf.write(str(doc_file), f"documents/{stored_name}")
-                        print(f"[export] documents written, closing ZIP ({time.monotonic()-t0:.2f}s)", flush=True)
+                        print(f"[export] documents written ({time.monotonic()-t0:.2f}s)", flush=True)
+
+                        for _pid, (orig_path, new_rel) in scan_map.items():
+                            sp = Path(orig_path)
+                            if sp.is_file():
+                                zf.write(str(sp), new_rel)
+                        print(f"[export] {len(scan_map)} scans written, closing ZIP ({time.monotonic()-t0:.2f}s)", flush=True)
         except Exception as e:
             print(f"[export] PRODUCER ERROR at {time.monotonic()-t0:.2f}s: {e!r}", flush=True)
             traceback.print_exc()
@@ -668,7 +740,16 @@ def import_project_zip(zip_data: bytes, projects_dir: Path) -> dict:
         with zf.open("project.json") as f:
             project_info = json.loads(f.read())
 
-        new_id = _make_id(project_info.get("name", "imported"))
+        # `_make_id` stamps the id with the current second, so two archives of
+        # the same name imported inside one second collide — and the second one
+        # then extracts *over* the first project's files. Rare, but the failure
+        # is silent data loss, so the directory has to be claimed rather than
+        # assumed free.
+        base_id = _make_id(project_info.get("name", "imported"))
+        new_id, suffix = base_id, 2
+        while (projects_dir / new_id).exists():
+            new_id = f"{base_id}_{suffix}"
+            suffix += 1
         project_dir = projects_dir / new_id
         project_dir.mkdir(parents=True, exist_ok=True)
 
@@ -753,10 +834,47 @@ def import_project_zip(zip_data: bytes, projects_dir: Path) -> dict:
             conn.close()
             gc.collect()
 
+        scans_restored = _restore_scan_paths(dest_db, project_dir)
+
     project_info["is_active"] = False
     project_info["images_reused"] = images_reused
     project_info["images_new"] = images_new
+    project_info["scans_restored"] = scans_restored
     return project_info
+
+
+def _restore_scan_paths(dest_db: Path, project_dir: Path) -> int:
+    """Turn the archive-relative scan paths back into paths on this machine.
+
+    The mirror of `_stage_scan_files`. Only rows whose file actually arrived are
+    rewritten: an archive exported **without** the scans has no such rows at all,
+    and one exported from a machine where a page's file had already gone keeps
+    the original absolute path — which will not resolve here, and should not,
+    because inventing a path would turn a missing file into a broken one.
+    """
+    restored = 0
+    conn = sqlite3.connect(str(dest_db))
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT id, source_path FROM transcript_pages WHERE source_path LIKE 'scans/%'"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return 0                       # archive predates the transcript tables
+        for page_id, rel in rows:
+            extracted = project_dir / rel
+            if not extracted.is_file():
+                continue
+            conn.execute(
+                "UPDATE transcript_pages SET source_path=? WHERE id=?",
+                (str(extracted), page_id),
+            )
+            restored += 1
+        conn.commit()
+    finally:
+        conn.close()
+        gc.collect()
+    return restored
 
 
 def _ensure_identity_columns(db_path: Path) -> None:

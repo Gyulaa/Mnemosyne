@@ -6,6 +6,7 @@ import { useBackdropClose } from '../modalBackdrop'
 import type { LinkedCluster, PersonFull, Relation, ImageItem, ImagePerson, PersonDocument, DocumentType, Source, Citation } from '../types'
 import NameEditor, { NameParts, namePartsFromPerson, deriveDisplayName } from './NameEditor'
 import PlaceInput from './PlaceInput'
+import VocabInput from './VocabInput'
 import { useSettings, displayPersonName, displayInitials, useT, useDateLocale, formatPartialDate, monthNames } from '../SettingsContext'
 import { NoteCard } from './NoteEditor'
 import NoteEditorComponent from './NoteEditor'
@@ -1575,9 +1576,11 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
     mutationFn: (patch: Parameters<typeof api.persons.update>[1]) => api.persons.update(person.id, patch),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['persons'] })
-      // A place typed here is a suggestion everywhere else the moment it is
-      // saved — without this it only shows up after a reload.
+      // A place or a vocabulary value typed here is a suggestion everywhere
+      // else the moment it is saved — without these it only shows up after a
+      // reload.
       qc.invalidateQueries({ queryKey: ['places'] })
+      qc.invalidateQueries({ queryKey: ['field-values'] })
       setEditingHeader(false)
       setEditingDetails(false)
       setEditingNotes(false)
@@ -2133,39 +2136,39 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.occupation')}</span>
-                    <input value={detailsData.occupation} onChange={e => setDetailsData(d => ({ ...d, occupation: e.target.value }))}
+                    <VocabInput field="occupation" value={detailsData.occupation} onChange={v => setDetailsData(d => ({ ...d, occupation: v }))}
                       placeholder={t('person.occupationPh')}
-                      className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                   </div>
                   <CitationsInline personId={person.id} fact="occupation" citations={citationsFor('occupation')} sources={sources} onMutated={invalidateCitations} />
                 </div>
                 {/* Education */}
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.education')}</span>
-                  <input value={detailsData.education} onChange={e => setDetailsData(d => ({ ...d, education: e.target.value }))}
+                  <VocabInput field="education" value={detailsData.education} onChange={v => setDetailsData(d => ({ ...d, education: v }))}
                     placeholder={t('person.educationPh')}
-                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                 </div>
                 {/* Religion */}
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.religion')}</span>
-                  <input value={detailsData.religion} onChange={e => setDetailsData(d => ({ ...d, religion: e.target.value }))}
+                  <VocabInput field="religion" value={detailsData.religion} onChange={v => setDetailsData(d => ({ ...d, religion: v }))}
                     placeholder={t('person.religionPh')}
-                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                 </div>
                 {/* Nationality */}
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.nationality')}</span>
-                  <input value={detailsData.nationality} onChange={e => setDetailsData(d => ({ ...d, nationality: e.target.value }))}
+                  <VocabInput field="nationality" value={detailsData.nationality} onChange={v => setDetailsData(d => ({ ...d, nationality: v }))}
                     placeholder={t('person.nationalityPh')}
-                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                 </div>
                 {/* Cause of death */}
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-zinc-500 w-20 shrink-0">{t('person.causeOfDeath')}</span>
-                  <input value={detailsData.cause_of_death} onChange={e => setDetailsData(d => ({ ...d, cause_of_death: e.target.value }))}
+                  <VocabInput field="cause_of_death" value={detailsData.cause_of_death} onChange={v => setDetailsData(d => ({ ...d, cause_of_death: v }))}
                     placeholder={t('person.causeOfDeathPh')}
-                    className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-0.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
                 </div>
                 {/* Christening */}
                 <div>

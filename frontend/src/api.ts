@@ -1,4 +1,4 @@
-import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, WebResearchSettings, ChatThread, ChatMessage, ChatStreamEvent, DocumentAiSettings, TranscriptBatch, TranscriptBatchDetail, TranscriptPageFull, TranscriptStatus, TranscriptQuestion, PlaceUsage } from './types'
+import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, WebResearchSettings, ChatThread, ChatMessage, ChatStreamEvent, DocumentAiSettings, TranscriptBatch, TranscriptBatchDetail, TranscriptPageFull, TranscriptStatus, TranscriptQuestion, PlaceUsage, FieldValueMap } from './types'
 
 const BASE = '/api'
 
@@ -195,6 +195,9 @@ export const api = {
       includeEvents = true,
       includeDocuments = true,
       includeImages = true,
+      /** The source photographs of every transcript batch. Off by default —
+       *  they are the largest thing an archive can carry. */
+      includeScans = false,
     ): string => {
       const p = new URLSearchParams()
       if (clusterIds?.length) p.set('cluster_ids', clusterIds.join(','))
@@ -207,6 +210,7 @@ export const api = {
       if (!includeEvents) p.set('include_events', 'false')
       if (!includeDocuments) p.set('include_documents', 'false')
       if (!includeImages) p.set('include_images', 'false')
+      if (includeScans) p.set('include_scans', 'true')
       return `${BASE}/projects/export?${p}`
     },
     exportGedcom: async (opts?: {
@@ -360,6 +364,10 @@ export const api = {
   places: {
     /** Every place the project uses, most-used first. Filtered client-side. */
     list: () => fetchJson<PlaceUsage[]>(`${BASE}/places`),
+  },
+  fieldValues: {
+    /** Values already used in the registered vocabulary fields, all at once. */
+    list: () => fetchJson<FieldValueMap>(`${BASE}/field-values`),
   },
   documents: {
     listAll: () => fetchJson<PersonDocument[]>(`${BASE}/documents`),
