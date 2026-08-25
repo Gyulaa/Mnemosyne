@@ -2565,6 +2565,7 @@ export default function PersonPanel({ person, persons, relations, onClose, onNav
               persons={persons}
               onNavigateToBio={() => { setActiveTab('bio'); setDetailsData(detailsFromPerson(person)); setEditingDetails(true) }}
               onNavToEvent={onNavToEvent}
+              onNavToPerson={onNavigateTo}
               autoPhotoEventType={autoPhotoEventType}
               onAutoPhotoConsumed={() => setAutoPhotoEventType(null)}
             />

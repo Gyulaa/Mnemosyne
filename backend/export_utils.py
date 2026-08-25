@@ -137,6 +137,27 @@ def _delete_documents(conn: sqlite3.Connection, where_clause: str) -> None:
     conn.execute(f"DELETE FROM documents WHERE {where_clause}")
 
 
+def _delete_events(conn: sqlite3.Connection, where_clause: str) -> None:
+    """Delete the events `where_clause` selects, children first.
+
+    Every event delete in this module goes through here. `event_images`,
+    `event_persons` and `event_description_citations` all declare no ON DELETE
+    action — the tables `create_all()` builds come from the models, so the
+    CASCADE written in the migration block never applies — and this connection
+    runs with foreign keys **on**, so an event still carrying any of them
+    cannot be deleted and the failing statement takes the whole delete with it.
+    That is how a private event with photos would otherwise survive into a ZIP.
+    """
+    inner = f"SELECT id FROM events WHERE {where_clause}"
+    conn.execute(f"DELETE FROM event_images WHERE event_id IN ({inner})")
+    try:
+        conn.execute(f"DELETE FROM event_description_citations WHERE event_id IN ({inner})")
+    except sqlite3.OperationalError:
+        pass   # export input predates v18
+    conn.execute(f"DELETE FROM event_persons WHERE event_id IN ({inner})")
+    conn.execute(f"DELETE FROM events WHERE {where_clause}")
+
+
 def _delete_relation_citations(conn: sqlite3.Connection, rel_where: str) -> None:
     """Drop the marriage citations of the relations `rel_where` selects.
 
@@ -357,22 +378,29 @@ def build_export_db(
 
         # ── Sources & Citations ───────────────────────────────────────────────
         if not include_sources:
+            # Every table that can point at a source has to let go first: the
+            # FKs declare no action and foreign keys are on for this
+            # connection, so one surviving reference fails `DELETE FROM
+            # sources` and raises out of the whole export.
             conn.execute("DELETE FROM note_citations WHERE source_id IS NOT NULL")
             conn.execute("DELETE FROM document_note_citations WHERE source_id IS NOT NULL")
+            for table in ("document_citations", "document_description_citations",
+                          "event_description_citations"):
+                try:
+                    conn.execute(f"DELETE FROM {table} WHERE source_id IS NOT NULL")
+                except sqlite3.OperationalError:
+                    pass   # export input predates the table
             conn.execute("DELETE FROM citations")
             conn.execute("DELETE FROM sources")
             conn.commit()
 
         # ── Events ────────────────────────────────────────────────────────────
         if not include_events:
-            conn.execute("DELETE FROM event_images")
-            conn.execute("DELETE FROM event_persons")
-            conn.execute("DELETE FROM events")
+            _delete_events(conn, "1=1")
             conn.commit()
         else:
             # Remove events that lost all participants during person filtering.
-            conn.execute("DELETE FROM event_images WHERE event_id NOT IN (SELECT DISTINCT event_id FROM event_persons)")
-            conn.execute("DELETE FROM events WHERE id NOT IN (SELECT DISTINCT event_id FROM event_persons)")
+            _delete_events(conn, "id NOT IN (SELECT DISTINCT event_id FROM event_persons)")
             conn.commit()
 
         # ── Documents ─────────────────────────────────────────────────────────
@@ -425,9 +453,7 @@ def build_export_db(
             pass
         # Private events
         try:
-            conn.execute("DELETE FROM event_images WHERE event_id IN (SELECT id FROM events WHERE is_private=1)")
-            conn.execute("DELETE FROM event_persons WHERE event_id IN (SELECT id FROM events WHERE is_private=1)")
-            conn.execute("DELETE FROM events WHERE is_private=1")
+            _delete_events(conn, "is_private=1")
         except Exception:
             pass
         conn.commit()

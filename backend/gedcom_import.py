@@ -859,6 +859,9 @@ def execute_rollback(db_path: Path, docs_dir: Path) -> Optional[dict]:
             f"DELETE FROM event_images WHERE event_id IN ({marks}) "
             "AND event_id NOT IN (SELECT event_id FROM event_persons)", ids)
         conn.execute(
+            f"DELETE FROM event_description_citations WHERE event_id IN ({marks}) "
+            "AND event_id NOT IN (SELECT event_id FROM event_persons)", ids)
+        conn.execute(
             f"DELETE FROM events WHERE id IN ({marks}) "
             "AND id NOT IN (SELECT event_id FROM event_persons)", ids)
     conn.commit()
@@ -883,6 +886,7 @@ def execute_rollback(db_path: Path, docs_dir: Path) -> Optional[dict]:
     for eid in data.get('added_event_ids', []):
         conn.execute("DELETE FROM event_persons WHERE event_id = ?", (eid,))
         conn.execute("DELETE FROM event_images WHERE event_id = ?", (eid,))
+        conn.execute("DELETE FROM event_description_citations WHERE event_id = ?", (eid,))
         cur = conn.execute("DELETE FROM events WHERE id = ?", (eid,))
         if cur.rowcount:
             deleted['events'] += 1

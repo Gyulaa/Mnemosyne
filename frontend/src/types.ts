@@ -507,6 +507,8 @@ export interface PersonEvent {
   source_id: number | null
   persons: EventPerson[]
   images: EventImage[]
+  /** `[n]` references inside `description` — same shape as a note's. */
+  description_citations: NoteCitation[]
 }
 
 /**

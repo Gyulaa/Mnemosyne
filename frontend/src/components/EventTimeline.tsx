@@ -1,10 +1,13 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
-import type { PersonFull, Relation, PersonEvent, ImageItem, ImagePerson } from '../types'
+import type { PersonFull, Relation, PersonEvent, ImageItem, ImagePerson, NoteCitation } from '../types'
 import { api } from '../api'
 import { useT, useSettings, useDateLocale, formatPartialDate, monthNames } from '../SettingsContext'
 import { useBackdropClose } from '../modalBackdrop'
+import { MentionInput } from '../mentions'
+import { renderMarkdown, renderTitleMentions } from '../markdown'
+import { DescriptionField, persistDescriptionCitations, linkMentionedPersons } from './DescriptionField'
 import PlaceInput from './PlaceInput'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -295,6 +298,12 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
   const [date, setDate] = useState(event?.date ?? prefill?.date ?? '')
   const [place, setPlace] = useState(event?.place ?? prefill?.place ?? '')
   const [description, setDescription] = useState(event?.description ?? '')
+  const [descCitations, setDescCitations] = useState<NoteCitation[]>(event?.description_citations ?? [])
+  // What the server already holds, so a save writes the difference and a second
+  // save writes nothing. Both are re-read from the event after every save.
+  const [savedCitations, setSavedCitations] = useState<NoteCitation[]>(event?.description_citations ?? [])
+  const [linkedIds, setLinkedIds] = useState<Set<number>>(() => new Set((event?.persons ?? []).map(ep => ep.person_id)))
+  const [savedLinkedIds, setSavedLinkedIds] = useState<Set<number>>(() => new Set((event?.persons ?? []).map(ep => ep.person_id)))
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [showImagePicker, setShowImagePicker] = useState(false)
@@ -330,6 +339,27 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
         })
         setLocalEvent(saved)
       }
+      // The mentions and the citations can only be written once the event has
+      // an id, which a newly created one only gets here — the same reason the
+      // document upload modal holds its citations optimistically.
+      const owner = { kind: 'event' as const, id: saved.id }
+      const newLinks = [...linkedIds].some(id => !savedLinkedIds.has(id))
+      const newCites = descCitations.some(c => c.id < 0) || savedCitations.some(c => !descCitations.some(d => d.id === c.id))
+      await linkMentionedPersons(owner, savedLinkedIds, linkedIds)
+      await persistDescriptionCitations(owner, savedCitations, descCitations)
+      if (newLinks || newCites) {
+        // Re-read so the participant chips and the citation ids on screen are
+        // the server's, not the optimistic ones a second save would re-send.
+        const fresh = (await api.events.list()).find(e => e.id === saved.id)
+        if (fresh) {
+          saved = fresh
+          setLocalEvent(fresh)
+          setDescCitations(fresh.description_citations)
+          setSavedCitations(fresh.description_citations)
+          setLinkedIds(new Set(fresh.persons.map(ep => ep.person_id)))
+          setSavedLinkedIds(new Set(fresh.persons.map(ep => ep.person_id)))
+        }
+      }
       if (personId) qc.invalidateQueries({ queryKey: ['person-events', personId] })
       qc.invalidateQueries({ queryKey: ['events'] })
       // The place just typed becomes a suggestion in every other place field.
@@ -338,6 +368,15 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
     } finally {
       setSaving(false)
     }
+  }
+
+  /** Both link sets follow the server, so a save after a manual add or remove
+      does not undo it: whoever is a participant now is what "already linked"
+      means. */
+  function syncLinked(ev: PersonEvent) {
+    const ids = new Set(ev.persons.map(ep => ep.person_id))
+    setLinkedIds(ids)
+    setSavedLinkedIds(new Set(ids))
   }
 
   async function handleDelete() {
@@ -378,7 +417,7 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
     if (!localEvent) return
     await api.events.removePerson(eventPersonId)
     const fresh = (await api.events.list()).find(e => e.id === localEvent.id)
-    if (fresh) setLocalEvent(fresh)
+    if (fresh) { setLocalEvent(fresh); syncLinked(fresh) }
     if (personId) qc.invalidateQueries({ queryKey: ['person-events', personId] })
     qc.invalidateQueries({ queryKey: ['events'] })
   }
@@ -410,6 +449,7 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
     try {
       const updated = await api.events.addPerson(localEvent.id, pid, 'participant') as PersonEvent
       setLocalEvent(updated)
+      syncLinked(updated)
       setPersonSearchQ('')
       setShowPersonSearch(false)
       if (personId) qc.invalidateQueries({ queryKey: ['person-events', personId] })
@@ -425,8 +465,12 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
         {EVENT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{t(o.key)}</option>)}
       </select>
 
-      {/* Title */}
-      <input value={title} onChange={e => setTitle(e.target.value)} placeholder={t('timeline.titlePh')}
+      {/* Title — `@` names a person here exactly as it does in a document's */}
+      <MentionInput
+        value={title} onChange={setTitle}
+        onMentionPerson={p => setLinkedIds(prev => prev.has(p.id) ? prev : new Set(prev).add(p.id))}
+        placeholder={t('timeline.titlePh')}
+        title={t('timeline.mentionPersonInTitle')}
         className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
 
       {/* Date + Place */}
@@ -436,9 +480,14 @@ export function EventEditor({ event, prefill, personId, persons = [], onSaved, o
           className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400" />
       </div>
 
-      {/* Description */}
-      <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder={t('timeline.descPh')} rows={2}
-        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 resize-none" />
+      {/* Description — the same surface a document description gets */}
+      <DescriptionField
+        owner={{ kind: 'event', id: localEvent?.id ?? null }}
+        value={description} onChange={setDescription}
+        citations={descCitations} onCitationsChange={setDescCitations}
+        onMentionPerson={p => setLinkedIds(prev => prev.has(p.id) ? prev : new Set(prev).add(p.id))}
+        placeholder={t('timeline.descPh')}
+        className="w-full min-h-[72px] max-h-[40vh] bg-zinc-800 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 outline-none focus:border-brand-400 resize-y leading-relaxed" />
 
       {/* Photos section — always visible when editing existing, shown as hint when new */}
       {isExisting ? (
@@ -640,12 +689,13 @@ function AutoEventRow({ ev, isLast, onHide }: { ev: AutoEvent; isLast: boolean; 
 
 // ── ManualEventRow ─────────────────────────────────────────────────────────────
 
-function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage, currentPersonId }: {
+function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage, onNavToPerson, currentPersonId }: {
   ev: PersonEvent
   isLast: boolean
   dimmed: boolean
   onEdit: () => void
   onNavToEventPage?: () => void
+  onNavToPerson?: (personId: number) => void
   currentPersonId?: number
 }) {
   const t = useT()
@@ -654,6 +704,15 @@ function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage, currentP
   const dateStr = formatEventDate(ev.date, ev.year, dateLocale)
   const participants = ev.persons.filter(ep => ep.role === 'participant')
   const isFeatured = currentPersonId != null && ev.persons.some(ep => ep.person_id === currentPersonId && ep.featured)
+
+  /** A mentioned name is a link to that person, wherever it was rendered. */
+  function handleRefClick(e: React.MouseEvent) {
+    const anchor = (e.target as Element).closest('a.note-person-ref')
+    if (!anchor) return
+    e.preventDefault(); e.stopPropagation()
+    const m = anchor.getAttribute('href')?.match(/person-ref-(\d+)$/)
+    if (m && onNavToPerson) onNavToPerson(parseInt(m[1]))
+  }
 
   return (
     <div className={`flex gap-3 transition-opacity ${dimmed ? 'opacity-40' : ''}`}>
@@ -673,12 +732,19 @@ function ManualEventRow({ ev, isLast, dimmed, onEdit, onNavToEventPage, currentP
           <div className="flex items-start gap-2">
             <div className="flex-1 min-w-0">
               <p className={`text-xs font-medium leading-snug ${isFeatured ? 'text-amber-100' : 'text-zinc-200'}`}>
-                {isFeatured && <span className="mr-1 text-amber-400">★</span>}{ev.title || typeLabel}
+                {isFeatured && <span className="mr-1 text-amber-400">★</span>}
+                {ev.title
+                  ? <span onClick={handleRefClick} dangerouslySetInnerHTML={{ __html: renderTitleMentions(ev.title) }} />
+                  : typeLabel}
               </p>
               {ev.title && <p className="text-xs text-zinc-500">{typeLabel}</p>}
               {dateStr && <p className="text-xs text-zinc-500 mt-0.5">{dateStr}</p>}
               {ev.place && <p className="text-xs text-zinc-500 mt-0.5">{ev.place}</p>}
-              {ev.description && <p className="text-xs text-zinc-500 mt-1 leading-relaxed">{ev.description}</p>}
+              {ev.description && (
+                <div className="note-preview text-xs text-zinc-500 mt-1 leading-relaxed"
+                  onClick={handleRefClick}
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(ev.description, ev.description_citations) }} />
+              )}
             </div>
             <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover/ev:opacity-100 transition-all">
               {onNavToEventPage && (
@@ -740,11 +806,13 @@ interface Props {
   persons: PersonFull[]
   onNavigateToBio?: () => void
   onNavToEvent?: (eventId: number) => void
+  /** Where a person mentioned in an event's title or description leads. */
+  onNavToPerson?: (personId: number) => void
   autoPhotoEventType?: string | null
   onAutoPhotoConsumed?: () => void
 }
 
-export default function EventTimeline({ person, relations, persons, onNavigateToBio, onNavToEvent, autoPhotoEventType, onAutoPhotoConsumed }: Props) {
+export default function EventTimeline({ person, relations, persons, onNavigateToBio, onNavToEvent, onNavToPerson, autoPhotoEventType, onAutoPhotoConsumed }: Props) {
   const t = useT()
   const { lang } = useSettings()
   const dateLocale = useDateLocale()
@@ -975,6 +1043,7 @@ export default function EventTimeline({ person, relations, persons, onNavigateTo
               currentPersonId={person.id}
               onEdit={() => { setEditingEvent(ev); setIsCreating(false); setAutoEventPrefill(null) }}
               onNavToEventPage={onNavToEvent ? () => onNavToEvent(ev.id) : undefined}
+              onNavToPerson={onNavToPerson}
             />
           )
         })}

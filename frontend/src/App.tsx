@@ -356,7 +356,7 @@ function AppInner() {
           {tab === 'genealogy' ? (
             <FamilyTreeTab onExportStart={onExportStart} onExportEnd={onExportEnd} navTarget={genealogyNavTarget} onNavConsumed={() => setGenealogyNavTarget(null)} onNavToEvent={navToEvent} onNavToDocument={navToDocument} onPersonPanelOpenChange={setPersonPanelOpen} />
           ) : tab === 'events' ? (
-            <EventsTab navTarget={eventNavTarget} onNavConsumed={() => setEventNavTarget(null)} onNavToCluster={navToCluster} onExportStart={onExportStart} onExportEnd={onExportEnd} />
+            <EventsTab navTarget={eventNavTarget} onNavConsumed={() => setEventNavTarget(null)} onNavToCluster={navToCluster} onNavToGenealogy={navToGenealogy} onExportStart={onExportStart} onExportEnd={onExportEnd} />
           ) : tab === 'documents' ? (
             <DocumentsTab onNavToGenealogy={navToGenealogy} navTarget={documentsNavTarget} onNavConsumed={() => setDocumentsNavTarget(null)} />
           ) : (

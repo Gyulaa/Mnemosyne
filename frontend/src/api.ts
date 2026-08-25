@@ -562,6 +562,10 @@ export const api = {
     },
     promoteToSource: (eventId: number, title?: string, sourceType?: string) =>
       post<Source>(`${BASE}/events/${eventId}/promote-to-source`, { title, source_type: sourceType }),
+    addDescriptionCitation: (eventId: number, fields: { source_id?: number; marker: number; detail?: string; custom_label?: string }) =>
+      post<NoteCitation>(`${BASE}/events/${eventId}/description-citations`, fields),
+    deleteDescriptionCitation: (id: number) =>
+      fetchJson<{ ok: boolean }>(`${BASE}/event-description-citations/${id}`, { method: 'DELETE' }),
   },
   faceThumbnailUrl: (id: number, size = 160) =>
     `${BASE}/faces/${id}/thumbnail?size=${size}`,

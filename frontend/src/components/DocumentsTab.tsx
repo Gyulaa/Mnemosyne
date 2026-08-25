@@ -9,7 +9,7 @@ import { DatePartPicker } from './EventTimeline'
 import { useT, useSettings, displayPersonName } from '../SettingsContext'
 import { type useFamilyContext } from '../familyContext'
 import { docTypeLabel } from '../docTypes'
-import { useAtMention } from '../mentions'
+import { MentionInput } from '../mentions'
 import { plainMentions, plainMarkdown, renderTitleMentions } from '../markdown'
 import { DescriptionField, persistDescriptionCitations } from './DescriptionField'
 import ScanReadModal from './ScanReadModal'
@@ -284,13 +284,15 @@ function TypeManagerModal({ onClose }: { onClose: () => void }) {
  * field has — type `@`, pick a person, and `@[Name](#pid-N)` replaces the `@…`
  * while they are linked to the document.
  *
- * The stored markup is identical to a Markdown body's, so the mention stays a
- * real reference to a person rather than a name that merely looks like one:
- * it survives a rename, renders as a clickable link, and tells the assistant
- * who the document is about. Everywhere a title has to be flat text — a
- * filename, an `alt`, a GEDCOM `TITL` — it goes through `plainMentions()`.
- * Linking stays one-way, as everywhere else: deleting the mention again does
- * not unlink the person.
+ * The wiring itself is `MentionInput` in `mentions.tsx`, shared with the event
+ * title field; this only supplies the document's wording and styling. The
+ * stored markup is identical to a Markdown body's, so the mention stays a real
+ * reference to a person rather than a name that merely looks like one: it
+ * survives a rename, renders as a clickable link, and tells the assistant who
+ * the document is about. Everywhere a title has to be flat text — a filename,
+ * an `alt`, a GEDCOM `TITL` — it goes through `plainMentions()`. Linking stays
+ * one-way, as everywhere else: deleting the mention again does not unlink the
+ * person.
  */
 function TitleField({ value, onChange, onMentionPerson }: {
   value: string
@@ -298,43 +300,13 @@ function TitleField({ value, onChange, onMentionPerson }: {
   onMentionPerson: (person: PersonFull) => void
 }) {
   const t = useT()
-  const { nameOrder } = useSettings()
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  const mention = useAtMention((person, ctx) => {
-    const input = inputRef.current
-    if (!input) return
-    const name = displayPersonName(person, nameOrder) || `Person ${person.id}`
-    const link = `@[${name}](#pid-${person.id})`
-    onChange(value.slice(0, ctx.atStart) + link + value.slice(input.selectionStart ?? value.length))
-    onMentionPerson(person)
-    mention.close()
-    requestAnimationFrame(() => {
-      const pos = ctx.atStart + link.length
-      input.selectionStart = input.selectionEnd = pos
-      input.focus()
-    })
-  })
-
   return (
-    <>
-      <input
-        ref={inputRef}
-        value={value}
-        onChange={e => {
-          onChange(e.target.value)
-          mention.sync(e.target, e.target.value, e.target.selectionStart ?? e.target.value.length)
-        }}
-        onKeyDown={e => { mention.handleKeyDown(e) }}
-        // The list closes itself on pick via onMouseDown/preventDefault, so a
-        // real blur here means the field was genuinely left.
-        onBlur={() => mention.close()}
-        placeholder={t('docs.titlePh')}
-        title={t('docs.mentionPersonInTitle')}
-        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
-      />
-      {mention.popup}
-    </>
+    <MentionInput
+      value={value} onChange={onChange} onMentionPerson={onMentionPerson}
+      placeholder={t('docs.titlePh')}
+      title={t('docs.mentionPersonInTitle')}
+      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 outline-none focus:border-brand-400"
+    />
   )
 }
 
@@ -390,7 +362,7 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
       })
       // Citations can only be written once the document has an id, so the ones
       // added while composing are held optimistically and flushed here.
-      if (descCitations.length > 0) await persistDescriptionCitations(created.id, [], descCitations)
+      if (descCitations.length > 0) await persistDescriptionCitations({ kind: 'document', id: created.id }, [], descCitations)
       qc.invalidateQueries({ queryKey: ['docs-all'] })
       for (const pid of selectedPersonIds) qc.invalidateQueries({ queryKey: ['person-docs', pid] })
       onDone()
@@ -462,7 +434,7 @@ function UploadModal({ persons, familyMap, types, onClose, onDone }: {
           </div>
 
           <DescriptionField
-            docId={null}
+            owner={{ kind: 'document', id: null }}
             value={description} onChange={setDescription}
             citations={descCitations} onCitationsChange={setDescCitations}
             onMentionPerson={p => setSelectedPersonIds(ids => ids.includes(p.id) ? ids : [...ids, p.id])}
@@ -579,7 +551,7 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
         year: date ? undefined : null,
         description: description.trim() || null,
       })
-      await persistDescriptionCitations(doc.id, initialCitations, descCitations)
+      await persistDescriptionCitations({ kind: 'document', id: doc.id }, initialCitations, descCitations)
       qc.invalidateQueries({ queryKey: ['docs-all'] })
       for (const pid of linkedIds) qc.invalidateQueries({ queryKey: ['person-docs', pid] })
       onClose()
@@ -616,7 +588,7 @@ function EditDocModal({ doc, types, persons, familyMap, onClose }: {
           </div>
 
           <DescriptionField
-            docId={doc.id}
+            owner={{ kind: 'document', id: doc.id }}
             value={description} onChange={setDescription}
             citations={descCitations} onCitationsChange={setDescCitations}
             onMentionPerson={p => { if (!linkedIds.has(p.id)) togglePerson(p.id) }}

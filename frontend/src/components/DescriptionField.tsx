@@ -1,15 +1,22 @@
 /**
- * The rich editing surface for a document's `description`: Markdown formatting,
- * `@` mentions and `[n]` citations against a source, another document or free
- * text.
+ * The rich editing surface for a `description`: Markdown formatting, `@`
+ * mentions and `[n]` citations against a source, another document or free text.
  *
- * Deliberately *controlled and save-less*. Two screens edit a description — the
- * carousel's side panel, where the description is the only thing being edited
- * and gets its own Save button, and the document edit modal, where it is one
- * field among several under the modal's single Save. A component that saved
- * itself could only serve the first, so the surface holds no draft state and
- * persisting is the caller's job via `persistDescriptionCitations()` and
- * `linkMentionedPersons()` below.
+ * Two kinds of record have a description — a document and an event — and they
+ * share this component rather than each growing their own editor. The `owner`
+ * prop is the whole of the difference: it decides which endpoints the two
+ * persist helpers below call, and which record a cited document must not be
+ * offered against (itself). Everything the user sees is identical on purpose,
+ * because the event tab having a plain textarea beside the document tab's rich
+ * one is exactly the drift this file exists to prevent.
+ *
+ * Deliberately *controlled and save-less*. The screens that edit a description
+ * save differently — the carousel's side panel, where the description is the
+ * only thing being edited and gets its own Save button; the document edit
+ * modal and the event editor, where it is one field among several under a
+ * single Save. A component that saved itself could only serve the first, so the
+ * surface holds no draft state and persisting is the caller's job via
+ * `persistDescriptionCitations()` and `linkMentionedPersons()` below.
  */
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -30,21 +37,34 @@ function ToolbarBtn({ onClick, title, children }: { onClick: () => void; title: 
 }
 
 /**
+ * What the description belongs to. `id` is null while the record is still being
+ * created — the upload modal edits a description before the document row
+ * exists, and the event editor before the event does — in which case citations
+ * stay optimistic until the caller flushes them with the id the create returns.
+ */
+export type DescriptionOwner =
+  | { kind: 'document'; id: number | null }
+  | { kind: 'event'; id: number | null }
+
+/**
  * Write a description's citation set to the server, as a diff against what it
  * held when editing started. A diff rather than a replace because `marker` is
  * the id the rendered `[n]` text points at — re-creating every row would
  * renumber citations the reader was already looking at.
  */
 export async function persistDescriptionCitations(
-  docId: number, before: NoteCitation[], after: NoteCitation[],
+  owner: DescriptionOwner, before: NoteCitation[], after: NoteCitation[],
 ): Promise<void> {
+  if (owner.id === null) return
+  const group = owner.kind === 'document' ? api.documents : api.events
+  const ownerId = owner.id
   // Rows still carrying a real (positive) id survived the edit; negative ids
   // are optimistic rows added in this session and not on the server yet.
   const kept = new Set(after.filter(c => c.id > 0).map(c => c.id))
-  for (const c of before) if (!kept.has(c.id)) await api.documents.deleteDescriptionCitation(c.id)
+  for (const c of before) if (!kept.has(c.id)) await group.deleteDescriptionCitation(c.id)
   for (const c of after) {
     if (c.id < 0) {
-      await api.documents.addDescriptionCitation(docId, {
+      await group.addDescriptionCitation(ownerId, {
         source_id: c.source_id ?? undefined,
         marker: c.marker,
         detail: c.detail ?? undefined,
@@ -58,22 +78,28 @@ export async function persistDescriptionCitations(
  * Link everyone newly mentioned. One-way on purpose, matching the text-document
  * body: mentioning someone links them, deleting the mention later does not
  * unlink them — the person picker is how a link is removed.
+ *
+ * On an event the link is a participant row, which is what "linked to this
+ * event" means there; it is added with the `participant` role, never `primary`,
+ * since being written about is not being the subject.
  */
 export async function linkMentionedPersons(
-  docId: number, before: Set<number>, after: Set<number>,
+  owner: DescriptionOwner, before: Set<number>, after: Set<number>,
 ): Promise<void> {
-  for (const pid of after) if (!before.has(pid)) await api.documents.linkPerson(docId, pid)
+  if (owner.id === null) return
+  const ownerId = owner.id
+  for (const pid of after) {
+    if (before.has(pid)) continue
+    if (owner.kind === 'document') await api.documents.linkPerson(ownerId, pid)
+    else await api.events.addPerson(ownerId, pid, 'participant').catch(() => { /* already a participant */ })
+  }
 }
 
 export function DescriptionField({
-  docId, value, onChange, citations, onCitationsChange, onMentionPerson, autoFocus, className,
+  owner, value, onChange, citations, onCitationsChange, onMentionPerson, autoFocus, className, placeholder,
 }: {
-  /**
-   * The document being described, or `null` while it is still being created —
-   * the upload modal edits a description before the row exists. Citations added
-   * against `null` stay optimistic until the caller saves them with the new id.
-   */
-  docId: number | null
+  /** The document or event being described — see `DescriptionOwner`. */
+  owner: DescriptionOwner
   value: string
   onChange: (next: string) => void
   citations: NoteCitation[]
@@ -83,6 +109,7 @@ export function DescriptionField({
   autoFocus?: boolean
   /** Sizing for the textarea — the panel fills its column, the modal does not. */
   className?: string
+  placeholder?: string
 }) {
   const t = useT()
   const { nameOrder } = useSettings()
@@ -165,7 +192,7 @@ export function DescriptionField({
     })
   }
   function addOptimisticCitation(c: Omit<NoteCitation, 'id' | 'note_id'>) {
-    onCitationsChange([...citations, { ...c, id: -Date.now(), note_id: docId ?? 0 } as NoteCitation])
+    onCitationsChange([...citations, { ...c, id: -Date.now(), note_id: owner.id ?? 0 } as NoteCitation])
     setShowCitePicker(false)
     setCiteSearch('')
     setCustomCiteText('')
@@ -201,7 +228,7 @@ export function DescriptionField({
   }
 
   const citeableDocs = allDocs
-    .filter(d => d.id !== docId)
+    .filter(d => !(owner.kind === 'document' && d.id === owner.id))
     .filter(d => plainMentions(d.title || d.filename).toLowerCase().includes(citeSearch.toLowerCase()))
     .slice(0, 40)
   const citeableSources = sources
@@ -216,6 +243,7 @@ export function DescriptionField({
         <ToolbarBtn onClick={() => wrapSelection('*', '*')} title={t('textDoc.italic')}><em>I</em></ToolbarBtn>
         <ToolbarBtn onClick={() => wrapSelection('~~', '~~')} title={t('textDoc.strike')}><span className="line-through">S</span></ToolbarBtn>
         <span className="w-px h-4 bg-zinc-700 mx-1" />
+        <ToolbarBtn onClick={() => insertLinePrefix('## ')} title={t('notes.heading')}>H</ToolbarBtn>
         <ToolbarBtn onClick={() => insertLinePrefix('- ')} title={t('textDoc.list')}>• —</ToolbarBtn>
         <ToolbarBtn onClick={() => insertLinePrefix('> ')} title={t('textDoc.quote')}>"</ToolbarBtn>
         <span className="w-px h-4 bg-zinc-700 mx-1" />
@@ -293,7 +321,7 @@ export function DescriptionField({
 
       <textarea ref={textareaRef} autoFocus={autoFocus} value={value} onChange={handleChange}
         onKeyDown={e => { mention.handleKeyDown(e) }}
-        placeholder={t('docs.descPh')}
+        placeholder={placeholder ?? t('docs.descPh')}
         className={className ?? 'flex-1 w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400 resize-none leading-relaxed'} />
 
       {citations.length > 0 && (

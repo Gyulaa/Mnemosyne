@@ -1,42 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
-import type { PersonEvent, PersonFull, EventImage } from '../types'
+import type { PersonEvent, PersonFull, EventImage, NoteCitation } from '../types'
 import { api } from '../api'
 import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './EventTimeline'
 import { useT, useDateLocale } from '../SettingsContext'
 import { ImagePreviewModal } from './ImagePreviewModal'
-
-marked.setOptions({ breaks: true, gfm: true })
-
-function renderMd(text: string): string {
-  const html = marked.parse(text) as string
-  return DOMPurify.sanitize(html, { ADD_ATTR: ['href', 'class', 'title'] })
-}
-
-// ── Toolbar button ─────────────────────────────────────────────────────────────
-
-function TBtn({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) {
-  return (
-    <button type="button" onMouseDown={e => { e.preventDefault(); onClick() }} title={title}
-      className="px-2 py-0.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-700 rounded transition-colors font-mono">
-      {children}
-    </button>
-  )
-}
+import { DescriptionField, persistDescriptionCitations, linkMentionedPersons } from './DescriptionField'
+import { renderMarkdown, renderTitleMentions, plainMentions } from '../markdown'
 
 
 // ── EventDetailView ────────────────────────────────────────────────────────────
 
-function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToCluster, onExportStart, onExportEnd }: {
+function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToCluster, onNavToGenealogy, onExportStart, onExportEnd }: {
   ev: PersonEvent
   persons: PersonFull[]
   onBack: () => void
   onEdit: () => void
   onEventUpdated: (updated: PersonEvent) => void
   onNavToCluster?: (clusterId: number) => void
+  onNavToGenealogy?: (personId: number) => void
   onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
@@ -58,7 +41,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
       const blob = await api.events.exportImagesZip(ev.id, controller.signal)
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
-      const safe = (ev.title ?? 'event').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'event'
+      const safe = (plainMentions(ev.title ?? '') || 'event').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'event'
       a.href = url
       a.download = `event_${ev.id}_${safe}.zip`
       a.click()
@@ -73,55 +56,50 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
   }
   const [editingDesc, setEditingDesc] = useState(false)
   const [descDraft, setDescDraft] = useState('')
+  const [descCitations, setDescCitations] = useState<NoteCitation[]>([])
+  const [descLinkedIds, setDescLinkedIds] = useState<Set<number>>(new Set())
   const [savingDesc, setSavingDesc] = useState(false)
   const [togglingSource, setTogglingSource] = useState(false)
-  const descRef = useRef<HTMLTextAreaElement>(null)
 
   const typeLabel = t(EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.key ?? ev.event_type)
   const dateStr = formatEventDate(ev.date, ev.year, dateLocale)
 
   function startEditDesc() {
     setDescDraft(ev.description ?? '')
+    setDescCitations(ev.description_citations)
+    setDescLinkedIds(new Set(ev.persons.map(ep => ep.person_id)))
     setEditingDesc(true)
-    requestAnimationFrame(() => descRef.current?.focus())
-  }
-
-  function wrapDesc(before: string, after: string) {
-    const ta = descRef.current
-    if (!ta) return
-    const s = ta.selectionStart, e = ta.selectionEnd
-    const sel = descDraft.slice(s, e)
-    const next = descDraft.slice(0, s) + before + sel + after + descDraft.slice(e)
-    setDescDraft(next)
-    requestAnimationFrame(() => {
-      ta.selectionStart = s + before.length
-      ta.selectionEnd = s + before.length + sel.length
-      ta.focus()
-    })
-  }
-
-  function prefixDesc(p: string) {
-    const ta = descRef.current
-    if (!ta) return
-    const s = ta.selectionStart
-    const ls = descDraft.lastIndexOf('\n', s - 1) + 1
-    const next = descDraft.slice(0, ls) + p + descDraft.slice(ls)
-    setDescDraft(next)
-    requestAnimationFrame(() => {
-      ta.selectionStart = ta.selectionEnd = s + p.length
-      ta.focus()
-    })
   }
 
   async function saveDesc() {
     setSavingDesc(true)
     try {
-      const updated = await api.events.update(ev.id, { description: descDraft.trim() || undefined })
-      onEventUpdated(updated)
+      const owner = { kind: 'event' as const, id: ev.id }
+      const updated = await api.events.update(ev.id, { description: descDraft.trim() || null })
+      // Someone named in the description belongs in the event, the same way a
+      // person mentioned in a document's description is linked to it. One-way:
+      // deleting the mention later leaves the participant alone.
+      await linkMentionedPersons(owner, new Set(ev.persons.map(ep => ep.person_id)), descLinkedIds)
+      await persistDescriptionCitations(owner, ev.description_citations, descCitations)
+      // Re-read: the citations now carry server ids and the participant list
+      // may have grown, and both are on screen the moment the editor closes.
+      const fresh = (await api.events.list()).find(e => e.id === ev.id)
+      onEventUpdated(fresh ?? updated)
+      qc.invalidateQueries({ queryKey: ['events'] })
+      for (const pid of descLinkedIds) qc.invalidateQueries({ queryKey: ['person-events', pid] })
       setEditingDesc(false)
     } finally {
       setSavingDesc(false)
     }
+  }
+
+  /** A mentioned name is a link to that person's page. */
+  function handleRefClick(e: React.MouseEvent) {
+    const anchor = (e.target as Element).closest('a.note-person-ref')
+    if (!anchor) return
+    e.preventDefault()
+    const m = anchor.getAttribute('href')?.match(/person-ref-(\d+)$/)
+    if (m && onNavToGenealogy) onNavToGenealogy(parseInt(m[1]))
   }
 
   async function handleToggleSource() {
@@ -132,7 +110,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
         await api.sources.delete(ev.source_id)
         onEventUpdated({ ...ev, source_id: null })
       } else {
-        const source = await api.events.promoteToSource(ev.id, ev.title ?? typeLabel, 'event')
+        const source = await api.events.promoteToSource(ev.id, plainMentions(ev.title ?? '') || typeLabel, 'event')
         onEventUpdated({ ...ev, source_id: source.id })
       }
       qc.invalidateQueries({ queryKey: ['sources'] })
@@ -158,7 +136,7 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
         <svg className="w-3.5 h-3.5 text-zinc-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
-        <span className="text-sm font-semibold text-zinc-300 truncate">{ev.title || typeLabel}</span>
+        <span className="text-sm font-semibold text-zinc-300 truncate">{plainMentions(ev.title ?? '') || typeLabel}</span>
       </div>
 
       {/* Header card */}
@@ -204,7 +182,10 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 mb-1">
                 <EventIcon type={ev.event_type} />
-                <h1 className="text-xl font-bold text-zinc-100">{ev.title || typeLabel}</h1>
+                {ev.title
+                  ? <h1 className="text-xl font-bold text-zinc-100" onClick={handleRefClick}
+                      dangerouslySetInnerHTML={{ __html: renderTitleMentions(ev.title) }} />
+                  : <h1 className="text-xl font-bold text-zinc-100">{typeLabel}</h1>}
               </div>
               {ev.title && <p className="text-sm text-zinc-500 ml-7">{typeLabel}</p>}
               {(dateStr || ev.place) && (
@@ -282,26 +263,17 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
             </div>
 
             {editingDesc ? (
-              <div>
-                {/* Markdown toolbar */}
-                <div className="flex items-center gap-0.5 px-3 py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'rgba(255,255,255,0.02)' }}>
-                  <TBtn onClick={() => wrapDesc('**', '**')} title={t('notes.bold')}><strong>B</strong></TBtn>
-                  <TBtn onClick={() => wrapDesc('*', '*')} title={t('notes.italic')}><em>I</em></TBtn>
-                  <TBtn onClick={() => wrapDesc('~~', '~~')} title={t('notes.strikethrough')}><span className="line-through">S</span></TBtn>
-                  <span className="w-px h-4 bg-zinc-700 mx-1" />
-                  <TBtn onClick={() => prefixDesc('## ')} title={t('notes.heading')}>H</TBtn>
-                  <TBtn onClick={() => prefixDesc('- ')} title={t('notes.list')}>• —</TBtn>
-                  <TBtn onClick={() => prefixDesc('> ')} title={t('notes.quote')}>"</TBtn>
-                </div>
-                <textarea
-                  ref={descRef}
-                  value={descDraft}
-                  onChange={e => setDescDraft(e.target.value)}
+              <div className="px-5 py-3 space-y-2">
+                <DescriptionField
+                  owner={{ kind: 'event', id: ev.id }}
+                  value={descDraft} onChange={setDescDraft}
+                  citations={descCitations} onCitationsChange={setDescCitations}
+                  onMentionPerson={pp => setDescLinkedIds(prev => prev.has(pp.id) ? prev : new Set(prev).add(pp.id))}
                   placeholder={t('events.mdPlaceholder')}
-                  rows={6}
-                  className="w-full bg-transparent px-5 py-3 text-sm text-zinc-200 placeholder-zinc-600 outline-none resize-y leading-relaxed font-mono"
+                  autoFocus
+                  className="w-full min-h-[160px] max-h-[50vh] bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 outline-none focus:border-brand-400 resize-y leading-relaxed"
                 />
-                <div className="flex items-center gap-2 px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                <div className="flex items-center gap-2 pt-1">
                   <button
                     onClick={saveDesc}
                     disabled={savingDesc}
@@ -320,7 +292,8 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
             ) : ev.description ? (
               <div
                 className="note-content px-5 py-4 text-sm text-zinc-300 leading-relaxed"
-                dangerouslySetInnerHTML={{ __html: renderMd(ev.description) }}
+                onClick={handleRefClick}
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(ev.description, ev.description_citations) }}
               />
             ) : (
               <div className="px-5 py-6">
@@ -448,11 +421,12 @@ function EventDetailView({ ev, persons, onBack, onEdit, onEventUpdated, onNavToC
 
 // ── EventCard ─────────────────────────────────────────────────────────────────
 
-function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
+function EventCard({ ev, onClick, onEdit, onTogglePrivacy, onNavToGenealogy }: {
   ev: PersonEvent
   onClick: () => void
   onEdit: () => void
   onTogglePrivacy: (evId: number, isPrivate: boolean) => void
+  onNavToGenealogy?: (personId: number) => void
 }) {
   const t = useT()
   const dateLocale = useDateLocale()
@@ -501,7 +475,19 @@ function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <EventIcon type={ev.event_type} />
-              <p className="text-xs font-semibold text-zinc-100 truncate">{ev.title || typeLabel}</p>
+              {ev.title ? (
+                <p className="text-xs font-semibold text-zinc-100 truncate"
+                  onClick={e => {
+                    const anchor = (e.target as Element).closest('a.note-person-ref')
+                    if (!anchor) return
+                    e.preventDefault(); e.stopPropagation()
+                    const m = anchor.getAttribute('href')?.match(/person-ref-(\d+)$/)
+                    if (m && onNavToGenealogy) onNavToGenealogy(parseInt(m[1]))
+                  }}
+                  dangerouslySetInnerHTML={{ __html: renderTitleMentions(ev.title) }} />
+              ) : (
+                <p className="text-xs font-semibold text-zinc-100 truncate">{typeLabel}</p>
+              )}
             </div>
             {ev.title && <p className="text-xs text-zinc-500 mt-0.5 ml-5">{typeLabel}</p>}
             {dateStr && <p className="text-xs text-zinc-500 mt-0.5 ml-5">{dateStr}</p>}
@@ -560,10 +546,12 @@ function EventCard({ ev, onClick, onEdit, onTogglePrivacy }: {
 
 // ── EventsTab ─────────────────────────────────────────────────────────────────
 
-export default function EventsTab({ navTarget, onNavConsumed, onNavToCluster, onExportStart, onExportEnd }: {
+export default function EventsTab({ navTarget, onNavConsumed, onNavToCluster, onNavToGenealogy, onExportStart, onExportEnd }: {
   navTarget?: { eventId: number; key: number } | null
   onNavConsumed?: () => void
   onNavToCluster?: (clusterId: number) => void
+  /** Where a person mentioned in an event's title or description leads. */
+  onNavToGenealogy?: (personId: number) => void
   onExportStart?: (cancelFn: () => void) => void
   onExportEnd?: (error?: string) => void
 }) {
@@ -649,7 +637,7 @@ export default function EventsTab({ navTarget, onNavConsumed, onNavToCluster, on
   if (showEditor) {
     const editorTitle = editorIsNew
       ? t('events.newEvent')
-      : (editingEvent?.title ?? (t(EVENT_TYPE_OPTIONS.find(o => o.value === editingEvent?.event_type)?.key ?? '') || t('events.editEvent')))
+      : (plainMentions(editingEvent?.title ?? '') || (t(EVENT_TYPE_OPTIONS.find(o => o.value === editingEvent?.event_type)?.key ?? '') || t('events.editEvent')))
 
     return (
       <div className="max-w-2xl mx-auto px-6 py-8">
@@ -661,7 +649,7 @@ export default function EventsTab({ navTarget, onNavConsumed, onNavToCluster, on
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-            {viewingEvent !== null && !isCreating ? (editingEvent?.title || t(EVENT_TYPE_OPTIONS.find(o => o.value === editingEvent?.event_type)?.key ?? '') || t('events.noTitle')) : t('events.heading')}
+            {viewingEvent !== null && !isCreating ? (plainMentions(editingEvent?.title ?? '') || t(EVENT_TYPE_OPTIONS.find(o => o.value === editingEvent?.event_type)?.key ?? '') || t('events.noTitle')) : t('events.heading')}
           </button>
           <svg className="w-3.5 h-3.5 text-zinc-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
@@ -690,6 +678,7 @@ export default function EventsTab({ navTarget, onNavConsumed, onNavToCluster, on
         onEdit={() => openEdit(viewingEvent)}
         onEventUpdated={updated => setViewingEvent(updated)}
         onNavToCluster={onNavToCluster}
+        onNavToGenealogy={onNavToGenealogy}
         onExportStart={onExportStart}
         onExportEnd={onExportEnd}
       />
@@ -777,6 +766,7 @@ export default function EventsTab({ navTarget, onNavConsumed, onNavToCluster, on
                 await api.events.togglePrivacy(evId, isPrivate)
                 refetch()
               }}
+              onNavToGenealogy={onNavToGenealogy}
             />
           ))}
         </div>

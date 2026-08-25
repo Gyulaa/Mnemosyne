@@ -779,7 +779,7 @@ export function NoteCard({ note, sources, persons, relations, ops, onUpdated, on
     }
     if (citation.source_type === 'event' && onNavToEvent && personId != null) {
       const cached = qc.getQueryData<PersonEvent[]>(['person-events', personId])
-      const find = (events: PersonEvent[]) => events.find(e => e.title === citation.source_title)
+      const find = (events: PersonEvent[]) => events.find(e => plainMentions(e.title ?? '') === citation.source_title)
       if (cached) {
         const match = find(cached)
         if (match) { onNavToEvent(match.id); return }

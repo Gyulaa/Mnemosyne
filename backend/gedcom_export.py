@@ -432,13 +432,15 @@ def build_gedcom_zip(
                 if not ev:
                     continue
                 ev_date = _gedcom_date(ev['date'], ev['year'])
-                ev_type = ev['title'] or ev['event_type'] or 'Event'
+                # Title and description carry @ mention markup and Markdown
+                # like any other mentionable text; GEDCOM wants plain lines.
+                ev_type = _strip_markdown(ev['title'] or '') or ev['event_type'] or 'Event'
                 lines.append("1 EVEN")
                 lines.append(f"2 TYPE {_safe(ev_type)}")
                 if ev_date:       lines.append(f"2 DATE {ev_date}")
                 if ev['place']:   lines.append(f"2 PLAC {_safe(ev['place'])}")
                 if ev['description']:
-                    _emit_note(2, ev['description'], lines)
+                    _emit_note(2, _strip_markdown(ev['description']), lines)
 
         # Documents
         if include_documents:

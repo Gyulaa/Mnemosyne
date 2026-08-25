@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, object_session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentDescriptionCitation as DBDocumentDescriptionCitation, DocumentImage as DBDocumentImage, DocumentFile as DBDocumentFile, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage, ChatThread as DBChatThread, ChatMessage as DBChatMessage, ChatToolCall as DBChatToolCall, TranscriptBatch as DBTranscriptBatch, TranscriptPage as DBTranscriptPage, TranscriptQuestion as DBTranscriptQuestion
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentDescriptionCitation as DBDocumentDescriptionCitation, DocumentImage as DBDocumentImage, DocumentFile as DBDocumentFile, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage, EventDescriptionCitation as DBEventDescriptionCitation, ChatThread as DBChatThread, ChatMessage as DBChatMessage, ChatToolCall as DBChatToolCall, TranscriptBatch as DBTranscriptBatch, TranscriptPage as DBTranscriptPage, TranscriptQuestion as DBTranscriptQuestion
 from . import scanner as scanner_mod
 from . import clusterer
 from .clusterer import recompute_person_subclusters
@@ -1809,11 +1809,18 @@ def _doc_person_dict(p: "DBPerson") -> dict:
     }
 
 
-def _doc_citation_dict(c: "DBDocumentCitation") -> dict:
+def _citation_row_dict(c, owner_id: int) -> dict:
+    """One `[n]` reference, whatever it hangs off.
+
+    Document bodies, document descriptions and event descriptions all store the
+    same five columns and the frontend renders them with one component, so they
+    serialise identically; only the owner id differs and it travels as
+    `note_id` because that is the name `NoteCitation` has always used.
+    """
     s = c.source
     return {
         "id": c.id,
-        "note_id": c.document_id,
+        "note_id": owner_id,
         "source_id": c.source_id,
         "marker": c.marker,
         "detail": c.detail,
@@ -1825,6 +1832,14 @@ def _doc_citation_dict(c: "DBDocumentCitation") -> dict:
         "source_year": s.year if s else None,
         "source_author": s.author if s else None,
     }
+
+
+def _doc_citation_dict(c: "DBDocumentCitation") -> dict:
+    return _citation_row_dict(c, c.document_id)
+
+
+def _event_citation_dict(c: "DBEventDescriptionCitation") -> dict:
+    return _citation_row_dict(c, c.event_id)
 
 
 def _doc_image_dict(di: "DBDocumentImage") -> dict:
@@ -2247,6 +2262,10 @@ def delete_person(person_id: int, db: Session = Depends(get_db)):
             orphaned = {"ids": event_ids}
             conn.execute(text(
                 "DELETE FROM event_images WHERE event_id IN :ids "
+                "AND event_id NOT IN (SELECT event_id FROM event_persons)"
+            ).bindparams(bindparam("ids", expanding=True)), orphaned)
+            conn.execute(text(
+                "DELETE FROM event_description_citations WHERE event_id IN :ids "
                 "AND event_id NOT IN (SELECT event_id FROM event_persons)"
             ).bindparams(bindparam("ids", expanding=True)), orphaned)
             conn.execute(text(
@@ -3172,8 +3191,10 @@ def promote_document_to_source(doc_id: int, body: PromoteToSourceRequest, db: Se
             inferred_type = "register"
     s = DBSource(
         # The source's title is plain text everywhere it is shown, so the
-        # document's mention markup must not travel into it.
-        title=body.title or _plain_mentions(d.title) or d.filename,
+        # document's mention markup must not travel into it — and it is
+        # flattened whichever way the title arrives, since every caller passes
+        # the document's own stored title as `body.title`.
+        title=_plain_mentions(body.title or d.title) or d.filename,
         source_type=body.source_type or inferred_type,
         year=d.year,
         document_id=doc_id,
@@ -3193,10 +3214,10 @@ def promote_event_to_source(event_id: int, body: PromoteToSourceRequest, db: Ses
     if ev.source:
         return _source_dict(ev.source)
     s = DBSource(
-        title=body.title or ev.title or ev.event_type,
+        title=_plain_mentions(body.title or ev.title) or ev.event_type,
         source_type=body.source_type or "event",
         year=ev.year,
-        description=" · ".join(filter(None, [ev.date, ev.place, ev.description])) or None,
+        description=" · ".join(filter(None, [ev.date, ev.place, _plain_markdown(ev.description) or None])) or None,
         event_id=event_id,
         created_at=datetime.now().isoformat(),
     )
@@ -3639,6 +3660,10 @@ def _event_dict(ev: DBEvent) -> dict:
         "source_id": ev.source.id if ev.source else None,
         "persons": [_event_person_dict(ep, face_map) for ep in ev.event_persons],
         "images": [_event_image_dict(ei) for ei in ev.event_images],
+        "description_citations": [
+            _event_citation_dict(c)
+            for c in sorted(ev.description_citations or [], key=lambda c: c.marker)
+        ],
     }
 
 
@@ -3691,7 +3716,11 @@ def update_event(event_id: int, body: EventUpdate, db: Session = Depends(get_db)
     ev = db.get(DBEvent, event_id)
     if not ev:
         raise HTTPException(404, "Event not found")
-    for field, val in body.model_dump(exclude_none=True).items():
+    # `exclude_unset`, not `exclude_none`: a field the client sent as null is a
+    # field the user cleared, and with `exclude_none` it was dropped here — so
+    # emptying a title, a place or a description saved silently and changed
+    # nothing. A field simply not sent is still left alone.
+    for field, val in body.model_dump(exclude_unset=True).items():
         setattr(ev, field, val)
     # Keep year in sync with date
     if body.date is not None and body.year is None:
@@ -3725,7 +3754,7 @@ def export_event_images_zip(event_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Event has no images")
 
     event_imgs = [ei.image for ei in ev.event_images if ei.image]
-    safe_title = re.sub(r'[^\w\s-]', '', ev.title or 'event').strip().replace(' ', '_') or 'event'
+    safe_title = re.sub(r'[^\w\s-]', '', _plain_mentions(ev.title) or 'event').strip().replace(' ', '_') or 'event'
     filename = f"event_{event_id}_{safe_title}.zip"
 
     return StreamingResponse(
@@ -3797,6 +3826,36 @@ def remove_event_person(ep_id: int, db: Session = Depends(get_db)):
     db.commit()
     ev = db.get(DBEvent, event_id)
     return _event_dict(ev) if ev else {"ok": True}
+
+
+@app.post("/api/events/{event_id}/description-citations", status_code=201)
+def add_event_description_citation(event_id: int, body: NoteCitationCreate, db: Session = Depends(get_db)):
+    ev = db.get(DBEvent, event_id)
+    if not ev:
+        raise HTTPException(404, "Event not found")
+    if body.source_id is None and not body.custom_label:
+        raise HTTPException(400, "Either source_id or custom_label is required")
+    c = DBEventDescriptionCitation(
+        event_id=event_id,
+        source_id=body.source_id,
+        marker=body.marker,
+        detail=body.detail,
+        custom_label=body.custom_label,
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return _event_citation_dict(c)
+
+
+@app.delete("/api/event-description-citations/{citation_id}")
+def delete_event_description_citation(citation_id: int, db: Session = Depends(get_db)):
+    c = db.get(DBEventDescriptionCitation, citation_id)
+    if not c:
+        raise HTTPException(404, "Citation not found")
+    db.delete(c)
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/images/{image_id}/events")

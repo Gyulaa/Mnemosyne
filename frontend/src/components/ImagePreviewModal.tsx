@@ -4,6 +4,7 @@ import type { ImageItem, ImagePerson, PersonEvent } from '../types'
 import { api } from '../api'
 import { useT, useDateLocale } from '../SettingsContext'
 import { useBackdropClose } from '../modalBackdrop'
+import { plainMentions } from '../markdown'
 
 const STATUS_CLS: Record<string, string> = {
   done:    'bg-green-900/50 text-green-400 border-green-800',
@@ -157,7 +158,7 @@ export function ImagePreviewModal({
                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                     </svg>
-                    {ev.title ?? ev.event_type}
+                    {plainMentions(ev.title ?? '') || ev.event_type}
                     {ev.year ? ` (${ev.year})` : ''}
                   </button>
                 ))}

@@ -345,6 +345,9 @@ class Event(Base):
     is_private = Column(Boolean, nullable=False, default=False, server_default="0")
     event_persons = relationship("EventPerson", back_populates="event", cascade="all, delete-orphan")
     event_images = relationship("EventImage", back_populates="event", cascade="all, delete-orphan")
+    description_citations = relationship(
+        "EventDescriptionCitation", back_populates="event", cascade="all, delete-orphan",
+    )
     source = relationship("Source", back_populates="event", uselist=False)
 
 
@@ -366,6 +369,31 @@ class EventImage(Base):
     image_id = Column(Integer, ForeignKey("images.id"), nullable=False, index=True)
     event = relationship("Event", back_populates="event_images")
     image = relationship("Image")
+
+
+class EventDescriptionCitation(Base):
+    """A [n] reference inside an event's `description` field.
+
+    The same shape as DocumentDescriptionCitation, and separate from it for the
+    same reason that one is separate from DocumentCitation: the owner differs,
+    so folding them together would mean a discriminator column and an
+    event/document ambiguity in every query that reads one.
+
+    Like every other citation table the FKs declare no ON DELETE action, so the
+    raw-SQL paths that delete an event (`delete_person`, `build_export_db`,
+    `execute_rollback`) have to clear these rows first — see the event-child
+    checklist in the README. The ORM path is covered by the cascade on
+    `Event.description_citations`.
+    """
+    __tablename__ = "event_description_citations"
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(Integer, ForeignKey("events.id"), nullable=False, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id"), nullable=True)
+    marker = Column(Integer, nullable=False)
+    detail = Column(String, nullable=True)
+    custom_label = Column(String, nullable=True)
+    event = relationship("Event", back_populates="description_citations")
+    source = relationship("Source")
 
 
 class ChatThread(Base):
@@ -1177,6 +1205,15 @@ def init_db_schema(engine):
         current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
         if current_version < 17:
             conn.execute(text("UPDATE schema_version SET version = 17"))
+            conn.commit()
+
+        # v17 -> v18: event_description_citations, so an event description can
+        # carry [n] references like a document description does. A new *table*,
+        # so `create_all` has already made it — the version bump only records
+        # that a database opened by an older build has caught up.
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 18:
+            conn.execute(text("UPDATE schema_version SET version = 18"))
             conn.commit()
 
 

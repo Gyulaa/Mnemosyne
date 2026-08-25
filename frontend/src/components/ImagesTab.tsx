@@ -7,6 +7,7 @@ import { EventEditor, EventIcon, EVENT_TYPE_OPTIONS, formatEventDate } from './E
 import { useT, useDateLocale, useSettings, displayPersonName } from '../SettingsContext'
 import { ImagePreviewModal } from './ImagePreviewModal'
 import { useBackdropClose } from '../modalBackdrop'
+import { plainMentions } from '../markdown'
 
 type FilterType = 'all' | 'done' | 'no_face' | 'error' | 'pending' | 'private'
 type SortOrder = 'id_desc' | 'exif_date_desc' | 'exif_date_asc' | 'filename_asc'
@@ -1065,7 +1066,7 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
     const q = search.toLowerCase()
     if (!q) return true
     const typeLabel = EVENT_TYPE_OPTIONS.find(o => o.value === ev.event_type)?.label ?? ''
-    return (ev.title ?? '').toLowerCase().includes(q)
+    return plainMentions(ev.title ?? '').toLowerCase().includes(q)
       || typeLabel.toLowerCase().includes(q)
       || (ev.place ?? '').toLowerCase().includes(q)
   })
@@ -1218,7 +1219,7 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
             </p>
             {selectedEvent && (
               <p className="text-xs text-zinc-500">
-                {selectedEvent.title ?? (EVENT_TYPE_OPTIONS.find(o => o.value === selectedEvent.event_type)?.label ?? selectedEvent.event_type)}
+                {plainMentions(selectedEvent.title ?? '') || (EVENT_TYPE_OPTIONS.find(o => o.value === selectedEvent.event_type)?.label ?? selectedEvent.event_type)}
               </p>
             )}
           </div>
@@ -1378,7 +1379,7 @@ function AttachToEventModal({ imageIds, onClose, onDone }: {
                     >
                       <div className="shrink-0"><EventIcon type={ev.event_type} /></div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-zinc-100 truncate">{ev.title || typeLabel}</p>
+                        <p className="text-xs font-medium text-zinc-100 truncate">{plainMentions(ev.title ?? '') || typeLabel}</p>
                         {ev.title && <p className="text-xs text-zinc-500">{typeLabel}</p>}
                         {(dateStr || ev.place) && (
                           <p className="text-xs text-zinc-500 truncate">{[dateStr, ev.place].filter(Boolean).join(' · ')}</p>

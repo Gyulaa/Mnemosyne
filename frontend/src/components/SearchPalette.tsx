@@ -83,8 +83,8 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
 
     for (const e of events) {
       if (
-        (e.title ?? '').toLowerCase().includes(q) ||
-        (e.description ?? '').toLowerCase().includes(q) ||
+        plainMentions(e.title ?? '').toLowerCase().includes(q) ||
+        plainMarkdown(e.description ?? '').toLowerCase().includes(q) ||
         (e.place ?? '').toLowerCase().includes(q)
       ) matched.push({ kind: 'event', id: e.id, event: e })
       if (matched.filter(r => r.kind === 'event').length >= 3) break
@@ -239,7 +239,7 @@ export default function SearchPalette({ open, onClose, onNavToGenealogy, onNavTo
                         </svg>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm text-zinc-100 truncate font-medium">{e.title ?? t('events.noTitle')}</p>
+                        <p className="text-sm text-zinc-100 truncate font-medium">{plainMentions(e.title ?? '') || t('events.noTitle')}</p>
                         {(e.date || e.place) && (
                           <p className="text-xs text-zinc-500 truncate">
                             {[e.date, e.place].filter(Boolean).join(' · ')}

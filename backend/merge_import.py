@@ -71,7 +71,7 @@ def read_zip_db(zip_data: bytes) -> dict:
     """
     Extract project.db from a Mnemosyne export ZIP and read genealogy tables.
     Returns dict with keys: persons, relations, documents, document_persons,
-    events, event_persons.
+    events, event_persons, event_description_citations.
     """
     with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
         if 'project.db' not in zf.namelist():
@@ -132,6 +132,10 @@ def read_zip_db(zip_data: bytes) -> dict:
             "SELECT event_id, person_id, role FROM event_persons"
         )
 
+        event_description_citations = _safe_rows(conn,
+            "SELECT id, event_id, source_id, marker, detail, custom_label FROM event_description_citations"
+        )
+
         # Clusters: only named (label >= 0) with a person assigned.
         clusters = _safe_rows(conn,
             "SELECT id, label, person_id FROM clusters WHERE label >= 0 AND person_id IS NOT NULL"
@@ -185,6 +189,7 @@ def read_zip_db(zip_data: bytes) -> dict:
         'person_notes':     person_notes,
         'events':           events,
         'event_persons':    event_persons,
+        'event_description_citations': event_description_citations,
         'clusters':         clusters,
         'faces':            faces,
         'images':           images,
@@ -746,7 +751,13 @@ def execute_merge(
             ev_id_remap[ev['id']] = new_ev_id
             for pid, role in local_participants:
                 conn.execute(
-                    "INSERT OR IGNORE INTO event_persons (event_id, person_id, role) VALUES (?,?,?)",
+                    # `featured` is NOT NULL with only a Python-side default, so
+                    # a raw insert that omits it violates the constraint — and
+                    # `OR IGNORE` swallows that, which is how every participant
+                    # of every merged event was silently dropped, leaving the
+                    # events in the project attached to nobody.
+                    "INSERT OR IGNORE INTO event_persons (event_id, person_id, role, featured) "
+                    "VALUES (?,?,?,0)",
                     (new_ev_id, pid, role),
                 )
             conn.commit()
@@ -1113,6 +1124,28 @@ def execute_merge(
                 "INSERT INTO document_description_citations (document_id, source_id, marker, detail, custom_label) "
                 "VALUES (?,?,?,?,?)",
                 (local_doc_id, local_src_id, ddc.get('marker'), ddc.get('detail'), ddc.get('custom_label')),
+            )
+        conn.commit()
+
+        # References inside an event's description — the same shape once more,
+        # keyed to the event rather than to a document.
+        for edc in incoming_data.get('event_description_citations', []):
+            local_ev_id = ev_id_remap.get(edc['event_id'])
+            if local_ev_id is None:
+                continue
+            local_src_id = src_id_remap.get(edc['source_id']) if edc.get('source_id') else None
+            if edc.get('source_id') and local_src_id is None:
+                continue
+            dup = conn.execute(
+                "SELECT id FROM event_description_citations WHERE event_id = ? AND marker IS ?",
+                (local_ev_id, edc.get('marker')),
+            ).fetchone()
+            if dup:
+                continue
+            conn.execute(
+                "INSERT INTO event_description_citations (event_id, source_id, marker, detail, custom_label) "
+                "VALUES (?,?,?,?,?)",
+                (local_ev_id, local_src_id, edc.get('marker'), edc.get('detail'), edc.get('custom_label')),
             )
         conn.commit()
 

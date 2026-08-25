@@ -56,7 +56,7 @@ function genericFileIcon(mime: string | null) {
  * The carousel panel's wrapper around the shared `DescriptionField`: it owns the
  * draft, the Save/Cancel pair and the persisting. The editing surface itself —
  * toolbar, mentions, citations — is in `DescriptionField.tsx`, shared with the
- * document edit modal.
+ * document edit modal and the event editor.
  */
 function DescriptionEditor({ docId, initialValue, initialCitations, initialLinkedIds, onSaved, onCancel }: {
   docId: number
@@ -77,8 +77,8 @@ function DescriptionEditor({ docId, initialValue, initialCitations, initialLinke
     setSaving(true); setErr(null)
     try {
       await api.documents.update(docId, { description: content.trim() || null })
-      await linkMentionedPersons(docId, initialLinkedIds, linkedIds)
-      await persistDescriptionCitations(docId, initialCitations, citations)
+      await linkMentionedPersons({ kind: 'document', id: docId }, initialLinkedIds, linkedIds)
+      await persistDescriptionCitations({ kind: 'document', id: docId }, initialCitations, citations)
       onSaved({ description: content.trim(), citations, linkedIds })
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Save failed')
@@ -90,7 +90,7 @@ function DescriptionEditor({ docId, initialValue, initialCitations, initialLinke
   return (
     <div className="flex-1 flex flex-col min-h-0 px-5 pb-4 gap-2">
       <DescriptionField
-        docId={docId}
+        owner={{ kind: 'document', id: docId }}
         value={content} onChange={setContent}
         citations={citations} onCitationsChange={setCitations}
         onMentionPerson={p => setLinkedIds(prev => prev.has(p.id) ? prev : new Set(prev).add(p.id))}

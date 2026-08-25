@@ -1,20 +1,20 @@
 /**
  * The `@` mention picker — one implementation for every field that has one.
  *
- * Three fields use it today (a text document's body, a document's description,
- * a document's title) and they used to carry three near-copies of this logic,
- * which is how they drifted apart: one showed relatives under the name, another
- * showed only the name. Given names repeat heavily within a family, a bare name
- * cannot be picked from reliably — so the row rendering lives here, once, and
- * every mention list shows the same thing.
+ * Five fields use it today — a text document's body, a document's description
+ * and title, an event's description and title — and the first three used to
+ * carry near-copies of this logic, which is how they drifted apart: one showed
+ * relatives under the name, another showed only the name. Given names repeat
+ * heavily within a family, a bare name cannot be picked from reliably — so the
+ * row rendering lives here, once, and every mention list shows the same thing.
  *
  * `useAtMention` owns the state (open/closed, query, keyboard cursor, caret
- * anchor) and hands back a ready-made `popup` to render. The caller keeps
- * ownership of the text: it says what an accepted mention *writes* into the
- * field, which differs — a Markdown body gets `@[name](#pid-N)`, a plain-text
- * title gets the bare name.
+ * anchor) and hands back a ready-made `popup` to render; the caller keeps
+ * ownership of the text and says what an accepted mention writes into the
+ * field. `MentionInput` at the bottom is that wiring for the one-line case, so
+ * a title field is a component rather than a copy of the same six callbacks.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { PersonFull } from './types'
 import { displayPersonName, useSettings, useT } from './SettingsContext'
@@ -147,4 +147,70 @@ export function useAtMention(onPick: (person: PersonFull, ctx: AtMentionContext)
     : null
 
   return { open: ctx !== null, sync, close, handleKeyDown, popup }
+}
+
+/**
+ * A one-line text field with the mention picker already wired in.
+ *
+ * Two fields need exactly this — a document's title and an event's title — and
+ * the first of them carried the wiring privately until the second appeared.
+ * Everything that differs between them (placeholder, tooltip, styling) is a
+ * prop; what the mention *writes* is not, because a title stores the same
+ * `@[Name](#pid-N)` markup a Markdown body does. That is what makes the
+ * mention survive a rename, render as a link, and tell the assistant who the
+ * record is about — so every consumer that needs flat text runs it through
+ * `plainMentions()` / `renderTitleMentions()`.
+ *
+ * `onMentionPerson` fires when a mention is accepted, so the caller can record
+ * the link it implies. Linking stays one-way everywhere: deleting the mention
+ * again does not unlink anybody.
+ */
+export function MentionInput({ value, onChange, onMentionPerson, placeholder, title, className, autoFocus }: {
+  value: string
+  onChange: (next: string) => void
+  onMentionPerson: (person: PersonFull) => void
+  placeholder?: string
+  title?: string
+  className?: string
+  autoFocus?: boolean
+}) {
+  const { nameOrder } = useSettings()
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const mention = useAtMention((person, ctx) => {
+    const input = inputRef.current
+    if (!input) return
+    const name = displayPersonName(person, nameOrder) || `Person ${person.id}`
+    const link = `@[${name}](#pid-${person.id})`
+    onChange(value.slice(0, ctx.atStart) + link + value.slice(input.selectionStart ?? value.length))
+    onMentionPerson(person)
+    mention.close()
+    requestAnimationFrame(() => {
+      const pos = ctx.atStart + link.length
+      input.selectionStart = input.selectionEnd = pos
+      input.focus()
+    })
+  })
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        autoFocus={autoFocus}
+        value={value}
+        onChange={e => {
+          onChange(e.target.value)
+          mention.sync(e.target, e.target.value, e.target.selectionStart ?? e.target.value.length)
+        }}
+        onKeyDown={e => { mention.handleKeyDown(e) }}
+        // The list closes itself on pick via onMouseDown/preventDefault, so a
+        // real blur here means the field was genuinely left.
+        onBlur={() => mention.close()}
+        placeholder={placeholder}
+        title={title}
+        className={className}
+      />
+      {mention.popup}
+    </>
+  )
 }
