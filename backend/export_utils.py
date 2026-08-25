@@ -11,6 +11,47 @@ import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from typing import Iterable
+
+from .database import STABLE_ID_TABLES
+
+
+def ensure_stable_ids(db_path: Path) -> int:
+    """Fill in any missing `stable_id` in the **source** database. Returns the count.
+
+    This has to run against the source, not the export copy. An id invented in
+    the copy is thrown away with it, so the same person would leave under a
+    different identity on every send and the recipient's merge would see a
+    stranger each time — which is exactly the failure the column exists to
+    prevent. `images.stable_id` was backfilled that way and had this bug.
+
+    Startup migration (`_backfill_stable_ids`) normally gets there first; this
+    is the guard for a row created since, because an export does not restart
+    the process.
+    """
+    filled = 0
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for table in STABLE_ID_TABLES:
+            try:
+                ids = [
+                    r[0] for r in conn.execute(
+                        f"SELECT id FROM {table} WHERE stable_id IS NULL"
+                    ).fetchall()
+                ]
+            except sqlite3.OperationalError:
+                continue        # table or column not there yet
+            for row_id in ids:
+                conn.execute(
+                    f"UPDATE {table} SET stable_id=? WHERE id=?",
+                    (str(uuid.uuid4()), row_id),
+                )
+            filled += len(ids)
+        conn.commit()
+    finally:
+        conn.close()
+        gc.collect()
+    return filled
 
 
 def _sha256_file(path: Path) -> str | None:
@@ -175,7 +216,28 @@ def _delete_relation_citations(conn: sqlite3.Connection, rel_where: str) -> None
         pass   # schema older than v15
 
 
-def _delete_persons(conn: sqlite3.Connection, where_clause: str) -> None:
+def _keep_clause(kept_ids: Iterable[int] | None) -> str:
+    """An ` AND id NOT IN (…)` fragment, or "" when nothing is exempt.
+
+    Hand-picked records are exempt from the *person* filter only. Everything
+    after it still applies — a record marked private, or of a kind the profile
+    switched off, does not come back because somebody ticked it. Naming a
+    record says "this one belongs in the archive despite whose it is", not
+    "ignore the rules".
+    """
+    ids = _id_csv(kept_ids)
+    return f" AND id NOT IN ({ids})" if ids else ""
+
+
+def _id_csv(ids: Iterable[int] | None) -> str:
+    """A comma-separated id list, or "" when there is nothing to list."""
+    return ",".join(str(int(i)) for i in (ids or []))
+
+
+def _delete_persons(
+    conn: sqlite3.Connection, where_clause: str,
+    keep_document_ids: Iterable[int] | None = None,
+) -> None:
     """Delete persons matching where_clause after cleaning up all FK child tables."""
     conn.execute(f"""
         DELETE FROM note_citations
@@ -203,13 +265,30 @@ def _delete_persons(conn: sqlite3.Connection, where_clause: str) -> None:
             WHERE dp2.document_id = documents.id AND dp2.person_id IN ({kept})
           )
     """)
+    # A hand-picked document outlives its owner: it stays in the archive while
+    # they leave it, so the column naming them has to let go first or the delete
+    # below fails the foreign key. It becomes a document of the project, which
+    # is what an archive holding a document without its owner actually has.
+    # Ordered after the hand-over above, so a co-linked person who is staying
+    # still gets it and only a genuinely ownerless one falls through to NULL.
+    kept_csv = _id_csv(keep_document_ids)
+    if kept_csv:
+        conn.execute(
+            f"UPDATE documents SET person_id = NULL "
+            f"WHERE person_id IN (SELECT id FROM persons WHERE {where_clause}) "
+            f"AND id IN ({kept_csv})"
+        )
     conn.execute(f"DELETE FROM document_persons WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
-    _delete_documents(conn, f"person_id IN (SELECT id FROM persons WHERE {where_clause})")
+    keep = _keep_clause(keep_document_ids)
+    _delete_documents(conn, f"person_id IN (SELECT id FROM persons WHERE {where_clause}){keep}")
     # Documents nobody owns belong to the project as a whole, not to anyone in
     # the narrowed selection, so an export scoped to a person or cluster set
     # leaves them behind. `person_id IN (…)` above is never true of NULL, which
     # is why this needs a statement of its own.
-    _delete_documents(conn, "person_id IS NULL AND id NOT IN (SELECT document_id FROM document_persons)")
+    _delete_documents(
+        conn,
+        "person_id IS NULL AND id NOT IN (SELECT document_id FROM document_persons)" + keep,
+    )
     _delete_relation_citations(conn, f"""
         person_a_id IN (SELECT id FROM persons WHERE {where_clause})
      OR person_b_id IN (SELECT id FROM persons WHERE {where_clause})
@@ -222,6 +301,162 @@ def _delete_persons(conn: sqlite3.Connection, where_clause: str) -> None:
     # Derived sub-cluster centroids — CASCADE would handle this but we are explicit.
     conn.execute(f"DELETE FROM person_subclusters WHERE person_id IN (SELECT id FROM persons WHERE {where_clause})")
     conn.execute(f"DELETE FROM persons WHERE {where_clause}")
+
+
+# Everything a person row carries beyond who they are and how they connect.
+# Redaction empties these; the name parts, `sex` and `stable_id` stay behind.
+_REDACTED_COLUMNS = (
+    "birth_year", "birth_date", "birth_place",
+    "christening_year", "christening_date", "christening_place",
+    "death_year", "death_date", "death_place",
+    "burial_year", "burial_date", "burial_place",
+    "occupation", "religion", "nationality", "cause_of_death", "education",
+    "notes", "hidden_auto_events", "thumbnail_face_id",
+)
+
+
+def _id_list(conn: sqlite3.Connection, where_clause: str) -> str:
+    """Resolve a persons `where_clause` to a literal id list, or "" if empty.
+
+    The strip helpers below *update* some of the rows they select, so a clause
+    naming a column one of them is about to blank would match a shrinking set
+    as the statement ran. Resolving once removes the whole class of problem.
+    """
+    ids = [r[0] for r in conn.execute(f"SELECT id FROM persons WHERE {where_clause}")]
+    return ",".join(str(i) for i in ids)
+
+
+def _strip_notes(conn: sqlite3.Connection, id_list: str) -> None:
+    """Remove these people's own written material. Citations first."""
+    conn.execute(
+        f"DELETE FROM note_citations WHERE note_id IN "
+        f"(SELECT id FROM person_notes WHERE person_id IN ({id_list}))"
+    )
+    conn.execute(f"DELETE FROM person_notes WHERE person_id IN ({id_list})")
+
+
+def _strip_events(conn: sqlite3.Connection, id_list: str) -> None:
+    """Unlink these people from every event.
+
+    The events themselves are left to the orphan sweep in `build_export_db`,
+    which knows the full child list — an event that still has other
+    participants is somebody else's event and stays.
+    """
+    conn.execute(f"DELETE FROM event_persons WHERE person_id IN ({id_list})")
+
+
+def _strip_photos(conn: sqlite3.Connection, id_list: str) -> None:
+    """Take these people's name off their faces.
+
+    Only half the job: which images travel at all is decided much earlier, from
+    the cluster derivation in `build_export_db`. This is what keeps a photo that
+    travels for somebody else's sake from arriving labelled with theirs.
+    """
+    conn.execute(f"DELETE FROM person_subclusters WHERE person_id IN ({id_list})")
+    conn.execute(f"UPDATE clusters SET person_id = NULL WHERE person_id IN ({id_list})")
+
+
+def _strip_documents(conn: sqlite3.Connection, id_list: str) -> None:
+    """Remove these people's documents, handing over the shared ones first.
+
+    A document that somebody outside `id_list` is also linked to is *their*
+    document too, and it stays with them — the same rule `_delete_persons` and
+    `delete_person` in `main.py` both follow. `documents.person_id` records only
+    who uploaded it; `document_persons` is what every listing joins on.
+    """
+    kept = f"SELECT id FROM persons WHERE id NOT IN ({id_list})"
+    conn.execute(f"""
+        UPDATE documents SET person_id = (
+            SELECT dp.person_id FROM document_persons dp
+            WHERE dp.document_id = documents.id AND dp.person_id IN ({kept})
+            ORDER BY dp.person_id LIMIT 1
+        )
+        WHERE person_id IN ({id_list})
+          AND EXISTS (
+            SELECT 1 FROM document_persons dp2
+            WHERE dp2.document_id = documents.id AND dp2.person_id IN ({kept})
+          )
+    """)
+    conn.execute(f"DELETE FROM document_persons WHERE person_id IN ({id_list})")
+    _delete_documents(conn, f"person_id IN ({id_list})")
+
+
+# What a `strip` rule can hold back, mapped to the helper that does it. Mirrors
+# `CONTENT_KINDS` in `share_filter.py`; a kind added there needs an entry here
+# or the rule is accepted, previewed, and then quietly ignored by the export.
+_STRIP_HANDLERS = {
+    "notes": _strip_notes,
+    "events": _strip_events,
+    "images": _strip_photos,
+    "documents": _strip_documents,
+}
+
+
+def apply_content_strips(
+    conn: sqlite3.Connection, strips: dict[str, list[int]] | None,
+) -> None:
+    """Hold back material from people who are otherwise fully in the archive.
+
+    Excluding somebody removes them from the tree and breaks the line through
+    them; redaction empties them entirely and is decided by whether they are
+    alive. This is the third answer — *they belong in the tree, their papers are
+    not what this archive is about* — which is the ordinary case when a relative
+    asked about their own side of the family.
+    """
+    for kind, handler in _STRIP_HANDLERS.items():
+        ids = (strips or {}).get(kind) or []
+        if ids:
+            handler(conn, ",".join(str(int(i)) for i in ids))
+
+
+_REDACTED_COLUMNS = (
+    "birth_year", "birth_date", "birth_place",
+    "christening_year", "christening_date", "christening_place",
+    "death_year", "death_date", "death_place",
+    "burial_year", "burial_date", "burial_place",
+    "occupation", "religion", "nationality", "cause_of_death", "education",
+    "notes", "hidden_auto_events", "thumbnail_face_id",
+)
+
+
+def _redact_persons(conn: sqlite3.Connection, where_clause: str) -> int:
+    """Empty out matching persons without removing them. Returns how many.
+
+    Deleting a living person from a shared branch is the obvious thing to do and
+    the wrong one: they are usually the link between the generation the
+    recipient knows and the one they are researching, and taking them out leaves
+    two halves of a family with nothing joining them. So the row and both its
+    `relations` survive — the chain holds — while everything that makes it a
+    biography goes.
+
+    Redaction is every content strip at once plus the person's own columns,
+    built from the same helpers rather than a second copy of them: the two
+    features answer different questions but do the same work underneath, and a
+    table added to one and forgotten in the other is how a leak gets in.
+
+    The name parts and `sex` stay. They are what makes the surviving link
+    legible ("this is your aunt"), and a chain of blanks is not a tree anybody
+    can read. A profile that cannot share even that should exclude rather than
+    redact.
+
+    Their photographs are handled earlier, where the export decides which
+    clusters travel: see `redact_person_ids` in `build_export_db`.
+    """
+    id_list = _id_list(conn, where_clause)
+    if not id_list:
+        return 0
+
+    _strip_notes(conn, id_list)
+    conn.execute(f"DELETE FROM citations WHERE person_id IN ({id_list})")
+    _strip_events(conn, id_list)
+    _strip_photos(conn, id_list)
+    _strip_documents(conn, id_list)
+
+    conn.execute(
+        "UPDATE persons SET " + ", ".join(f"{c} = NULL" for c in _REDACTED_COLUMNS)
+        + f" WHERE id IN ({id_list})"
+    )
+    return id_list.count(",") + 1
 
 
 def build_export_db(
@@ -237,11 +472,43 @@ def build_export_db(
     include_documents: bool = True,
     include_images: bool = True,
     include_scans: bool = False,
+    redact_person_ids: list[int] | None = None,
+    strip_content: dict[str, list[int]] | None = None,
+    photo_person_ids: list[int] | None = None,
+    records: dict[str, dict[str, list[int]]] | None = None,
 ) -> dict[int, tuple[str, str]]:
     """
     Copy source DB to dest, optionally filter to specific cluster IDs, rewrite image
     paths to relative form.  Returns {image_id: (original_abs_path, new_rel_path)}.
+
+    `redact_person_ids` names people who stay in the archive as links between
+    generations but carry nothing else — see `_redact_persons`. They must also
+    be excluded from the cluster derivation below, or the photographs the
+    redaction was for would travel anyway.
+
+    `strip_content` is `{kind: person ids}` for people who travel in full except
+    for one body of material — see `apply_content_strips`. Its `images` list
+    joins `redact_person_ids` in being kept out of that same cluster
+    derivation, for the same reason.
+
+    `records` holds documents and events named outright:
+    `{"include": {"documents": [...], "events": [...]}, "exclude": {…}}`. The
+    include side is exempt from the *person* filter and from nothing else; the
+    exclude side is dropped after it. Everything else in a profile is expressed
+    through people, and these two exist for what that vocabulary cannot reach.
+
+    `photo_person_ids` narrows *which images travel* without narrowing who keeps
+    their name on the ones that do. A photograph comes along when somebody in
+    this set appears in it; everyone else in the export is still recognised on
+    the photographs that arrive. None means every included person's pictures
+    are wanted.
     """
+    # Identity is settled in the source, before the copy is taken, so that the
+    # same row leaves under the same id every time it is exported. Both ZIP
+    # builders come through here, which is why the call is here and not in each
+    # of them.
+    ensure_stable_ids(source_db_path)
+
     _vacuum_copy(source_db_path, dest_db_path)
 
     conn = sqlite3.connect(str(dest_db_path))
@@ -258,6 +525,16 @@ def build_export_db(
                 conn.execute(f"DELETE FROM {_chat_table}")
             except sqlite3.OperationalError:
                 pass  # pre-v7 database being exported — nothing to strip
+
+        # Share profiles are working state, and the one table here whose leak
+        # would be a disclosure about *third parties*: it records who else this
+        # archive is shared with, and on what terms. The recipient of this ZIP
+        # has no business knowing that. Unconditional, like the chat tables —
+        # an export toggle would be a way to get it wrong.
+        try:
+            conn.execute("DELETE FROM share_profiles")
+        except sqlite3.OperationalError:
+            pass  # pre-v19 database being exported — nothing to strip
 
         # Transcript batches go the same way **by default**, and for one more
         # reason: a page row holds an absolute path into a folder on this
@@ -276,19 +553,49 @@ def build_export_db(
                 except sqlite3.OperationalError:
                     pass  # pre-v12 database being exported — nothing to strip
 
-        if person_ids is not None and len(person_ids) > 0:
-            pids_str = ",".join(str(x) for x in person_ids)
+        if person_ids is not None:
+            # `None` means "no person filter"; an **empty list** means "a filter
+            # that keeps nobody". Conflating the two — which `len(...) > 0` did —
+            # made a selection that resolved to nobody export the entire family,
+            # which is the worst way this code can be wrong. The share endpoint
+            # refuses an empty selection before it gets here, but one caller-side
+            # check is thin cover for that outcome.
+            pids_str = ",".join(str(x) for x in person_ids) or "NULL"
+            drop_persons = f"id NOT IN ({pids_str})" if person_ids else "1=1"
 
-            # Derive cluster IDs linked to these persons.
+            # Derive cluster IDs linked to these persons — but not to the ones
+            # being redacted. A redacted person's photographs are the largest
+            # thing about them, and blanking their columns after their cluster
+            # has already pulled every picture of them into the archive redacts
+            # nothing. Faces of theirs in a photo that travels for somebody
+            # else's sake end up in the noise cluster, unnamed.
+            no_photos = set(redact_person_ids or []) | set((strip_content or {}).get("images") or [])
+            photo_pids = [p for p in person_ids if p not in no_photos]
+            photo_pids_str = ",".join(str(x) for x in photo_pids) or "NULL"
             family_cluster_ids = [
                 r[0] for r in conn.execute(
-                    f"SELECT id FROM clusters WHERE person_id IN ({pids_str}) AND label != -1"
+                    f"SELECT id FROM clusters WHERE person_id IN ({photo_pids_str}) AND label != -1"
                 ).fetchall()
             ]
 
+            # Two different questions, and conflating them was the trap here.
+            # *Which images travel* can be scoped to a few near relatives; *who
+            # keeps their name* on those images must not be, or a photo arrives
+            # with half the family unlabelled. So the source set narrows and the
+            # cluster set does not.
+            source_pids = [p for p in photo_pids if p in set(photo_person_ids)] \
+                if photo_person_ids is not None else photo_pids
+            source_cluster_ids = [
+                r[0] for r in conn.execute(
+                    "SELECT id FROM clusters WHERE person_id IN (%s) AND label != -1"
+                    % (",".join(str(x) for x in source_pids) or "NULL")
+                ).fetchall()
+            ] if photo_person_ids is not None else family_cluster_ids
+
             if family_cluster_ids:
                 cids_str = ",".join(str(x) for x in family_cluster_ids)
-                keep_images = f"SELECT DISTINCT image_id FROM faces WHERE cluster_id IN ({cids_str})"
+                keep_from = ",".join(str(x) for x in source_cluster_ids) or "NULL"
+                keep_images = f"SELECT DISTINCT image_id FROM faces WHERE cluster_id IN ({keep_from})"
                 _delete_images(conn, keep_images)
 
                 noise_row = conn.execute("SELECT id FROM clusters WHERE label = -1").fetchone()
@@ -314,7 +621,10 @@ def build_export_db(
                 conn.execute("DELETE FROM clusters WHERE label != -1")
 
             # Filter persons and relations to the selected family group.
-            _delete_persons(conn, f"id NOT IN ({pids_str})")
+            _delete_persons(
+                conn, drop_persons,
+                ((records or {}).get("include") or {}).get("documents"),
+            )
             conn.commit()
 
         elif cluster_ids is not None and len(cluster_ids) > 0:
@@ -359,6 +669,29 @@ def build_export_db(
             conn.execute("UPDATE clusters SET person_id = NULL")
             _delete_persons(conn, "1=1")
             conn.commit()
+
+        # ── Content strips ────────────────────────────────────────────────────
+        # Before redaction, so a person who is both stripped and redacted has
+        # the work done once; and before the events sweep below, which is what
+        # clears an event left with no participants.
+        if strip_content:
+            apply_content_strips(conn, strip_content)
+            conn.commit()
+
+        # ── Redaction ─────────────────────────────────────────────────────────
+        # Straight after the person filter, so everything downstream sees the
+        # emptied rows: the events block below drops any event redaction left
+        # without participants, and the content toggles apply to what remains.
+        if redact_person_ids:
+            still_here = [
+                r[0] for r in conn.execute(
+                    "SELECT id FROM persons WHERE id IN (%s)"
+                    % ",".join(str(x) for x in redact_person_ids)
+                ).fetchall()
+            ]
+            if still_here:
+                _redact_persons(conn, "id IN (%s)" % ",".join(str(x) for x in still_here))
+                conn.commit()
 
         # ── Images ───────────────────────────────────────────────────────────────
         if not include_images:
@@ -406,6 +739,19 @@ def build_export_db(
         # ── Documents ─────────────────────────────────────────────────────────
         if not include_documents:
             _delete_documents(conn, "1=1")
+            conn.commit()
+
+        # ── Records named outright ────────────────────────────────────────────
+        # After the person filter and the content strips, before the privacy
+        # filter — a record the user picked is not a way past `is_private`.
+        _drop = (records or {}).get("exclude") or {}
+        if _drop.get("documents"):
+            _delete_documents(
+                conn, "id IN (%s)" % ",".join(str(int(i)) for i in _drop["documents"]))
+            conn.commit()
+        if _drop.get("events"):
+            _delete_events(
+                conn, "id IN (%s)" % ",".join(str(int(i)) for i in _drop["events"]))
             conn.commit()
 
         # ── Privacy filter (always applied) ───────────────────────────────────
@@ -467,8 +813,11 @@ def build_export_db(
             new_rel = f"images/{img_id}_{filename}"
             path_map[img_id] = (orig_path, new_rel)
 
-            # Ensure identity fields are set (backfill for pre-feature images)
-            new_stable = stable_id or str(uuid.uuid4())
+            # `stable_id` is already set — `ensure_stable_ids` filled it in on
+            # the source above, which is the only place it may be invented.
+            # `content_hash` is derived from the file, so computing it here
+            # gives the same answer every time and costs the source nothing.
+            new_stable = stable_id
             new_hash = content_hash
             if not new_hash:
                 p = Path(orig_path)
@@ -536,6 +885,52 @@ def _stage_scan_files(tmp_db: Path) -> dict[int, tuple[str, str]]:
     return out
 
 
+def _share_manifest(share_info: dict, export_db: Path) -> dict:
+    """The `share.json` that travels beside `project.json`.
+
+    A project ZIP arriving by email says nothing about itself: the recipient
+    sees a filename, and the merge screen offers to fold in a few hundred
+    strangers. This says who sent it, when, under which profile, and how much of
+    what is inside — so the person merging it can tell an updated copy of a
+    branch they already have from something new, and can recognise the same
+    archive arriving twice.
+
+    `export_id` is minted per export rather than per profile, so it identifies
+    this *sending* and not the relationship.
+    """
+    counts: dict[str, int] = {}
+    conn = sqlite3.connect(str(export_db))
+    try:
+        for table in ("persons", "relations", "documents", "events",
+                      "sources", "person_notes", "images"):
+            try:
+                counts[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            except sqlite3.OperationalError:
+                pass
+    finally:
+        conn.close()
+        gc.collect()
+
+    return {
+        "export_id":   str(uuid.uuid4()),
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "profile":     share_info.get("profile"),
+        "sender":      share_info.get("sender"),
+        "source_project_id": share_info.get("source_project_id"),
+        "living_policy":     share_info.get("living_policy"),
+        "redacted_persons":  share_info.get("redacted_persons", 0),
+        # {kind: how many people had that material held back}. Empty when the
+        # profile stripped nothing, so the receiving side can tell "nothing was
+        # withheld" from "this build did not record it".
+        "stripped":          share_info.get("stripped") or {},
+        # {person_id, max_degree, ...} when the sender scoped the photographs to
+        # one person's near relatives, else null.
+        "photo_kinship":     share_info.get("photo_kinship"),
+        "rules":       share_info.get("rules"),
+        "counts":      counts,
+    }
+
+
 def create_project_zip(
     source_db_path: Path,
     project_info: dict,
@@ -549,6 +944,11 @@ def create_project_zip(
     include_documents: bool = True,
     include_images: bool = True,
     include_scans: bool = False,
+    redact_person_ids: list[int] | None = None,
+    strip_content: dict[str, list[int]] | None = None,
+    photo_person_ids: list[int] | None = None,
+    records: dict[str, dict[str, list[int]]] | None = None,
+    share_info: dict | None = None,
 ) -> io.BytesIO:
     """Build a self-contained project ZIP (DB + images + documents) and return it as a BytesIO."""
     import tempfile
@@ -566,6 +966,7 @@ def create_project_zip(
             include_genealogy, person_ids, include_faceless,
             include_notes, include_sources, include_events,
             include_documents, include_images, include_scans,
+            redact_person_ids, strip_content, photo_person_ids, records,
         )
         # Before the DB is written into the archive: the rewrite happens inside it.
         scan_map = _stage_scan_files(tmp_db) if include_scans else {}
@@ -590,6 +991,11 @@ def create_project_zip(
                 "project.json",
                 json.dumps(project_info, ensure_ascii=False, indent=2),
             )
+            if share_info:
+                zf.writestr(
+                    "share.json",
+                    json.dumps(_share_manifest(share_info, tmp_db), ensure_ascii=False, indent=2),
+                )
             zf.write(str(tmp_db), "project.db")
 
             # Images
@@ -649,6 +1055,11 @@ def stream_project_zip(
     include_documents: bool = True,
     include_images: bool = True,
     include_scans: bool = False,
+    redact_person_ids: list[int] | None = None,
+    strip_content: dict[str, list[int]] | None = None,
+    photo_person_ids: list[int] | None = None,
+    records: dict[str, dict[str, list[int]]] | None = None,
+    share_info: dict | None = None,
 ):
     """Generator that yields ZIP bytes progressively via OS pipe.
 
@@ -682,6 +1093,7 @@ def stream_project_zip(
                             include_genealogy, person_ids, include_faceless,
                             include_notes, include_sources, include_events,
                             include_documents, include_images, include_scans,
+                            redact_person_ids, strip_content, photo_person_ids, records,
                         )
                         # This must happen **before** `project.db` is written
                         # into the stream — the streaming builder writes the
@@ -702,6 +1114,18 @@ def stream_project_zip(
                             finally:
                                 doc_conn.close()
                                 gc.collect()
+
+                        # Unlike the buffered builder, this one cannot write
+                        # `share.json` next to `project.json` at the top: its
+                        # counts are read out of the export DB, which does not
+                        # exist until `build_export_db` has run. It only has to
+                        # precede `project.db` to be found before the bulk of
+                        # the archive is read.
+                        if share_info:
+                            zf.writestr(
+                                "share.json",
+                                json.dumps(_share_manifest(share_info, tmp_db), ensure_ascii=False, indent=2),
+                            )
 
                         print(f"[export] writing project.db ({time.monotonic()-t0:.2f}s)", flush=True)
                         zf.write(str(tmp_db), "project.db")

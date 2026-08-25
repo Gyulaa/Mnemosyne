@@ -136,11 +136,15 @@ export function PersonMultiSelect({
 // ── PersonFilterCombobox ──────────────────────────────────────────────────────
 
 /** Single-select dropdown used as the "filter by person" control. */
-export function PersonFilterCombobox({ persons, familyMap, value, onChange }: {
+export function PersonFilterCombobox({ persons, familyMap, value, onChange, emptyLabel }: {
   persons: PersonFull[]
   familyMap: ReturnType<typeof useFamilyContext>
   value: number | null
   onChange: (id: number | null) => void
+  /** What "nobody chosen" means here. Defaults to "all persons", which is the
+   *  filter reading; a caller where an empty value means something else (a
+   *  share rule that has not been pointed at anybody yet) supplies its own. */
+  emptyLabel?: string
 }) {
   const t = useT()
   const { nameOrder } = useSettings()
@@ -174,7 +178,7 @@ export function PersonFilterCombobox({ persons, familyMap, value, onChange }: {
         className="flex items-center justify-between gap-2 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs outline-none hover:border-zinc-600 focus:border-brand-400 min-w-[140px] max-w-[180px]"
       >
         <span className={selected ? 'text-zinc-100 truncate' : 'text-zinc-500'}>
-          {selected ? displayPersonName(selected, nameOrder) : t('docs.allPersons')}
+          {selected ? displayPersonName(selected, nameOrder) : (emptyLabel ?? t('docs.allPersons'))}
         </span>
         <svg className={`w-3 h-3 text-zinc-500 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
           fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -197,7 +201,7 @@ export function PersonFilterCombobox({ persons, familyMap, value, onChange }: {
               onClick={() => select(null)}
               className={`w-full px-3 py-1.5 text-xs text-left hover:bg-zinc-800 transition-colors ${value === null ? 'text-brand-300' : 'text-zinc-400'}`}
             >
-              {t('docs.allPersons')}
+              {emptyLabel ?? t('docs.allPersons')}
             </button>
             {filtered.map(p => {
               const bio = personLifeSummary(p)

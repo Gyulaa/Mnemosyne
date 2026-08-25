@@ -1,4 +1,4 @@
-import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, WebResearchSettings, ChatThread, ChatMessage, ChatStreamEvent, DocumentAiSettings, TranscriptBatch, TranscriptBatchDetail, TranscriptPageFull, TranscriptStatus, TranscriptQuestion, PlaceUsage, FieldValueMap } from './types'
+import type { ScanStatus, MaintenanceStatus, Stats, Cluster, FaceInfo, SimilarFaceInfo, Project, ConnectionsData, ClusterConnection, ImageItem, ImagesPage, FsListing, PersonFull, Relation, ImagePerson, LinkedCluster, PersonDocument, DocumentType, Source, Citation, PersonNote, DocumentNote, NoteCitation, PersonEvent, GedcomPreview, GedcomImportDecision, GedcomImportStats, GedcomRollbackStatus, MergePreviewResponse, MergeDecision, MergeOptions, MergeStats, UpdateStatus, DuplicateGroup, AiSettings, AiModel, AiModelCatalog, AiProvider, WebResearchSettings, ChatThread, ChatMessage, ChatStreamEvent, DocumentAiSettings, TranscriptBatch, TranscriptBatchDetail, TranscriptPageFull, TranscriptStatus, TranscriptQuestion, PlaceUsage, FieldValueMap, ShareProfile, ShareRules, ShareOptions, SharePreview, LivingPolicy, PhotoKinship } from './types'
 
 const BASE = '/api'
 
@@ -201,7 +201,11 @@ export const api = {
     ): string => {
       const p = new URLSearchParams()
       if (clusterIds?.length) p.set('cluster_ids', clusterIds.join(','))
-      if (personIds?.length) p.set('person_ids', personIds.join(','))
+      // An **empty** array is a selection of nobody, not the absence of one.
+      // Omitting the parameter would tell the server there is no person filter
+      // at all and ship the whole project — which is what "only deceased" on a
+      // family where nobody has a death date used to do.
+      if (personIds) p.set('person_ids', personIds.join(','))
       if (name) p.set('name', name)
       if (!includeGenealogy) p.set('include_genealogy', 'false')
       if (!includeFaceless) p.set('include_faceless', 'false')
@@ -282,6 +286,43 @@ export const api = {
       if (!res.ok) throw new Error(await res.text())
       return res.json()
     },
+  },
+  /**
+   * Share profiles — a saved answer to "what does this relative get?".
+   * The rules are resolved server-side (`backend/share_filter.py`); the client
+   * never computes a person set of its own, so the preview and the archive can
+   * never disagree.
+   */
+  share: {
+    list: () => fetchJson<ShareProfile[]>(`${BASE}/share-profiles`),
+    create: (body: {
+      name: string
+      notes?: string | null
+      rules?: ShareRules
+      options?: ShareOptions
+    }) => post<ShareProfile>(`${BASE}/share-profiles`, body),
+    update: (id: number, body: {
+      name?: string
+      notes?: string | null
+      rules?: ShareRules
+      options?: ShareOptions
+    }) => patch<ShareProfile>(`${BASE}/share-profiles/${id}`, body),
+    delete: (id: number) =>
+      fetch(`${BASE}/share-profiles/${id}`, { method: 'DELETE' }).then(r => {
+        if (!r.ok) throw new Error('Delete failed')
+      }),
+    /** Resolve a rule set that may not be saved yet, so the editor can answer
+     *  while it is being typed. */
+    preview: (
+      rules: ShareRules, livingPolicy: LivingPolicy, lifespanYears = 100,
+      photoKinship: PhotoKinship | null = null,
+    ) =>
+      post<SharePreview>(`${BASE}/share-profiles/preview`, {
+        rules, living_policy: livingPolicy, lifespan_years: lifespanYears,
+        photo_kinship: photoKinship,
+      }),
+    /** Native browser download — an archive can be several GB, see `exportUrl`. */
+    exportUrl: (id: number) => `${BASE}/share-profiles/${id}/export`,
   },
   connections: {
     get: (minPhotos = 1) =>

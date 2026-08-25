@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { api } from '../api'
-import { useT } from '../SettingsContext'
+import { useT, useDateLocale, formatPartialDate } from '../SettingsContext'
 import { useBackdropClose } from '../modalBackdrop'
 import type {
   MergePreviewResponse, MergePersonEntry,
@@ -254,6 +254,38 @@ function SummaryLine({ icon, color, text }: { icon: string; color: string; text:
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+function ShareBanner({ share }: { share: NonNullable<MergePreviewResponse['share']> }) {
+  const t = useT()
+  const dateLocale = useDateLocale()
+  const sent = share.exported_at
+    ? formatPartialDate(share.exported_at.slice(0, 10), dateLocale)
+    : null
+  return (
+    <div className="rounded-xl border border-brand-500/30 bg-brand-500/5 px-4 py-3">
+      <p className="text-xs font-semibold text-brand-200">{t('share.fromArchive')}</p>
+      <p className="text-[11px] text-zinc-300 mt-1 leading-relaxed">
+        {share.sender && <span className="mr-2">{t('share.fromSender', { sender: share.sender })}</span>}
+        {share.profile && <span className="mr-2">{t('share.underProfile', { profile: share.profile })}</span>}
+        {sent && <span>{t('share.sentOn', { date: sent })}</span>}
+      </p>
+      {share.redacted_persons > 0 && (
+        <p className="text-[11px] text-amber-300/90 mt-1.5 leading-snug">
+          {t('share.redactedWarning', { n: share.redacted_persons })}
+        </p>
+      )}
+      {share.stripped && Object.keys(share.stripped).length > 0 && (
+        <p className="text-[11px] text-amber-300/90 mt-1 leading-snug">
+          {Object.entries(share.stripped)
+            .map(([kind, n]) => t('share.stripSummary', {
+              n, what: t(`share.content.${kind}`).toLowerCase(),
+            }))
+            .join(' · ')}
+        </p>
+      )}
+    </div>
+  )
+}
+
 interface Props {
   onClose: () => void
   onDone: () => void
@@ -429,6 +461,8 @@ export default function MergeModal({ onClose, onDone }: Props) {
           {/* ── REVIEW ──────────────────────────────────────────────────── */}
           {step === 'review' && preview && (
             <div className="px-6 py-5 space-y-5">
+              {preview.share && <ShareBanner share={preview.share} />}
+
               {/* Summary chips */}
               <div className="flex flex-wrap gap-2">
                 <Chip color="green" count={counts.create} label={t('merge.chipNew')} />

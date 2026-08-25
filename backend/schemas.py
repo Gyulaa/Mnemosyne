@@ -301,3 +301,35 @@ class TranscriptPageImport(BaseModel):
     doc_type: Optional[str] = 'other'
     date: Optional[str] = None
     description: Optional[str] = None
+
+
+# ── Share profiles ────────────────────────────────────────────────────────────
+
+class ShareRulesPreview(BaseModel):
+    """A rule set asked about before it has been saved anywhere.
+
+    The editor needs an answer on every keystroke, and a profile that does not
+    exist yet has no id to address — so the rules travel in the body rather
+    than being looked up.
+    """
+    rules: dict = {}
+    living_policy: str = 'redact'
+    lifespan_years: int = 100
+    # Scope the photographs to one person's near relatives. Travels in the body
+    # like the rules do, because the profile may not be saved yet and a preview
+    # computed without it would disagree with the archive.
+    photo_kinship: Optional[dict] = None
+
+
+class ShareProfileCreate(BaseModel):
+    name: str
+    notes: Optional[str] = None
+    rules: dict = {}
+    options: dict = {}
+
+
+class ShareProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    notes: Optional[str] = None
+    rules: Optional[dict] = None
+    options: Optional[dict] = None

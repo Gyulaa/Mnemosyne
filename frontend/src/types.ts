@@ -456,6 +456,9 @@ export interface MergePersonEntry {
 
 export interface MergePreviewResponse {
   token: string
+  /** Who sent this archive and under which profile. Null for a plain project
+   *  export, and for anything made before share profiles existed. */
+  share?: ShareManifest | null
   persons: MergePersonEntry[]
   relations_count: number
   events_count: number
@@ -855,4 +858,119 @@ export interface TranscriptStatus {
    *  between its rounds, so this is what distinguishes thinking from hung. */
   phase_seconds: number | null
   quota: { used: number; limit: number; remaining: number }
+}
+
+// ── Share profiles ────────────────────────────────────────────────────────────
+
+/** One selection rule. Which fields apply depends on `rule` — see
+ *  `backend/share_filter.py`, which is the authority on the shape. */
+/** What one exclusion row can leave out — mirrors EXCLUDABLE_KINDS in
+ *  share_filter.py. `persons` removes them from the tree; the rest keep them
+ *  and hold back one body of their material. */
+export type ShareContentKind = 'persons' | 'documents' | 'images' | 'notes' | 'events'
+
+export interface ShareRule {
+  rule:
+    | 'everyone'
+    | 'persons'
+    | 'only_person'
+    | 'surname'
+    | 'family_group_of'
+    | 'ancestors_of'
+    | 'descendants_of'
+    | 'relatives_of'
+    | 'common_line_with'
+    // Rules that name records instead of people — see RECORD_RULES.
+    | 'documents'
+    | 'events'
+  ids?: number[]
+  value?: string
+  person_id?: number | null
+  with_person_id?: number | null
+  max_generations?: number | null
+  max_steps?: number | null
+  /** Only on an exclusion rule: what of these people is left out. Absent on a
+   *  rule written before the two lists merged, and read as ['persons'] then. */
+  content?: ShareContentKind[]
+}
+
+export interface ShareRules {
+  include?: ShareRule[]
+  /** What is left out — people, or just some of their material. */
+  exclude?: ShareRule[]
+  /** Read but never written: `exclude` absorbed it. Kept so a profile saved
+   *  against the older shape still resolves. */
+  strip?: ShareRule[]
+  closure?: { spouses?: boolean; parents_of_included?: boolean }
+}
+
+export type LivingPolicy = 'include' | 'redact' | 'exclude'
+
+/** Scope the photographs to one person's near relatives. Degree is the
+ *  ordinary genealogical one: parent 1, sibling 2, aunt 3, first cousin 4. */
+export interface PhotoKinship {
+  person_id: number | null
+  max_degree: number | null
+  include_spouses?: boolean
+}
+
+export interface ShareOptions {
+  living_policy?: LivingPolicy
+  lifespan_years?: number
+  photo_kinship?: PhotoKinship | null
+  include_notes?: boolean
+  include_sources?: boolean
+  include_events?: boolean
+  include_documents?: boolean
+  include_images?: boolean
+  include_faceless?: boolean
+}
+
+export interface ShareCounts {
+  persons: number
+  redacted: number
+  relations: number
+  documents: number
+  events: number
+  notes: number
+  images: number
+}
+
+export interface ShareProfile {
+  id: number
+  name: string
+  notes: string | null
+  rules: ShareRules
+  options: ShareOptions
+  last_exported_at: string | null
+  last_export_counts: ShareCounts | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface SharePreview {
+  person_ids: number[]
+  redact_ids: number[]
+  /** kind -> the people whose material of that kind is held back. */
+  strips: Record<ShareContentKind, number[]>
+  /** Whose photos decide which images travel; null when not narrowed. */
+  photo_person_ids: number[] | null
+  living_policy: LivingPolicy
+  counts: ShareCounts
+}
+
+/** `share.json` from an incoming archive. Absent from a plain project export. */
+export interface ShareManifest {
+  export_id: string
+  exported_at: string
+  profile: string | null
+  sender: string | null
+  source_project_id: string | null
+  living_policy: LivingPolicy | null
+  redacted_persons: number
+  /** kind -> how many people had that material held back. */
+  stripped?: Record<string, number>
+  photo_kinship?: PhotoKinship | null
+  rules: ShareRules | null
+  counts: Record<string, number>
 }

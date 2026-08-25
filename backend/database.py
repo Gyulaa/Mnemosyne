@@ -1,4 +1,5 @@
 import re
+import uuid
 
 from sqlalchemy import (
     Column, Integer, String, Float, LargeBinary, Boolean,
@@ -11,6 +12,26 @@ class Base(DeclarativeBase):
     pass
 
 
+def _new_stable_id() -> str:
+    return str(uuid.uuid4())
+
+
+# Tables whose rows travel between databases and must be recognisable on
+# arrival. A local integer id means nothing in someone else's project, so a
+# merge without these has to *guess* which local row an incoming one is — which
+# is what the name/birth-year heuristic in `merge_import.py` does, and what it
+# cannot do at all for a document. `images` had this first; the rest followed
+# when sharing a branch with a relative became a round trip rather than a dump.
+#
+# Read by `_backfill_stable_ids` below and by `ensure_stable_ids` in
+# `export_utils.py`, which fills them in on the **source** database before an
+# export copy is taken — an id invented in the copy would differ on every send.
+STABLE_ID_TABLES = (
+    "persons", "relations", "documents", "events", "sources", "person_notes",
+    "images",
+)
+
+
 class Image(Base):
     __tablename__ = "images"
     id = Column(Integer, primary_key=True, index=True)
@@ -21,7 +42,7 @@ class Image(Base):
     error_msg = Column(String, nullable=True)
     scanned_at = Column(DateTime, nullable=True)
     meta_json = Column(String, nullable=True)   # JSON: {width, height, make, model}
-    stable_id    = Column(String, nullable=True, index=True)   # UUID, assigned once, never changes
+    stable_id    = Column(String, nullable=True, index=True, default=_new_stable_id)  # UUID, assigned once, never changes
     content_hash = Column(String, nullable=True, index=True)   # SHA-256 hex of file content
     source_path  = Column(String, nullable=True)               # original abs path when first added
     is_private   = Column(Boolean, nullable=False, default=False, server_default="0")
@@ -71,6 +92,7 @@ class PersonSubcluster(Base):
 class Person(Base):
     __tablename__ = "persons"
     id = Column(Integer, primary_key=True, index=True)
+    stable_id = Column(String, nullable=True, index=True, default=_new_stable_id)  # see STABLE_ID_TABLES
     name = Column(String, nullable=True)
     title = Column(String, nullable=True)             # Dr., Prof., Sr., Jr., …
     last_name = Column(String, nullable=True)
@@ -110,6 +132,7 @@ class Person(Base):
 class Relation(Base):
     __tablename__ = "relations"
     id = Column(Integer, primary_key=True, index=True)
+    stable_id = Column(String, nullable=True, index=True, default=_new_stable_id)  # see STABLE_ID_TABLES
     person_a_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
     person_b_id = Column(Integer, ForeignKey("persons.id"), nullable=False)
     type = Column(String, nullable=False)  # 'parent' (a=szülő, b=gyerek) | 'spouse'
@@ -125,6 +148,7 @@ class Relation(Base):
 class Document(Base):
     __tablename__ = "documents"
     id = Column(Integer, primary_key=True, index=True)
+    stable_id = Column(String, nullable=True, index=True, default=_new_stable_id)  # see STABLE_ID_TABLES
     # The original single owner, kept in step with `document_persons` by hand.
     # NULL means the document belongs to the project rather than to a person —
     # a chronicle or a research memo written before anyone is linked to it.
@@ -248,6 +272,7 @@ class DocumentType(Base):
 class PersonNote(Base):
     __tablename__ = "person_notes"
     id = Column(Integer, primary_key=True, index=True)
+    stable_id = Column(String, nullable=True, index=True, default=_new_stable_id)  # see STABLE_ID_TABLES
     person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
     title = Column(String, nullable=True)
     content = Column(String, nullable=False, default='')
@@ -299,6 +324,7 @@ class DocumentNoteCitation(Base):
 class Source(Base):
     __tablename__ = "sources"
     id = Column(Integer, primary_key=True, index=True)
+    stable_id = Column(String, nullable=True, index=True, default=_new_stable_id)  # see STABLE_ID_TABLES
     title = Column(String, nullable=False)
     source_type = Column(String, nullable=True)    # register|census|book|audio|website|oral|other
     author = Column(String, nullable=True)
@@ -334,6 +360,7 @@ class Citation(Base):
 class Event(Base):
     __tablename__ = "events"
     id = Column(Integer, primary_key=True, index=True)
+    stable_id = Column(String, nullable=True, index=True, default=_new_stable_id)  # see STABLE_ID_TABLES
     event_type = Column(String, nullable=False, default="custom")
     title = Column(String, nullable=True)
     date = Column(String, nullable=True)   # ISO partial: "YYYY" | "YYYY-MM" | "YYYY-MM-DD"
@@ -560,6 +587,32 @@ class TranscriptPage(Base):
     batch = relationship("TranscriptBatch", back_populates="pages")
 
 
+class ShareProfile(Base):
+    """A named, reusable answer to "what does this relative get?".
+
+    `is_private` is a property of a *record*, but "who may see this" is a
+    relation between a record and a recipient — one boolean cannot hold several
+    of them, which is why marking people private one at a time never scaled to
+    a second collaborator. A profile instead stores the *rules* that pick the
+    person set (`share_filter.py` evaluates them), so the selection is made once
+    and re-run on every later export.
+
+    This is working state, not project content: it records who *else* the user
+    shares with, which is nobody's business but theirs. `build_export_db`
+    therefore deletes the table unconditionally, next to the chat tables.
+    """
+    __tablename__ = "share_profiles"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    notes = Column(String, nullable=True)
+    rules_json = Column(String, nullable=False, default="{}")     # see share_filter.resolve_person_set
+    options_json = Column(String, nullable=False, default="{}")   # content toggles + living policy
+    last_exported_at = Column(String, nullable=True)
+    last_export_counts_json = Column(String, nullable=True)
+    created_at = Column(String, nullable=True)
+    updated_at = Column(String, nullable=True)
+
+
 def configure_engine(engine):
     """Attach WAL-mode pragma listener to a SQLAlchemy engine."""
     @event.listens_for(engine, "connect")
@@ -639,6 +692,12 @@ def init_db_schema(engine):
             # Duplicate detection
             "ALTER TABLE images ADD COLUMN phash INTEGER",
             "ALTER TABLE images ADD COLUMN duplicate_of INTEGER REFERENCES images(id)",
+            # v18 -> v19: cross-database identity — see STABLE_ID_TABLES.
+            # `images` already had its column; the others are new here.
+            *(
+                f"ALTER TABLE {t} ADD COLUMN stable_id TEXT"
+                for t in STABLE_ID_TABLES if t != "images"
+            ),
         ]:
             try:
                 conn.execute(text(stmt))
@@ -646,10 +705,13 @@ def init_db_schema(engine):
             except Exception:
                 pass  # column already exists
 
-        # Indexes for image identity columns (idempotent CREATE INDEX IF NOT EXISTS)
+        # Indexes for identity columns (idempotent CREATE INDEX IF NOT EXISTS)
         for idx_stmt in [
-            "CREATE INDEX IF NOT EXISTS ix_images_stable_id ON images (stable_id)",
             "CREATE INDEX IF NOT EXISTS ix_images_content_hash ON images (content_hash)",
+            *(
+                f"CREATE INDEX IF NOT EXISTS ix_{t}_stable_id ON {t} (stable_id)"
+                for t in STABLE_ID_TABLES
+            ),
         ]:
             try:
                 conn.execute(text(idx_stmt))
@@ -1216,6 +1278,55 @@ def init_db_schema(engine):
             conn.execute(text("UPDATE schema_version SET version = 18"))
             conn.commit()
 
+        # v18 -> v19: `stable_id` on every table whose rows travel between
+        # databases (STABLE_ID_TABLES), plus the `share_profiles` table — a new
+        # *table*, so `create_all` has already made it.
+        #
+        # The backfill runs on **every** startup rather than once behind the
+        # version check, and the guard is the data, not the stored version. A
+        # row inserted by a raw-SQL path that has not learned to write a
+        # `stable_id` would otherwise stay anonymous forever, and a
+        # version-only check never looks at that database again. It costs one
+        # indexed COUNT per table once everything is filled in.
+        _backfill_stable_ids(conn)
+        current_version = conn.execute(text("SELECT version FROM schema_version")).fetchone()[0]
+        if current_version < 19:
+            conn.execute(text("UPDATE schema_version SET version = 19"))
+            conn.commit()
+
+
+
+def _backfill_stable_ids(conn) -> int:
+    """Give every row in STABLE_ID_TABLES a `stable_id`. Idempotent.
+
+    Takes a SQLAlchemy `Connection`. Returns how many rows were filled in, which
+    is 0 on every startup after the first.
+
+    The uuid is generated per row in Python rather than in SQL because SQLite
+    has no uuid function and `randomblob` would need hex-slicing per row anyway —
+    and a single expression evaluated once for a whole UPDATE would give every
+    row the *same* id, which is worse than none at all.
+    """
+    filled = 0
+    for table in STABLE_ID_TABLES:
+        try:
+            ids = [
+                r[0] for r in conn.execute(
+                    text(f"SELECT id FROM {table} WHERE stable_id IS NULL")
+                ).fetchall()
+            ]
+        except Exception:
+            continue        # table or column not there yet — nothing to fill
+        if not ids:
+            continue
+        for row_id in ids:
+            conn.execute(
+                text(f"UPDATE {table} SET stable_id = :sid WHERE id = :rid"),
+                {"sid": _new_stable_id(), "rid": row_id},
+            )
+        conn.commit()
+        filled += len(ids)
+    return filled
 
 
 def _drop_transcript_batch_not_null(raw) -> None:

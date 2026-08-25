@@ -23,12 +23,13 @@ from sqlalchemy.orm import Session, object_session
 from starlette.responses import Response, FileResponse, StreamingResponse
 
 from .project_manager import project_manager, PROJECTS_DIR, _read_project_json
-from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentDescriptionCitation as DBDocumentDescriptionCitation, DocumentImage as DBDocumentImage, DocumentFile as DBDocumentFile, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage, EventDescriptionCitation as DBEventDescriptionCitation, ChatThread as DBChatThread, ChatMessage as DBChatMessage, ChatToolCall as DBChatToolCall, TranscriptBatch as DBTranscriptBatch, TranscriptPage as DBTranscriptPage, TranscriptQuestion as DBTranscriptQuestion
+from .database import Image as DBImage, Face as DBFace, Cluster as DBCluster, Person as DBPerson, Relation as DBRelation, Document as DBDocument, DocumentPerson as DBDocumentPerson, DocumentType as DBDocumentType, DocumentCitation as DBDocumentCitation, DocumentDescriptionCitation as DBDocumentDescriptionCitation, DocumentImage as DBDocumentImage, DocumentFile as DBDocumentFile, Source as DBSource, Citation as DBCitation, PersonNote as DBPersonNote, NoteCitation as DBNoteCitation, DocumentNote as DBDocumentNote, DocumentNoteCitation as DBDocumentNoteCitation, Event as DBEvent, EventPerson as DBEventPerson, EventImage as DBEventImage, EventDescriptionCitation as DBEventDescriptionCitation, ChatThread as DBChatThread, ChatMessage as DBChatMessage, ChatToolCall as DBChatToolCall, TranscriptBatch as DBTranscriptBatch, TranscriptPage as DBTranscriptPage, TranscriptQuestion as DBTranscriptQuestion, ShareProfile as DBShareProfile
 from . import scanner as scanner_mod
 from . import clusterer
 from .clusterer import recompute_person_subclusters
 from . import maintenance
 from . import export_utils
+from . import share_filter
 from . import field_values as field_values_mod
 from . import places as places_mod
 from . import transcriber
@@ -46,6 +47,7 @@ from .schemas import (
     AiSettingsUpdate, WebResearchSettingsUpdate, ChatThreadCreate, ChatThreadUpdate, ChatSendRequest,
     DocumentAiSettingsUpdate, TranscriptBatchCreate, TranscriptBatchStart,
     TranscriptPageUpdate, DocumentTranscribeRequest, TranscriptPageImport, TranscriptBatchAsk,
+    ShareRulesPreview, ShareProfileCreate, ShareProfileUpdate,
 )
 from .image_utils import load_image_bgr, crop_thumbnail, IMAGE_EXTENSIONS
 from .ai import config as ai_config
@@ -164,7 +166,11 @@ def delete_project(project_id: str):
 @app.get("/api/projects/export")
 def export_project(
     cluster_ids: str = Query(default=""),
-    person_ids: str = Query(default=""),
+    # Default None, not "": an absent parameter means "no person filter", while
+    # `person_ids=` present and empty means "a filter that selects nobody". With
+    # a "" default the two are the same string and an empty selection exports
+    # the whole project.
+    person_ids: str | None = Query(default=None),
     name: str = Query(default=""),
     include_genealogy: bool = Query(default=True),
     include_faceless: bool = Query(default=True),
@@ -198,7 +204,7 @@ def export_project(
         parsed_cluster_ids = [int(x) for x in cluster_ids.split(",") if x.strip().isdigit()]
 
     parsed_person_ids: list[int] | None = None
-    if person_ids.strip():
+    if person_ids is not None:
         parsed_person_ids = [int(x) for x in person_ids.split(",") if x.strip().isdigit()]
 
     raw_name = project_info.get('name', 'project')
@@ -257,6 +263,320 @@ def export_gedcom(
         buf,
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{filename_utf8}"},
+    )
+
+
+# ── Share profiles ────────────────────────────────────────────────────────────
+#
+# A named, reusable answer to "what does this relative get?". See
+# `backend/share_filter.py` for why the selection is described by rules rather
+# than ticked person by person, and README → *Collaboration and share profiles*.
+
+def _share_profile_dict(p: "DBShareProfile") -> dict:
+    return {
+        "id": p.id,
+        "name": p.name,
+        "notes": p.notes,
+        "rules": _json_or(p.rules_json, {}),
+        "options": _json_or(p.options_json, {}),
+        "last_exported_at": p.last_exported_at,
+        "last_export_counts": _json_or(p.last_export_counts_json, None),
+        "created_at": p.created_at,
+        "updated_at": p.updated_at,
+    }
+
+
+def _json_or(raw: str | None, fallback):
+    try:
+        return json.loads(raw) if raw else fallback
+    except (ValueError, TypeError):
+        return fallback
+
+
+def _share_resolve(db: Session, rules: dict, options: dict) -> dict:
+    """Turn a rule set into the ids and counts an export would produce.
+
+    Returns `person_ids` (who travels), `redact_ids` (who travels emptied),
+    `strips` (who travels whole but without one kind of material) and the counts
+    the editor shows. The counts describe the archive *after* all three, because
+    a preview that promised a hundred documents and shipped twenty would be
+    worse than no preview.
+    """
+    persons = [
+        {"id": p.id, "last_name": p.last_name,
+         "birth_year": p.birth_year, "birth_date": p.birth_date,
+         "christening_year": p.christening_year, "christening_date": p.christening_date,
+         "death_year": p.death_year, "death_date": p.death_date,
+         "burial_year": p.burial_year, "burial_date": p.burial_date}
+        for p in db.query(DBPerson).all()
+    ]
+    relations = [
+        {"person_a_id": r.person_a_id, "person_b_id": r.person_b_id, "type": r.type}
+        for r in db.query(DBRelation).all()
+    ]
+
+    selected = share_filter.resolve_person_set(
+        persons, relations, rules or {}, project_manager.get_default_proband()
+    )
+
+    policy = (options or {}).get("living_policy", "redact")
+    if policy not in share_filter.LIVING_POLICIES:
+        policy = "redact"
+    lifespan = int((options or {}).get("lifespan_years") or share_filter.DEFAULT_LIFESPAN_YEARS)
+
+    living = share_filter.living_ids(persons, lifespan) if policy != "include" else set()
+    redact_ids: set[int] = set()
+    if policy == "exclude":
+        selected -= living
+    elif policy == "redact":
+        redact_ids = selected & living
+
+    # Everyone whose own material travels. A redacted person keeps their place
+    # in the tree and nothing else, so they count for neither.
+    effective = selected - redact_ids
+
+    # Per-kind strips, narrowed to people who are actually in the archive. A
+    # rule may well name somebody the selection never included; counting them
+    # would report a reduction that is not happening.
+    raw_strips = share_filter.resolve_content_strips(
+        persons, relations, rules or {}, project_manager.get_default_proband()
+    )
+    strips = {kind: sorted(ids & effective) for kind, ids in raw_strips.items()}
+
+    # Whose pictures decide which images travel. None when the profile does not
+    # narrow them, which is not the same as "everybody" — see
+    # `resolve_photo_people`.
+    photo_people = share_filter.resolve_photo_people(
+        persons, relations, options or {}, effective - set(strips.get("images") or []),
+    )
+
+    # Documents and events named outright, rather than reached through a person.
+    records = {
+        side: {k: sorted(v) for k, v in
+               share_filter.resolve_record_ids(rules or {}, side).items()}
+        for side in ("include", "exclude")
+    }
+
+    counts = _share_counts(db, selected, effective, strips, photo_people, records)
+
+    return {
+        "person_ids": sorted(selected),
+        "redact_ids": sorted(redact_ids),
+        "strips": strips,
+        "photo_person_ids": None if photo_people is None else sorted(photo_people),
+        "records": records,
+        "living_policy": policy,
+        "counts": counts,
+    }
+
+
+def _share_counts(
+    db: Session, selected: set[int], effective: set[int],
+    strips: dict[str, list[int]] | None = None,
+    photo_people: set[int] | None = None,
+    records: dict[str, dict[str, list[int]]] | None = None,
+) -> dict:
+    """What an export of this selection would contain.
+
+    Each kind is counted over the people who still carry it: everyone whose own
+    material travels, minus anyone an exclusion row holds that kind back from.
+    Photographs are counted from `photo_people` when the profile narrows them,
+    because that is the set the export derives the kept images from.
+    """
+    if not selected:
+        return {"persons": 0, "redacted": 0, "relations": 0,
+                "documents": 0, "events": 0, "notes": 0, "images": 0}
+
+    sel = list(selected)
+
+    def bearers(kind: str) -> list[int]:
+        ids = effective - set((strips or {}).get(kind) or [])
+        # SQLite has no empty IN list; -1 matches no person.
+        return list(ids) or [-1]
+
+    relations = db.query(func.count(DBRelation.id)).filter(
+        DBRelation.person_a_id.in_(sel), DBRelation.person_b_id.in_(sel)
+    ).scalar() or 0
+
+    kept_docs = ((records or {}).get("include") or {}).get("documents") or []
+    kept_events = ((records or {}).get("include") or {}).get("events") or []
+    drop_docs = ((records or {}).get("exclude") or {}).get("documents") or []
+    drop_events = ((records or {}).get("exclude") or {}).get("events") or []
+
+    doc_eff = bearers("documents")
+    linked_doc_ids = db.query(DBDocumentPerson.document_id).filter(
+        DBDocumentPerson.person_id.in_(doc_eff)
+    )
+    doc_q = db.query(func.count(func.distinct(DBDocument.id))).filter(
+        (DBDocument.person_id.in_(doc_eff))
+        | (DBDocument.id.in_(linked_doc_ids))
+        | (DBDocument.id.in_(kept_docs or [-1]))
+    )
+    if drop_docs:
+        doc_q = doc_q.filter(~DBDocument.id.in_(drop_docs))
+    documents = doc_q.scalar() or 0
+
+    ev_q = db.query(func.count(func.distinct(DBEvent.id))).filter(
+        (DBEvent.id.in_(db.query(DBEventPerson.event_id).filter(
+            DBEventPerson.person_id.in_(bearers("events")))))
+        | (DBEvent.id.in_(kept_events or [-1]))
+    )
+    if drop_events:
+        ev_q = ev_q.filter(~DBEvent.id.in_(drop_events))
+    events = ev_q.scalar() or 0
+
+    notes = db.query(func.count(DBPersonNote.id)).filter(
+        DBPersonNote.person_id.in_(bearers("notes"))
+    ).scalar() or 0
+
+    image_from = list(photo_people) if photo_people is not None else bearers("images")
+    cluster_ids = db.query(DBCluster.id).filter(
+        DBCluster.person_id.in_(image_from or [-1]), DBCluster.label != -1
+    )
+    images = db.query(func.count(func.distinct(DBFace.image_id))).filter(
+        DBFace.cluster_id.in_(cluster_ids)
+    ).scalar() or 0
+
+    return {
+        "persons": len(selected),
+        "redacted": len(selected) - len(effective),
+        "relations": relations,
+        "documents": documents,
+        "events": events,
+        "notes": notes,
+        "images": images,
+    }
+
+
+@app.get("/api/share-profiles")
+def list_share_profiles(db: Session = Depends(get_db)):
+    rows = db.query(DBShareProfile).order_by(DBShareProfile.name).all()
+    return [_share_profile_dict(p) for p in rows]
+
+
+@app.post("/api/share-profiles", status_code=201)
+def create_share_profile(body: ShareProfileCreate, db: Session = Depends(get_db)):
+    now = datetime.now().isoformat()
+    p = DBShareProfile(
+        name=body.name.strip() or "Untitled",
+        notes=body.notes,
+        rules_json=json.dumps(body.rules or {}, ensure_ascii=False),
+        options_json=json.dumps(body.options or {}, ensure_ascii=False),
+        created_at=now, updated_at=now,
+    )
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return _share_profile_dict(p)
+
+
+@app.patch("/api/share-profiles/{profile_id}")
+def update_share_profile(profile_id: int, body: ShareProfileUpdate, db: Session = Depends(get_db)):
+    p = db.query(DBShareProfile).filter(DBShareProfile.id == profile_id).first()
+    if not p:
+        raise HTTPException(404, "Profile not found")
+    data = body.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        p.name = data["name"].strip() or p.name
+    if "notes" in data:
+        p.notes = data["notes"]
+    if data.get("rules") is not None:
+        p.rules_json = json.dumps(data["rules"], ensure_ascii=False)
+    if data.get("options") is not None:
+        p.options_json = json.dumps(data["options"], ensure_ascii=False)
+    p.updated_at = datetime.now().isoformat()
+    db.commit()
+    db.refresh(p)
+    return _share_profile_dict(p)
+
+
+@app.delete("/api/share-profiles/{profile_id}", status_code=204)
+def delete_share_profile(profile_id: int, db: Session = Depends(get_db)):
+    p = db.query(DBShareProfile).filter(DBShareProfile.id == profile_id).first()
+    if not p:
+        raise HTTPException(404, "Profile not found")
+    db.delete(p)
+    db.commit()
+    return Response(status_code=204)
+
+
+@app.post("/api/share-profiles/preview")
+def preview_share_rules(body: ShareRulesPreview, db: Session = Depends(get_db)):
+    """Resolve a rule set without saving it, so the editor can answer as it is typed."""
+    return _share_resolve(
+        db, body.rules,
+        {"living_policy": body.living_policy, "lifespan_years": body.lifespan_years,
+         "photo_kinship": body.photo_kinship},
+    )
+
+
+@app.get("/api/share-profiles/{profile_id}/export")
+def export_share_profile(profile_id: int, db: Session = Depends(get_db)):
+    """Build the archive this profile describes.
+
+    A thin wrapper: the rules are resolved to a person set and handed to the
+    same streaming builder every other export uses, so there is one ZIP writer
+    rather than a second one that drifts.
+    """
+    project_id = project_manager.active_id
+    if not project_id:
+        raise HTTPException(404, "No active project")
+
+    p = db.query(DBShareProfile).filter(DBShareProfile.id == profile_id).first()
+    if not p:
+        raise HTTPException(404, "Profile not found")
+
+    rules = _json_or(p.rules_json, {})
+    options = _json_or(p.options_json, {})
+    resolved = _share_resolve(db, rules, options)
+    if not resolved["person_ids"]:
+        raise HTTPException(400, "This profile selects nobody")
+
+    # Stamped when the archive is asked for rather than when the last byte
+    # leaves: the stream outlives this request, and a download the user
+    # cancelled still tells them what they last sent.
+    p.last_exported_at = datetime.now().isoformat()
+    p.last_export_counts_json = json.dumps(resolved["counts"], ensure_ascii=False)
+    db.commit()
+
+    project_dir = PROJECTS_DIR / project_id
+    project_info = _read_project_json(project_dir / "project.json")
+    project_info = {**project_info, "name": f"{project_info.get('name', 'project')} — {p.name}"}
+
+    share_info = {
+        "profile": p.name,
+        "sender": _read_project_json(project_dir / "project.json").get("name"),
+        "source_project_id": project_id,
+        "living_policy": resolved["living_policy"],
+        "redacted_persons": len(resolved["redact_ids"]),
+        "stripped": {k: len(v) for k, v in resolved["strips"].items() if v},
+        "photo_kinship": (options or {}).get("photo_kinship") or None,
+        "rules": rules,
+    }
+
+    ascii_name = unicodedata.normalize("NFD", p.name).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^\w]+", "_", ascii_name).strip("_") or "share"
+    filename = f"{slug}_{datetime.now():%Y%m%d}.zip"
+
+    return StreamingResponse(
+        export_utils.stream_project_zip(
+            project_dir / "photo_organizer.db", project_info, None,
+            True, resolved["person_ids"],
+            bool(options.get("include_faceless", True)),
+            bool(options.get("include_notes", True)),
+            bool(options.get("include_sources", True)),
+            bool(options.get("include_events", True)),
+            bool(options.get("include_documents", True)),
+            bool(options.get("include_images", True)),
+            False,                                  # scans never travel in a share
+            resolved["redact_ids"],
+            resolved["strips"],
+            resolved["photo_person_ids"],
+            resolved["records"],
+            share_info,
+        ),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -452,7 +772,7 @@ async def merge_preview(file: UploadFile = File(...)):
     _conn.row_factory = _sqlite3.Row
     try:
         existing = [dict(r) for r in _conn.execute(
-            "SELECT id, name, first_name, last_name, birth_year FROM persons"
+            "SELECT id, stable_id, name, first_name, last_name, birth_year FROM persons"
         ).fetchall()]
         existing_relations = [dict(r) for r in _conn.execute(
             "SELECT id, type, person_a_id, person_b_id FROM relations"
@@ -470,6 +790,9 @@ async def merge_preview(file: UploadFile = File(...)):
 
     return {
         'token':            token,
+        # Who sent this and under which profile, when the archive says so. Null
+        # for a plain project export — the merge screen just shows less.
+        'share':            incoming_data.get('share_manifest'),
         'persons':          preview_persons,
         'relations_count':  len(incoming_data['relations']),
         'events_count':     len(incoming_data['events']),

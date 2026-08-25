@@ -11,6 +11,7 @@ Also imports document_persons junction table.
 from __future__ import annotations
 
 import io
+import json
 import mimetypes
 import os
 import sqlite3
@@ -65,6 +66,45 @@ def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
         return False
 
 
+# ── Cross-database identity ───────────────────────────────────────────────────
+
+def _find_by_stable_id(
+    conn: sqlite3.Connection, table: str, stable_id: Optional[str],
+) -> Optional[int]:
+    """Local row id for an incoming `stable_id`, or None.
+
+    This is what turns re-importing an updated archive into an update instead of
+    a second copy of everything. It is checked before each section's own
+    heuristic dedup, because it is the only one of them that is not a guess.
+    """
+    if not stable_id:
+        return None
+    try:
+        row = conn.execute(
+            f"SELECT id FROM {table} WHERE stable_id = ?", (stable_id,)
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None     # local DB predates v19
+    return row[0] if row else None
+
+
+def _claim_stable_id(
+    conn: sqlite3.Connection, table: str, stable_id: Optional[str],
+) -> str:
+    """The `stable_id` to store on a row being created from an incoming one.
+
+    Normally the incoming id itself — carrying it over is the whole point, so
+    that the *next* exchange in either direction recognises this row. A fresh
+    one is minted in two cases: the archive predates v19 and has none, and the
+    id is already taken locally by a row the user chose not to merge with. In
+    that second case they have said these are different people, and two rows
+    answering to one identity would make every later match ambiguous.
+    """
+    if stable_id and _find_by_stable_id(conn, table, stable_id) is None:
+        return stable_id
+    return str(uuid.uuid4())
+
+
 # ── Read incoming ZIP DB ──────────────────────────────────────────────────────
 
 def read_zip_db(zip_data: bytes) -> dict:
@@ -73,10 +113,20 @@ def read_zip_db(zip_data: bytes) -> dict:
     Returns dict with keys: persons, relations, documents, document_persons,
     events, event_persons, event_description_citations.
     """
+    share_manifest: Optional[dict] = None
     with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
         if 'project.db' not in zf.namelist():
             raise ValueError("ZIP does not contain project.db")
         db_bytes = zf.read('project.db')
+        # Written by a share-profile export (see `_share_manifest` in
+        # `export_utils.py`). Absent from a plain project export and from
+        # anything made before it existed, which is not an error — the merge
+        # screen simply has nothing to say about where the archive came from.
+        if 'share.json' in zf.namelist():
+            try:
+                share_manifest = json.loads(zf.read('share.json').decode('utf-8'))
+            except (ValueError, UnicodeDecodeError):
+                share_manifest = None
 
     with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
         tmp.write(db_bytes)
@@ -85,18 +135,25 @@ def read_zip_db(zip_data: bytes) -> dict:
     conn = sqlite3.connect(tmp_path)
     conn.row_factory = sqlite3.Row
     try:
-        persons = _safe_rows(conn, f"SELECT {', '.join(_READ_FIELDS)} FROM persons")
+        # `stable_id` (v19) is what makes a second merge of the same archive an
+        # update rather than a duplicate. A ZIP exported before v19 has none, and
+        # asking for the column would drop the whole table — hence the guard, the
+        # same shape `relation_id` and `is_text` use below.
+        def _sid(table: str) -> str:
+            return ", stable_id" if _has_column(conn, table, "stable_id") else ""
+
+        persons = _safe_rows(conn, f"SELECT {', '.join(_READ_FIELDS)}{_sid('persons')} FROM persons")
 
         relations = _safe_rows(conn,
             "SELECT id, type, person_a_id, person_b_id, "
-            "marriage_year, marriage_place, divorce_year, divorce_place FROM relations"
+            f"marriage_year, marriage_place, divorce_year, divorce_place{_sid('relations')} FROM relations"
         )
 
         # is_text arrived in schema v6; older export ZIPs simply don't have it.
         is_text_col = ", is_text" if _has_column(conn, "documents", "is_text") else ""
         documents = _safe_rows(conn,
             "SELECT id, person_id, stored_name, filename, mime_type, "
-            f"title, doc_type, year, description{is_text_col} FROM documents"
+            f"title, doc_type, year, description{is_text_col}{_sid('documents')} FROM documents"
         )
 
         document_persons = _safe_rows(conn,
@@ -121,11 +178,11 @@ def read_zip_db(zip_data: bytes) -> dict:
         )
 
         person_notes = _safe_rows(conn,
-            "SELECT id, person_id, title, content, sort_order FROM person_notes"
+            f"SELECT id, person_id, title, content, sort_order{_sid('person_notes')} FROM person_notes"
         )
 
         events = _safe_rows(conn,
-            "SELECT id, event_type, title, date, year, place, description FROM events"
+            f"SELECT id, event_type, title, date, year, place, description{_sid('events')} FROM events"
         )
 
         event_persons = _safe_rows(conn,
@@ -159,7 +216,7 @@ def read_zip_db(zip_data: bytes) -> dict:
 
         sources = _safe_rows(conn,
             "SELECT id, title, source_type, author, year, publisher, location, url, description, "
-            "document_id, event_id FROM sources"
+            f"document_id, event_id{_sid('sources')} FROM sources"
         )
         # relation_id (marriage citations) arrived in schema v15 — an older ZIP
         # has none, and asking for the column would drop every citation row.
@@ -197,6 +254,12 @@ def read_zip_db(zip_data: bytes) -> dict:
         'citations':        citations,
         'note_citations':   note_citations,
         'event_images':     event_images_data,
+        # None unless the archive came from a share profile.
+        'share_manifest':   share_manifest,
+        # Deliberately absent: `share_profiles`. It is the sender's own record
+        # of who they share with, the export strips it, and merging one into
+        # the recipient's project would be meaningless — its rules name person
+        # ids from a database that is not theirs.
     }
 
 
@@ -293,8 +356,16 @@ def _extract_orig_filename(zip_path: str) -> str:
 
 # ── Match heuristic ───────────────────────────────────────────────────────────
 
-def _suggest_match(incoming: dict, existing: list[dict]) -> Optional[dict]:
-    """Scoring same as gedcom_import._suggest_match, works on plain dicts."""
+def _suggest_match(
+    incoming: dict, existing: list[dict], skip_ids: Optional[set[int]] = None,
+) -> Optional[dict]:
+    """Scoring same as gedcom_import._suggest_match, works on plain dicts.
+
+    `skip_ids` holds the existing people already claimed by an exact stable_id
+    match. Offering one of them again would let a name coincidence outrank a
+    known identity, and the person who really owns that row would then be
+    reported as a conflict.
+    """
     inc_norms = _name_norms(incoming.get('first_name'), incoming.get('last_name'), incoming.get('name'))
     inc_year  = incoming.get('birth_year')
     if not inc_norms:
@@ -304,6 +375,8 @@ def _suggest_match(incoming: dict, existing: list[dict]) -> Optional[dict]:
     best: Optional[dict] = None
 
     for person in existing:
+        if skip_ids and person['id'] in skip_ids:
+            continue
         ex_norms = _name_norms(person.get('first_name'), person.get('last_name'), person.get('name'))
         if not ex_norms or not inc_norms.intersection(ex_norms):
             continue
@@ -377,18 +450,49 @@ def build_merge_preview(
     inc_par, inc_chi, inc_spo = _build_relation_maps(incoming_data['relations'])
     ex_par,  ex_chi,  ex_spo  = _build_relation_maps(existing_relations)
 
-    # ── Pass 1: Name + birth_year matching ───────────────────────────────────
-    initial_matches: dict[int, Optional[dict]] = {
-        p['id']: _suggest_match(p, existing_persons)
-        for p in incoming_data['persons']
-    }
-
-    # Claim exact matches before high-confidence ones to prevent theft.
+    # ── Pass 0: stable_id — the same row, not a person who looks like them ────
+    # An archive exported from this project (or one it was merged into) carries
+    # the ids its rows were created under, so these are identities rather than
+    # guesses. They are claimed before anything else runs and are never
+    # revisited: a name pass has no evidence that could outweigh this, and the
+    # context validation below would happily reject a correct match because the
+    # recipient reshaped the family around it.
     tentative_remap: dict[int, int] = {}
     claimed_ex_ids:  set[int]       = set()
+    initial_matches: dict[int, Optional[dict]] = {}
 
+    existing_by_sid = {
+        p['stable_id']: p for p in existing_persons if p.get('stable_id')
+    }
+    for p in incoming_data['persons']:
+        ex = existing_by_sid.get(p.get('stable_id')) if p.get('stable_id') else None
+        if not ex or ex['id'] in claimed_ex_ids:
+            continue
+        tentative_remap[p['id']] = ex['id']
+        claimed_ex_ids.add(ex['id'])
+        initial_matches[p['id']] = {
+            'id':           ex['id'],
+            'name':         ex.get('name') or '',
+            'first_name':   ex.get('first_name'),
+            'last_name':    ex.get('last_name'),
+            'birth_year':   ex.get('birth_year'),
+            'confidence':   'exact',
+            'match_source': 'stable_id',
+        }
+
+    # ── Pass 1: Name + birth_year matching ───────────────────────────────────
+    # Only for what Pass 0 left over. A person already identified is skipped,
+    # and an existing row already claimed is off the table for everyone else.
+    for p in incoming_data['persons']:
+        if p['id'] in initial_matches:
+            continue
+        initial_matches[p['id']] = _suggest_match(p, existing_persons, skip_ids=claimed_ex_ids)
+
+    # Claim exact matches before high-confidence ones to prevent theft.
     for target_conf in ('exact', 'high'):
         for p in incoming_data['persons']:
+            if p['id'] in tentative_remap:
+                continue
             m = initial_matches[p['id']]
             if m and m['confidence'] == target_conf and m['id'] not in claimed_ex_ids:
                 tentative_remap[p['id']] = m['id']
@@ -396,8 +500,15 @@ def build_merge_preview(
 
     # ── Pass 2: Context validation ────────────────────────────────────────────
     context_notes: dict[int, str] = {}
+    # A stable_id match is an identity, not a suggestion — it is confirmed here
+    # rather than scored, so a reshaped family cannot demote it.
+    for inc_id, m in initial_matches.items():
+        if m and m.get('match_source') == 'stable_id':
+            context_notes[inc_id] = 'confirmed'
 
     for inc_id, ex_id in list(tentative_remap.items()):
+        if context_notes.get(inc_id) == 'confirmed':
+            continue
         cs = _context_score(
             inc_id, ex_id, tentative_remap,
             inc_par, inc_chi, inc_spo,
@@ -627,13 +738,14 @@ def execute_merge(
             name = ' '.join(x for x in [p.get('first_name'), p.get('last_name')] if x) or p.get('name') or 'Unknown'
             cur = conn.execute(
                 "INSERT INTO persons "
-                "(name, title, first_name, last_name, middle_name, nickname, sex, occupation, "
+                "(stable_id, name, title, first_name, last_name, middle_name, nickname, sex, occupation, "
                 " birth_date, birth_year, birth_place, "
                 " christening_date, christening_year, christening_place, "
                 " death_date, death_year, death_place, "
                 " burial_date, burial_year, burial_place) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
+                    _claim_stable_id(conn, 'persons', p.get('stable_id')),
                     name, p.get('title'), p.get('first_name'), p.get('last_name'),
                     p.get('middle_name'), p.get('nickname'), p.get('sex'), p.get('occupation'),
                     p.get('birth_date'), p.get('birth_year'), p.get('birth_place'),
@@ -653,6 +765,11 @@ def execute_merge(
         a = id_remap.get(rel['person_a_id'])
         b = id_remap.get(rel['person_b_id'])
         if a is None or b is None:
+            continue
+
+        known = _find_by_stable_id(conn, 'relations', rel.get('stable_id'))
+        if known is not None:
+            rel_id_remap[rel['id']] = known
             continue
 
         rtype = rel.get('type', 'parent')
@@ -678,9 +795,10 @@ def execute_merge(
                 continue
 
         cur = conn.execute(
-            "INSERT INTO relations (type, person_a_id, person_b_id, marriage_year, marriage_place, divorce_year, divorce_place) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (rtype, a, b, rel.get('marriage_year'), rel.get('marriage_place'),
+            "INSERT INTO relations (stable_id, type, person_a_id, person_b_id, marriage_year, marriage_place, divorce_year, divorce_place) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (_claim_stable_id(conn, 'relations', rel.get('stable_id')),
+             rtype, a, b, rel.get('marriage_year'), rel.get('marriage_place'),
              rel.get('divorce_year'), rel.get('divorce_place')),
         )
         conn.commit()
@@ -695,6 +813,13 @@ def execute_merge(
             continue
         content = note.get('content') or ''
         title   = note.get('title') or ''
+        # A note we have seen before is the same note even if its text has been
+        # edited since — which is precisely the case the content check below
+        # cannot recognise, and would import as a second copy.
+        known = _find_by_stable_id(conn, 'person_notes', note.get('stable_id'))
+        if known is not None:
+            note_id_remap[note['id']] = known
+            continue
         # Skip if identical content already exists for this person.
         dup = conn.execute(
             "SELECT id FROM person_notes WHERE person_id = ? AND content = ?",
@@ -704,9 +829,10 @@ def execute_merge(
             note_id_remap[note['id']] = dup[0]
             continue
         cur = conn.execute(
-            "INSERT INTO person_notes (person_id, title, content, sort_order, created_at, updated_at) "
-            "VALUES (?,?,?,?,datetime('now'),datetime('now'))",
-            (local_pid, title, content, note.get('sort_order') or 0),
+            "INSERT INTO person_notes (stable_id, person_id, title, content, sort_order, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,datetime('now'),datetime('now'))",
+            (_claim_stable_id(conn, 'person_notes', note.get('stable_id')),
+             local_pid, title, content, note.get('sort_order') or 0),
         )
         conn.commit()
         note_id_remap[note['id']] = cur.lastrowid
@@ -731,20 +857,33 @@ def execute_merge(
             ev_title  = ev.get('title')
             ev_date   = ev.get('date')
             first_pid = local_participants[0][0]
-            dup = conn.execute(
-                "SELECT ep.id FROM event_persons ep JOIN events e ON e.id = ep.event_id "
-                "WHERE ep.person_id=? "
-                "AND (e.title=? OR (e.title IS NULL AND ? IS NULL)) "
-                "AND (e.date=? OR (e.date IS NULL AND ? IS NULL))",
-                (first_pid, ev_title, ev_title, ev_date, ev_date),
-            ).fetchone()
-            if dup:
+
+            # An event we have seen before, whatever its title says now. The
+            # title+date check below cannot recognise one whose title was
+            # edited on either side, and imports it a second time.
+            known = _find_by_stable_id(conn, 'events', ev.get('stable_id'))
+            if known is None:
+                # The fallback: same first participant, same title, same date.
+                # It returns the *event* id so the remap can be recorded — a
+                # deduplicated event that left `ev_id_remap` empty dropped its
+                # description citations, which point at an event id.
+                dup = conn.execute(
+                    "SELECT e.id FROM event_persons ep JOIN events e ON e.id = ep.event_id "
+                    "WHERE ep.person_id=? "
+                    "AND (e.title=? OR (e.title IS NULL AND ? IS NULL)) "
+                    "AND (e.date=? OR (e.date IS NULL AND ? IS NULL))",
+                    (first_pid, ev_title, ev_title, ev_date, ev_date),
+                ).fetchone()
+                known = dup[0] if dup else None
+            if known is not None:
+                ev_id_remap[ev['id']] = known
                 continue
 
             cur = conn.execute(
-                "INSERT INTO events (event_type, title, date, year, place, description, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,datetime('now'),datetime('now'))",
-                (ev.get('event_type', 'custom'), ev_title, ev_date,
+                "INSERT INTO events (stable_id, event_type, title, date, year, place, description, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,datetime('now'),datetime('now'))",
+                (_claim_stable_id(conn, 'events', ev.get('stable_id')),
+                 ev.get('event_type', 'custom'), ev_title, ev_date,
                  ev.get('year'), ev.get('place'), ev.get('description')),
             )
             new_ev_id = cur.lastrowid
@@ -775,6 +914,10 @@ def execute_merge(
     if include_docs:
         docs_dir.mkdir(parents=True, exist_ok=True)
         doc_id_remap = {}
+        # Incoming documents that turned out to be ones we already hold. They
+        # keep their local id for the citation and link remaps below, but
+        # nothing of theirs is written again — their bytes are on disk already.
+        reused_doc_inc_ids: set[int] = set()
         try:
             with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
                 zip_names = set(zf.namelist())
@@ -786,6 +929,19 @@ def execute_merge(
                     local_pid = None if unowned else id_remap.get(doc['person_id'])
                     if local_pid is None and not unowned:
                         continue
+
+                    # Documents had no dedup at all before `stable_id`: every
+                    # re-import of the same archive wrote a second copy of every
+                    # file to disk and a second row pointing at it. There is no
+                    # heuristic fallback here on purpose — two scans of the same
+                    # certificate are legitimately two documents, and only a
+                    # shared identity says otherwise.
+                    known = _find_by_stable_id(conn, 'documents', doc.get('stable_id'))
+                    if known is not None:
+                        doc_id_remap[doc['id']] = known
+                        reused_doc_inc_ids.add(doc['id'])
+                        continue
+
                     arc = f"documents/{doc['stored_name']}"
                     if arc not in zip_names:
                         continue
@@ -798,9 +954,10 @@ def execute_merge(
                     # opaque file: no Markdown rendering, no text editor.
                     cur = conn.execute(
                         "INSERT INTO documents "
-                        "(person_id, stored_name, filename, mime_type, title, doc_type, year, description, is_text, created_at) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
-                        (local_pid, new_stored, doc.get('filename'), mime,
+                        "(stable_id, person_id, stored_name, filename, mime_type, title, doc_type, year, description, is_text, created_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+                        (_claim_stable_id(conn, 'documents', doc.get('stable_id')),
+                         local_pid, new_stored, doc.get('filename'), mime,
                          doc.get('title'), doc.get('doc_type'), doc.get('year'), doc.get('description'),
                          1 if doc.get('is_text') else 0),
                     )
@@ -817,8 +974,8 @@ def execute_merge(
                 # page of a scanned letter uploaded together in one go.
                 for df in incoming_data.get('document_files', []):
                     new_doc_id = doc_id_remap.get(df['document_id'])
-                    if new_doc_id is None:
-                        continue
+                    if new_doc_id is None or df['document_id'] in reused_doc_inc_ids:
+                        continue    # already on this document — see reused_doc_inc_ids
                     arc = f"documents/{df['stored_name']}"
                     if arc not in zip_names:
                         continue
@@ -1013,20 +1170,26 @@ def execute_merge(
     # ── 7. Sources + Citations ────────────────────────────────────────────────
     if include_sources:
         for src in incoming_data.get('sources', []):
-            dup = conn.execute(
-                "SELECT id FROM sources WHERE title IS ? AND author IS ? AND year IS ?",
-                (src.get('title'), src.get('author'), src.get('year')),
-            ).fetchone()
-            if dup:
-                src_id_remap[src['id']] = dup[0]
+            # Identity first, then the title/author/year fallback — a source
+            # whose title was corrected on either side is still the same source.
+            known = _find_by_stable_id(conn, 'sources', src.get('stable_id'))
+            if known is None:
+                dup = conn.execute(
+                    "SELECT id FROM sources WHERE title IS ? AND author IS ? AND year IS ?",
+                    (src.get('title'), src.get('author'), src.get('year')),
+                ).fetchone()
+                known = dup[0] if dup else None
+            if known is not None:
+                src_id_remap[src['id']] = known
                 continue
             local_doc_id = doc_id_remap.get(src['document_id']) if src.get('document_id') else None
             local_ev_id  = ev_id_remap.get(src['event_id'])    if src.get('event_id')    else None
             cur = conn.execute(
                 "INSERT INTO sources "
-                "(title, source_type, author, year, publisher, location, url, description, document_id, event_id, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))",
-                (src.get('title'), src.get('source_type'), src.get('author'), src.get('year'),
+                "(stable_id, title, source_type, author, year, publisher, location, url, description, document_id, event_id, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+                (_claim_stable_id(conn, 'sources', src.get('stable_id')),
+                 src.get('title'), src.get('source_type'), src.get('author'), src.get('year'),
                  src.get('publisher'), src.get('location'), src.get('url'), src.get('description'),
                  local_doc_id, local_ev_id),
             )

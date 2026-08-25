@@ -257,7 +257,7 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 | Backend | FastAPI, ~160 REST endpoints in one module (`backend/main.py`), SQLAlchemy over SQLite |
 | Frontend | React 19 + TypeScript + Vite, Tailwind v4, react-query; one large component per tab in `frontend/src/components/` |
 | Data | one project directory per family archive: `projects/<id>/` with its own DB, documents and `project.json` |
-| Schema | version stamped in the DB, idempotent migrations at startup (currently v18) |
+| Schema | version stamped in the DB, idempotent migrations at startup (currently v19) |
 | Packaging | PyInstaller onedir; `launcher.py` starts uvicorn on a free local port and opens the browser |
 | CI | `.github/workflows/build.yml` — a push to `main` builds and publishes the Windows and macOS bundles |
 | Tests | none; changes are verified by exercising the real endpoint or screen |
@@ -277,6 +277,8 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 | Marking things private, or a new privacy-bearing table | [Privacy enforcement](#privacy-enforcement) | `database.py`, `export_utils.py`, `gedcom_export.py`, `ai/tools.py` |
 | A schema change or a new column | [Projects and database](#projects-and-database) | `database.py`, `project_manager.py`, `types.ts` |
 | ZIP export, project import, merge import | [ZIP export](#zip-export) | `export_utils.py`, `merge_import.py`, `ExportModal.tsx`, `MergeModal.tsx` |
+| Sharing a branch with a relative | [Collaboration and share profiles](#collaboration-and-share-profiles) | `backend/share_filter.py`, `ShareModal.tsx`, share endpoints in `main.py`, `_redact_persons` in `export_utils.py` |
+| A record that must survive a round trip between databases | [Cross-database identity](#cross-database-identity) | `database.py` (`STABLE_ID_TABLES`), `ensure_stable_ids` in `export_utils.py`, `merge_import.py` |
 | GEDCOM in or out | [GEDCOM export](#gedcom-export) | `gedcom_export.py`, `gedcom_import.py`, `GedcomImportModal.tsx` |
 | The AI assistant — tools, prompt, providers, models | [AI assistant (implementation detail)](#ai-assistant-implementation-detail) | `backend/ai/`, `AssistantPanel.tsx`, `AssistantSetup.tsx` |
 | Reading scanned documents, triaging a folder of records | [Reading scanned documents](#reading-scanned-documents) | `ai/doc_reader.py`, `transcriber.py`, `ScanReadModal.tsx`, transcript endpoints in `main.py` |
@@ -427,6 +429,8 @@ The view opens **fitted** rather than at 1:1, because the graph deliberately spr
 2. **GEDCOM export** (`gedcom_export.py` → `build_gedcom_zip`): all six queries that could expose private data use `WHERE COALESCE(is_private,0)=0`. The `COALESCE` handles legacy databases that predate the v5 migration. Private event_person rows pointing to private events are silently skipped because the events are not in `events_by_id`.
 
 3. **AI assistant tools** (`ai/tools.py` → `_priv_ok`): every tool drops private rows unless the user turned on `allow_private` in the assistant settings. Note `persons` has no `is_private` column — a person is never private, only their relations, notes, documents, events, clusters and images are, so filtering happens on those. The tree primer applies the same filter to relations, which means the private and non-private primers are different strings and therefore separate prompt-cache entries — correct, and free.
+
+**`is_private` is not the sharing mechanism.** It answers "may this ever leave this machine, for anybody?" — one boolean, applied to every export equally. "May *this recipient* see this?" is a different question with a different answer per recipient, and it is answered by a [share profile](#collaboration-and-share-profiles) instead. The two compose: the privacy filter still runs last on a profile's archive, so a private record stays behind no matter what the rules selected.
 
 **Frontend**: amber padlock (always visible) when private, gray padlock (hover-only) when public. Implemented in `NoteEditor.tsx` (`NoteCard`), `PersonPanel.tsx` (`DocRow`, `RelRow`, spouse section), `EventsTab.tsx` (`EventCard`, `EventDetailView`), `ClustersTab.tsx` (`ClusterCard`), `ImagesTab.tsx` (bulk toolbar "Make private" button).
 
@@ -1409,6 +1413,7 @@ Each project has its own directory (`projects/<id>/`) with its own SQLite databa
 | v14→v15 | `citations.relation_id` — a marriage's sources belong to the marriage rather than to one spouse |
 | v15→v16 | `transcript_questions` — the conversation about a batch of scans |
 | v16→v17 | `transcript_pages.batch_id` becomes nullable. Nothing writes NULL any more — per-document readings go into the description instead — but the relaxation stays: undoing it in SQLite means another table rebuild, for nothing, and would leave new projects with a stricter column than existing ones |
+| v18→v19 | `stable_id` on `persons`, `relations`, `documents`, `events`, `sources`, `person_notes` (`images` already had it), plus the `share_profiles` table. The backfill is guarded on the *data* rather than the version, so it runs every startup and costs one indexed count per table once everything is filled in — see [Cross-database identity](#cross-database-identity) |
 | v17→v18 | `event_description_citations` — `[n]` references inside an event's `description`, the event-side twin of `document_description_citations` |
 
 `Base.metadata.create_all()` runs before the migration block, so new *tables* appear on their own; a new *column* on an existing table still needs an explicit `ALTER TABLE` in the version block.
@@ -1461,6 +1466,7 @@ A ZIP archive packages the database and all referenced media into a portable, se
 | `project.db` | SQLite database |
 | `images/<id>_<filename>` | Included photos |
 | `documents/<stored_name>` | Referenced document files |
+| `share.json` | Present only in a share-profile export: who sent it, under which profile, and what is inside |
 
 **Export pipeline**
 
@@ -1468,6 +1474,8 @@ A ZIP archive packages the database and all referenced media into a portable, se
 2. **Person/cluster filter** (mutually exclusive): person list, cluster list, or full project
 3. **Content toggles**: notes, sources, events, documents, images, faceless images — each independently removable
 4. **Privacy filter** (always applied, cannot be disabled): removes all rows where `is_private=1` across images, clusters, relations, documents, notes, and events; private cluster faces are moved to the noise cluster before the cluster is deleted
+
+Two things happen outside that numbered order. `ensure_stable_ids()` runs first of all, against the **source** database — see [Cross-database identity](#cross-database-identity). And `redact_person_ids`, when a share profile supplies one, is applied immediately after the person filter so everything downstream sees the emptied rows; the same list is subtracted from the cluster derivation in step 2, because blanking a person's columns after their photographs are already in the archive redacts nothing. See [Collaboration and share profiles](#collaboration-and-share-profiles).
 
 Every document delete goes through `_delete_documents()`, which clears `document_note_citations` → `document_notes`, then `_delete_document_children()`'s `document_citations` / `document_images` / `document_files` / `document_description_citations`, then `document_persons`, and only then the document row. It is one helper rather than a sequence repeated at each call site because the export connection runs with **`PRAGMA foreign_keys=ON`** and the child tables disagree about what that means: `document_persons`, `document_images` and `document_files` cascade, `sources` and `transcript_pages` set null, and the notes and citation tables declare no action at all. A document carrying a note therefore cannot be deleted until the note is gone — the failed statement aborts the export rather than leaving a dangling row, so an ordering mistake here is a 500, not a silent leak. Images are the same shape via `_delete_images()`. The packer collects the files to zip by reading `stored_name` back out of the already-filtered export DB (`documents` **and** `document_files`, unioned), so a document dropped here never gets its bytes packed either.
 
@@ -1495,6 +1503,186 @@ Documents carry `is_text` (without it a chronicle arrives as an opaque file), `d
 | Project switcher | Full project |
 | Clusters tab | Selected cluster IDs |
 | Family tree tab | Selected subtree (`person_ids`) |
+
+---
+
+## Collaboration and share profiles
+
+Sending part of the archive to a relative used to mean marking records private one at a time and exporting what survived. That does not reach a second recipient: `is_private` is a property of a *record*, but "who may see this" is a relation between a record and a person, and one boolean cannot hold several of them. The selection was also nowhere — re-sending an updated copy meant reconstructing it from memory.
+
+A **share profile** is a saved, re-runnable answer to *what does this relative get?* It holds the rules that pick the people, what to do about the ones who may still be alive, and which content travels. Exporting it is one click, and it gives the same answer next month.
+
+### The selection is described, not clicked
+
+`backend/share_filter.py` evaluates a rule set over nothing but the `persons` and `relations` rows. It imports no FastAPI and no SQLAlchemy, so it can be run from a throwaway script against a copy of a real project and its answer *checked* — the same reason `treeGeometry.ts` and `graphLayout.ts` live outside their components, and the only way to know a selection is right before an archive built from it is in somebody else's hands.
+
+```json
+{
+  "include": [{"rule": "common_line_with", "person_id": 42}],
+  "exclude": [{"rule": "descendants_of", "person_id": 7, "content": ["documents"]}],
+  "closure": {"spouses": true, "parents_of_included": false}
+}
+```
+
+`include` rules are unioned, `exclude` takes things back out, and the closure options run last.
+
+| Rule | Selects |
+|---|---|
+| `everyone` | the whole project |
+| `persons` | an explicit `ids` list |
+| `only_person` | exactly the one person named, and nobody else |
+| `surname` | everyone whose `last_name` matches, accent- and case-insensitively |
+| `family_group_of` | the connected component — the server-side twin of `computeGroups` in `FamilyTreeTab.tsx` |
+| `ancestors_of` | up the `parent` edges, optionally capped at `max_generations` |
+| `descendants_of` | down them, same cap |
+| `relatives_of` | breadth-first over *every* relation edge, capped at `max_steps` |
+| `common_line_with` | the branch two people share — see below |
+| `documents`, `events` | named records rather than people — see below |
+
+Walks are breadth-first so the recorded distance is the *shortest* one. Where two lines reconverge — cousins who married — a depth-first walk can record somebody as further away than they are, and a generation cap would then cut them out of a branch they belong to.
+
+**`common_line_with` is the rule this feature exists for.** It answers *give me the part of the tree that is ours together*: take both people's ancestors, intersect them, keep only the **most recent** of the shared ones (an ancestor of another common ancestor adds nothing — their descendants are a superset), and return every descendant of those. Everything above them is deliberately left out: those generations are one side's own line, not common ground, and dragging them in brings every unrelated branch hanging off the older generation with them. Choosing that branch by hand means deciding, person by person, whether a distant cousin is on the shared side of the family — and the tree already knows.
+
+The other end of the comparison defaults to the project's `default_proband_id`.
+
+**Each rule carries its own subject, and a profile has no separate "who is this for?".** It briefly had one, and it was wrong twice over: the archive's recipient is already named by the rule that selects them, so the field asked the same question a second time, and two fields that can disagree about one answer is a worse shape than one field that cannot. A rule that needs a person and names none selects nobody — visible immediately, because the preview then reports zero. The profile's *name* is what identifies who it is for.
+
+**Closure options** run after the exclusions and never override one:
+
+- `spouses` (on by default) — a couple split down the middle leaves the recipient a parent with no partner and a marriage that names nobody
+- `parents_of_included` (off) — one generation of parents, so nobody appears to have come from nowhere. Off because it reaches outside the branch that was asked for
+
+A person named in an `exclude` rule is never dragged back in by a closure.
+
+**An empty or absent `include` selects nobody**, not everybody. A half-written profile should produce an obviously empty archive rather than the whole family sent to whoever it was half-addressed to.
+
+That distinction has to survive the whole way down, and it nearly did not. `build_export_db` treats `person_ids=None` as *no person filter* and an **empty list** as *a filter that keeps nobody*; it used to test `len(person_ids) > 0` and so read both as "export everything". The share endpoint refuses an empty selection before it gets there, but a single caller-side check is thin cover for shipping an entire family archive to the wrong person. `api.ts`'s `exportUrl` sends `person_ids=` explicitly for the same reason, and the endpoint's query parameter defaults to `None` rather than `""` so an absent parameter and an empty one stay distinguishable — with a `""` default they are the same string, and the family tree tab's *only deceased* tick on a family where nobody has a recorded death would have exported the whole project.
+
+### Leaving something out is one question, not two
+
+An `exclude` row names people **and what of theirs is left out**:
+
+```json
+{"rule": "descendants_of", "person_id": 7, "content": ["documents", "images"]}
+```
+
+`content` may hold `persons` — remove them from the tree entirely — or any of `documents`, `images`, `notes`, `events`, which keep the person and hold back that material. The list is `EXCLUDABLE_KINDS` in `share_filter.py`; `PERSONS_KIND` is the odd one out and the others are `CONTENT_KINDS`.
+
+These were two separate sections at first, *who is taken back out* above *whose material is held back*, and that was a worse shape for a reason worth keeping: they are the same question asked with different force, so the user had to decide which section a row belonged in before they could write it, and a row in the wrong one did something they did not mean. Merged, the row says who, and then how much — and ticking `persons` visibly subsumes the rest.
+
+The distinction the checkboxes now carry is real and load-bearing: **removing people cuts the line running through them**, so a branch reachable only via someone excluded is severed from the rest, while holding back their documents leaves the tree whole. That is why `persons` is the default tick on a new row (the strongest reading, to be softened) and why the other boxes are shown ticked and disabled while it is on.
+
+`_excluded_ids` reads the rows whose kinds include `persons`; `resolve_content_strips` reads the same rows for everything else and returns `{kind: person ids}`. `_share_resolve` narrows each set to people the selection actually contains, because a rule may well name somebody who was never included and counting them would report a reduction that is not happening.
+
+Two shapes are read but never written: an `exclude` row with **no `content` key at all** means `["persons"]`, which is what an exclusion meant before the merge; and `rules.strip`, the short-lived separate list, is still folded in by `_exclusion_rules`. Both exist so a profile saved against the older shape keeps meaning what its author meant. An explicit empty `content` is different — that is an unfinished row, and it leaves out nothing.
+
+**Holding material back and redaction are the same work underneath.** `_strip_notes`, `_strip_events`, `_strip_photos` and `_strip_documents` in `export_utils.py` are the primitives; `apply_content_strips` dispatches through `_STRIP_HANDLERS`, and `_redact_persons` is all four plus the person's own columns. They were one function first, and splitting them was not a tidy-up: two features that delete from the same tables need one list of those tables, or a table added to one and forgotten in the other becomes a leak.
+
+Three details carry over from redaction because they are properties of the data, not of the feature:
+
+- **A shared document stays with whoever keeps it.** `_strip_documents` hands a document owned by an excluded person over to a co-linked person who is keeping theirs, before deleting anything, exactly as `_delete_persons` does. `documents.person_id` records who uploaded it; `document_persons` is what every listing joins on.
+- **Photographs are decided by the cluster derivation**, so `strip_content["images"]` joins `redact_person_ids` in being subtracted from it. `_strip_photos` only unlinks the cluster from the person, which is what keeps a photo travelling for somebody else's sake from arriving labelled with theirs.
+- **Events are unlinked, not deleted.** `_strip_events` clears `event_persons`, and the orphan sweep later in `build_export_db` removes whatever is left with no participants — an event other people are still in is theirs and stays.
+
+### Naming a record instead of a person
+
+Everything above reaches documents and events *through* the people who own them, which is the right default and cannot express two ordinary requests: keep this one document out, and bring this one along even though its owner is not in the archive. `documents` and `events` (`RECORD_RULES` in `share_filter.py`) take an `ids` list and select rows rather than people:
+
+```json
+{"rule": "documents", "ids": [3, 7, 9]}
+```
+
+They work in both lists. In `exclude` the records are dropped; in `include` they are carried past the person filter — the only way to send a document the *project* owns rather than a person, since a person-scoped export drops those. `_rule_ids` returns an empty set for them explicitly, so their `ids` are never mistaken for person ids by the fallthrough.
+
+**The include side is exempt from the person filter and from nothing else.** A record marked `is_private`, or of a kind the profile switched off, does not come back because somebody ticked it — naming a record says *this one belongs here despite whose it is*, not *ignore the rules*. `_keep_clause` in `export_utils.py` builds the exemption and the outright drops run after the content strips, before the privacy filter.
+
+One consequence needs handling rather than documenting away: **a kept document outlives its owner.** `_delete_persons` hands it to a co-linked person who is staying if there is one, and otherwise nulls `documents.person_id` before deleting the person — without that the delete fails the foreign key, because the archive is keeping a row that points at somebody it is removing. It arrives as a document of the project, which is what an archive holding a document without its owner actually has.
+
+Ids are the sender's own row ids. That is exactly right while the export runs — it is a filtered copy of their database — and meaningless afterwards, which is why they stay in the profile and never travel in `share.json`.
+
+### Which photographs, as opposed to which people
+
+`options.photo_kinship` scopes the picture set separately from the person set:
+
+```json
+{"person_id": 42, "max_degree": 4, "include_spouses": true}
+```
+
+A branch selection is about the *tree*, and a photo library is not — the two want different widths. Everyone in an ancestral line belongs in the tree that goes to a relative; a photograph of somebody four generations sideways is a stranger's family album to them. So an image travels when somebody within `max_degree` of the named person appears in it.
+
+**The degree is the ordinary genealogical one**: the shortest path over parent and child links. Parent 1, sibling 2, grandparent 2, aunt or uncle 3, first cousin 4, first cousin once removed 5, second cousin 6. `Tree.kinship_degrees` walks `Tree.blood`, which holds parent and child edges only — **marriages are not steps**, because counting one would put a spouse's entire family nearer than one's own cousins. `include_spouses` then gives each relative's husband or wife *that relative's own degree* without walking on from them: a cousin's wife is as near as the cousin for deciding whose pictures belong together; her siblings are not.
+
+The picker offers the degree by the relationship it reaches (*first cousins*, not *4*) — nobody chooses a bare number, and the number is meaningless without the example.
+
+**Narrowing the photos must not cost anybody their name.** These are two questions, and conflating them is the trap: `build_export_db` derives *which images survive* from `photo_person_ids`, but keeps the clusters of the whole selection, so a photo that does arrive still recognises everyone on it. Deriving both from the narrowed set would deliver photographs with half the family unlabelled.
+
+`resolve_photo_people` returns `None` when the profile does not narrow the photos, which is deliberately distinct from "a scope that happens to match everybody" — the caller uses it to skip the narrowing entirely rather than passing an id list that means the same thing more slowly.
+
+### Living people are a profile setting, not a record flag
+
+`options.living_policy` is `include`, `exclude` or `redact` (the default).
+
+Who counts as living is decided by `is_living()`, and the obvious rule is wrong: treating *any* missing death date as "still alive" also hides everyone born two centuries ago whose death nobody wrote down — which in a genealogy is most of the tree, and precisely the part a relative asked for. A recorded death or burial settles it; otherwise the birth (or christening) year must be within `lifespan_years` (default 100) of today. Somebody with no dates at all is treated as living, because an unknown person wrongly shared cannot be unshared while one wrongly held back is a question the recipient can ask.
+
+**Redaction keeps the person and removes the biography.** Deleting a living person from a shared branch is the obvious move and the wrong one: they are usually the link between the generation the recipient knows and the one they are researching, and removing them leaves two halves of a family with nothing joining them. So `_redact_persons()` in `export_utils.py` keeps the row and both its `relations` while emptying `_REDACTED_COLUMNS` and deleting their notes, citations, event participation, sub-clusters and documents. Name parts and `sex` stay — a chain of blanks is not a tree anybody can read, and a profile that cannot share even that should exclude instead.
+
+Two details are load-bearing:
+
+- **Photographs are handled where the clusters are chosen, not at redaction time.** `build_export_db` derives `family_cluster_ids` from `person_ids` **minus** `redact_person_ids`; blanking columns after their cluster has already pulled every picture of them into the archive redacts nothing. Faces of theirs in a photo that travels for somebody else's sake land in the noise cluster, unnamed.
+- **`_redact_persons` resolves its `where_clause` to a literal id list first.** Unlike the delete helpers beside it, it *updates* the rows it selects, so a clause naming a column it is about to blank would match a shrinking set as the statement ran.
+
+Redaction runs immediately after the person filter, so everything downstream sees the emptied rows — the events block drops any event it left without participants, and the content toggles apply to what remains.
+
+### Endpoints
+
+| Endpoint | |
+|---|---|
+| `GET/POST /api/share-profiles` | list, create |
+| `PATCH/DELETE /api/share-profiles/{id}` | update, remove |
+| `POST /api/share-profiles/preview` | resolve a rule set **that need not be saved** (rules and living policy travel in the body), so the editor can answer while it is being typed |
+| `GET /api/share-profiles/{id}/export` | resolve and hand the person set to the same `stream_project_zip` every other export uses |
+
+The preview's counts describe the archive *after* redaction. A preview that promised a hundred documents and shipped twenty would be worse than no preview, so `_share_counts` scopes documents, events, notes and photos to `selected − redacted`. The client never computes a person set of its own, which is why the preview and the archive cannot disagree.
+
+`last_exported_at` is stamped when the archive is *asked for* rather than when the last byte leaves: the stream outlives the request, and a download the user cancelled still tells them what they last sent.
+
+### `share_profiles` never travels
+
+It is working state, and the one table here whose leak would be a disclosure about **third parties** — it records who else this archive is shared with, and on what terms. `build_export_db` deletes it unconditionally next to the chat tables. An export toggle would be a way to get that wrong.
+
+### The archive says what it is
+
+A share-profile export writes `share.json` beside `project.json`: profile name, sender, export timestamp, a per-export `export_id`, the rules used, the living policy, how many people arrived redacted, how many had each kind of material held back (`stripped`), and the table counts. `merge_import.read_zip_db` reads it back into `share_manifest`, `POST /api/import/merge/preview` returns it as `share`, and `MergeModal.tsx` renders it above the review list.
+
+Without it a project ZIP arriving by email says nothing about itself — a filename, and an offer to fold in a few hundred strangers. Its absence is not an error: a plain project export has none, and neither does anything made before share profiles existed.
+
+### The UI
+
+`components/ShareModal.tsx` — a profile list and a rule editor, reached from the family tree tab's toolbar and from the project switcher's export row. Person fields are `PersonFilterCombobox` from `PersonSelect.tsx`, so every row carries its life summary and relatives; its `emptyLabel` prop exists because "nobody chosen" means *choose somebody* here rather than the filter's *everybody*.
+
+**The panel stops the click bubble itself** (`onClick={e => e.stopPropagation()}` on the inner div), like every other modal here. `useBackdropClose` closes on any click whose mousedown and click share a target and does **not** check that the target is the backdrop, so a panel that forgets this closes on its own buttons — which reads as the app throwing you back to whatever tab was underneath.
+
+The preview is debounced rather than sitting behind a button: **a selection nobody previewed is a selection nobody checked.** *Show this selection on the tree* hands the resolved ids to `FamilyTreeTab`'s `applySharePreview`, which clears the family-group filter (a shared branch can reach across one) and reuses the same `personFilter` chip the statistics view already feeds.
+
+---
+
+## Cross-database identity
+
+`stable_id` is a UUID on every table whose rows travel between databases: `persons`, `relations`, `documents`, `events`, `sources`, `person_notes` and `images` (which had it first). The list is `STABLE_ID_TABLES` in `database.py`, and it is the single place that enumerates them.
+
+A local integer id means nothing in somebody else's project. Without a shared identity a merge has to *guess* which local row an incoming one is — which is what the name/birth-year/context heuristic in `merge_import.py` does for people, and what it could not do at all for a document: before v19 the document branch of `execute_merge` was a bare `INSERT`, so every re-import of the same archive wrote a second copy of every file to disk and a second row pointing at it, forever.
+
+**Identity is settled in the source, before the copy is taken.** `ensure_stable_ids()` runs at the top of `build_export_db`, against `source_db_path`. An id invented in the export copy is thrown away with it, so the same person would leave under a different identity on every send and the recipient would see a stranger each time. `images.stable_id` was backfilled that way and had exactly this bug.
+
+**The backfill's guard is the data, not the stored version.** `_backfill_stable_ids()` runs on every startup and matches zero rows once everything is filled in. A row inserted by a raw-SQL path that does not write a `stable_id` — `gedcom_import.py` is the case — would otherwise stay anonymous forever, because a version-only check never looks at that database again. The uuid is generated per row in Python: a single SQL expression evaluated once for a whole `UPDATE` would give every row the *same* id, which is worse than none.
+
+**On merge, identity is checked before every heuristic.** `build_merge_preview` opens with a Pass 0 that claims every incoming person whose `stable_id` matches a local one, at `confidence: 'exact'`, `match_source: 'stable_id'`. Those matches are marked `confirmed` outright rather than scored — the context validation would happily reject a correct match because the recipient reshaped the family around it — and the existing people they claimed are withheld from `_suggest_match` via `skip_ids`, so a name coincidence cannot outrank a known identity.
+
+`execute_merge` then checks `_find_by_stable_id` before each section's own dedup, since it is the only one of them that is not a guess. Documents have **no** heuristic fallback on purpose: two scans of the same certificate are legitimately two documents, and only a shared identity says otherwise.
+
+**A created row carries the incoming id**, via `_claim_stable_id` — that is the whole point, so the *next* exchange in either direction recognises it. A fresh uuid is minted only when the archive predates v19, or when the id is already taken locally by a row the user chose not to merge with: they have said these are different people, and two rows answering to one identity would make every later match ambiguous.
+
+Reused rows are recorded in `doc_id_remap` so their citations and person links still resolve, and tracked in `reused_doc_inc_ids` so their extra files are not written a second time.
 
 ---
 
@@ -1605,6 +1793,12 @@ Each entry below is **trigger → the files that must change together**. They ex
 - **Raw SQL that deletes an `events` row** (or any row a second table points at without an ORM cascade) → delete the children first — `event_images` **and** `event_description_citations` before `events` — and scope the sweep to the events you actually orphaned. The `ON DELETE CASCADE` in `database.py`'s `CREATE TABLE IF NOT EXISTS` block is not what the database has: `create_all()` ran first and built those tables from the models, which declare no `ondelete`. Foreign keys are on, so the constraint failure aborts the statement — and since these cleanups run *after* the main `commit()`, the row is already gone when the request 500s, which is what makes it read as "the delete half-worked". The paths are `delete_person` in `main.py`, `execute_rollback` in `gedcom_import.py` (both its branches), and `_delete_events` in `export_utils.py`, which every event delete in the export goes through so the child list is written once
 - **New column with an FK into `relations`** (or into any table whose rows the export copy deletes) → delete the child rows **before** the parent in every path that removes a relation: `delete_relation`, `delete_person` and `merge_persons` in `main.py`, `_delete_relation_citations` in `export_utils.py` (called ahead of both the person-subset delete and the `is_private=1` delete), and `execute_rollback` in `gedcom_import.py`. Carry the column through `read_zip_db` + `execute_merge` in `merge_import.py` as a **remapped** id — an incoming relation id means nothing locally — and read it with the `_has_column` guard so an older ZIP does not lose the whole table. Getting the delete order wrong is silent rather than loud: foreign keys are on in the export copy and its relation deletes sit in `try: … except: pass`, so the failed constraint is swallowed and the row survives into the ZIP
 - **A new kind of file travelling in the project ZIP** → three places, and the third is the one that bites: copy it under its own prefix in **both** `create_project_zip` and `stream_project_zip`, rewrite the absolute path stored in the DB to the archive-relative one *before* `project.db` is written (the streaming builder writes the database first), and add the inverse rewrite to `import_project_zip`. `_stage_scan_files` / `_restore_scan_paths` are the worked pair. Anything large enough to matter also needs an opt-in flag threaded through `build_export_db` → both ZIP builders → the endpoint → `ExportModal`, defaulting to off
+- **New table whose rows travel between databases** (project content, as opposed to working state) → give it a `stable_id`: add the model column with `default=_new_stable_id`, add the table name to `STABLE_ID_TABLES` in `database.py` (the ALTER, the index and both backfills read that tuple, so nothing else enumerates them), carry the column through `read_zip_db` behind the `_sid()` guard in `merge_import.py`, check `_find_by_stable_id` before that section's own dedup, and write `_claim_stable_id` on insert. Without it the row cannot survive a round trip: the merge has to guess which local row it is, and for anything without a name to match on it cannot guess at all. See [Cross-database identity](#cross-database-identity)
+- **New selection rule for share profiles** → add it to `RULES` and `_rule_ids` in `backend/share_filter.py`, to `RULE_FIELDS` and `RULE_ORDER` in `ShareModal.tsx`, to the `ShareRule` union in `types.ts`, to the rules table in *Collaboration and share profiles*, and add `share.rule.<name>` to **both** dictionaries. The rule names are stored inside every profile's `rules_json`, so renaming one silently empties every profile that used it
+- **New rule that selects records rather than people** → add it to `RULES` **and** `RECORD_RULES` in `backend/share_filter.py`, return an empty set for it in `_rule_ids` (or its `ids` are read as person ids by the fallthrough), handle it in `resolve_record_ids`, act on it in `build_export_db` — exemption via `_keep_clause` for the include side, an outright delete before the privacy filter for the exclude side — and check what happens to a row it *keeps* whose owner is deleted: a surviving foreign key into `persons` fails the person delete outright. On the front end it needs a `RULE_FIELDS` entry naming its record kind, a place in `RULE_ORDER`, a branch in `useRecordOptions`, and its `share.rule.<name>` label in **both** dictionaries
+- **New way to decide which images travel** → it belongs in the cluster derivation at the top of `build_export_db`, next to `photo_person_ids` and `no_photos`, **not** in `_strip_photos`. The two do different jobs: the derivation decides which images survive at all, `_strip_photos` decides who is still named on the survivors. Wiring a photo filter into the second gives the user fewer *names*, not fewer *pictures*
+- **New kind of material a share profile can hold back** → add it to `CONTENT_KINDS` in `backend/share_filter.py` (which `EXCLUDABLE_KINDS` extends), write its `_strip_*` helper in `export_utils.py` and register it in `_STRIP_HANDLERS`, add it to `CONTENT_KINDS` in `ShareModal.tsx` and to `ShareContentKind` in `types.ts`, give it a `share.content.<kind>` label in **both** dictionaries, and count it in `_share_counts`' `bearers()` call for that kind. A kind added to the rule vocabulary but not to `_STRIP_HANDLERS` is accepted by the editor, shown in the preview, and then silently ignored by the export — the worst of the three outcomes, because the user is told it worked
+- **New column on `persons` that is biographical rather than structural** → add it to `_REDACTED_COLUMNS` in `export_utils.py`. A column missed there survives redaction, which is the one place in this feature where a mistake sends a living person's details to somebody who was told they would not get them
 - **New `is_private` on a table** → (1) add `ALTER TABLE … ADD COLUMN is_private BOOLEAN NOT NULL DEFAULT 0` to the v4→v5 migration block in `database.py`; (2) include `is_private` in the relevant `_xxx_dict` serialiser in `main.py`; (3) add the privacy-filter DELETE block for that table inside `build_export_db` in `export_utils.py`; (4) add `WHERE COALESCE(is_private,0)=0` to the relevant query in `build_gedcom_zip` in `gedcom_export.py` if applicable; (5) add `togglePrivacy` call to `api.ts`; (6) update the TypeScript interface in `types.ts`; (7) add the padlock button to the relevant component
 
 ### Maintaining the documentation itself

@@ -5,6 +5,7 @@ import type { PersonFull, Relation } from '../types'
 import TreeView from './TreeView'
 import PersonPanel from './PersonPanel'
 import ExportModal from './ExportModal'
+import ShareModal from './ShareModal'
 import StatisticsView from './StatisticsView'
 import GedcomImportModal from './GedcomImportModal'
 import NameEditor, { NameParts, deriveDisplayName } from './NameEditor'
@@ -449,6 +450,7 @@ export default function FamilyTreeTab({
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
+  const [showShareModal, setShowShareModal] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportingGedcom, setExportingGedcom] = useState(false)
   const [showGedcomModal, setShowGedcomModal] = useState(false)
@@ -518,6 +520,15 @@ export default function FamilyTreeTab({
     setActiveView('tree')
     setSidebarOpen(true)
   }
+  // A share profile's preview, isolated on the tree so the selection can be
+  // *looked at* before an archive built from it is in somebody else's hands.
+  // Reuses the same chip the statistics view hands its person sets to; the
+  // group filter is cleared because a shared branch can reach across one.
+  function applySharePreview(ids: number[], label: string) {
+    setSelectedGroupKey(null)
+    applyStatsFilter(ids, label)
+  }
+
   function selectPersonFromStats(id: number) {
     setPersonFilter(null)
     setSelectedId(id)
@@ -684,6 +695,17 @@ export default function FamilyTreeTab({
           </button>
         )}
 
+        {/* Share with a relative — a saved, re-runnable selection */}
+        {persons.length > 0 && (
+          <button
+            onClick={() => setShowShareModal(true)}
+            className="h-7 px-3 text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-600 rounded-full transition-colors shrink-0"
+            title={t('share.title')}
+          >
+            {t('share.button')}
+          </button>
+        )}
+
         {/* GEDCOM export/import */}
         {persons.length > 0 && (
           <button
@@ -842,6 +864,15 @@ export default function FamilyTreeTab({
           persons={activeGroup.persons}
           onExport={handleTreeExport}
           onClose={() => setShowExportModal(false)}
+        />
+      )}
+
+      {showShareModal && (
+        <ShareModal
+          persons={persons}
+          relations={relations}
+          onPreviewOnTree={applySharePreview}
+          onClose={() => setShowShareModal(false)}
         />
       )}
 
