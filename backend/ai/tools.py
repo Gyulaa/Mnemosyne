@@ -27,6 +27,7 @@ import json
 import unicodedata
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1351,6 +1352,82 @@ def _t_get_statistics(ctx: ToolContext, a: dict[str, Any]) -> Any:
     }
 
 
+def _parse_full_date(s: str | None) -> tuple[int, int, int] | None:
+    """A full `YYYY-MM-DD` only — `YYYY` and `YYYY-MM` carry no day of year."""
+    if not s or len(s) != 10 or s[4] != "-" or s[7] != "-":
+        return None
+    try:
+        y, m, d = int(s[:4]), int(s[5:7]), int(s[8:10])
+        date(y, m, d)  # validates the calendar, e.g. rejects day 31 in April
+        return y, m, d
+    except ValueError:
+        return None
+
+
+def _month_day_in_year(m: int, d: int, year: int) -> date | None:
+    try:
+        return date(year, m, d)
+    except ValueError:
+        # Feb 29 in a non-leap year: the day it would have been, not a skip.
+        return date(year, 3, 1) if (m, d) == (2, 29) else None
+
+
+def _next_occurrence(m: int, d: int, today: date) -> date | None:
+    candidate = _month_day_in_year(m, d, today.year)
+    if candidate is not None and candidate < today:
+        candidate = _month_day_in_year(m, d, today.year + 1)
+    return candidate
+
+
+def _t_get_upcoming_anniversaries(ctx: ToolContext, a: dict[str, Any]) -> Any:
+    """Birth and death anniversaries falling in a window starting today.
+
+    Computed here, not left to the model: this needs comparing a month and day
+    while ignoring the year, wrapping that comparison across a year boundary,
+    and doing it for every person in the tree — exactly the kind of arithmetic
+    that looks right and is quietly off by one. The tree skeleton only carries
+    whole years, so this reads `birth_date`/`death_date` directly and only
+    counts a person whose date is recorded to the day.
+
+    Deceased people are included on purpose — a death does not remove a
+    birthday from the calendar, it only changes how the answer should phrase
+    it (`deceased` says which).
+    """
+    today = date.today()
+    days_arg, limit_arg = a.get("days"), a.get("limit")
+    days = max(0, min(int(days_arg) if days_arg is not None else 7, 366))
+    end = today + timedelta(days=days)
+    limit = min(int(limit_arg) if limit_arg is not None else 50, 100)
+
+    results: list[dict[str, Any]] = []
+    for p in ctx.db.query(DBPerson).order_by(DBPerson.id).all():
+        for raw, kind in ((p.birth_date, "birth"), (p.death_date, "death")):
+            parsed = _parse_full_date(raw)
+            if not parsed:
+                continue
+            y, m, d = parsed
+            occurrence = _next_occurrence(m, d, today)
+            if occurrence is None or not (today <= occurrence <= end):
+                continue
+            results.append({
+                **_person_stub(p),
+                "kind": kind,
+                "anniversary": f"{m:02d}-{d:02d}",
+                "next_occurrence": occurrence.isoformat(),
+                "days_until": (occurrence - today).days,
+                "years": occurrence.year - y,
+                "deceased": p.death_year is not None,
+            })
+
+    results.sort(key=lambda r: (r["days_until"], r["kind"], r["id"]))
+    payload: dict[str, Any] = {
+        "today": today.isoformat(),
+        "window_end": end.isoformat(),
+        "results": results,
+    }
+    return _capped(payload, "results", limit)
+
+
 def _person_image_ids(ctx: ToolContext, pid: int) -> set[int]:
     clusters = [
         c for c in ctx.db.query(DBCluster).filter(DBCluster.person_id == pid).all()
@@ -1835,6 +1912,33 @@ def build_registry() -> ToolRegistry:
         description="Project-wide counts: people, relations, events, documents, notes, sources, photos, and the birth-year span.",
         input_schema={"type": "object", "properties": {}},
         handler=_t_get_statistics,
+    ))
+
+    r.register(Tool(
+        name="get_upcoming_anniversaries",
+        description=(
+            "Who has a birth or death anniversary in a date window starting "
+            "today, deceased people included — a death does not remove a "
+            "birthday. Use this for any 'whose birthday is coming up', 'any "
+            "anniversaries this week/month' question. Only people with a full "
+            "recorded date ('YYYY-MM-DD', not just a year) can appear, because "
+            "only a full date carries a month and day. Never try to answer "
+            "this from the tree skeleton (it only has whole years) or by "
+            "calling get_person on everyone and comparing dates yourself — "
+            "call this instead, it does the month/day comparison and the "
+            "year-boundary wraparound correctly."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "How many days ahead of today to include, inclusive of both ends. Default 7, max 366.",
+                },
+                "limit": {"type": "integer", "description": "Default 50, max 100."},
+            },
+        },
+        handler=_t_get_upcoming_anniversaries,
     ))
 
     r.register(Tool(

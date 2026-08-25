@@ -344,6 +344,7 @@ function PersonPicker({ persons, excludeIds, relations, label, headerExtra, onSe
   const [mode, setMode] = useState<'list' | 'create'>('list')
   const [newParts, setNewParts] = useState<NameParts>({ title: '', first_name: '', last_name: '', middle_name: '', nickname: '' })
   const [newBirthYear, setNewBirthYear] = useState('')
+  const [newSex, setNewSex] = useState<'' | 'M' | 'F'>('')
   const [creating, setCreating] = useState(false)
 
   const personById = useMemo(() => new Map(persons.map(p => [p.id, p])), [persons])
@@ -393,6 +394,7 @@ function PersonPicker({ persons, excludeIds, relations, label, headerExtra, onSe
         title:       newParts.title.trim()       || null,
         nickname:    newParts.nickname.trim()    || null,
         birth_year:  newBirthYear ? parseInt(newBirthYear) : null,
+        sex:         newSex || null,
       })
       await qc.invalidateQueries({ queryKey: ['persons'] })
       onSelect(newPerson)
@@ -429,10 +431,23 @@ function PersonPicker({ persons, excludeIds, relations, label, headerExtra, onSe
                   placeholder={t('person.lastNamePh')} className={INPUT} />
               </div>
             </div>
-            <div>
-              <label className={LABEL}>{t('person.birthYear')}</label>
-              <input type="number" value={newBirthYear} onChange={e => setNewBirthYear(e.target.value)}
-                placeholder="1945" className={INPUT} />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className={LABEL}>{t('person.birthYear')}</label>
+                <input type="number" value={newBirthYear} onChange={e => setNewBirthYear(e.target.value)}
+                  placeholder="1945" className={INPUT} />
+              </div>
+              <div>
+                <label className={LABEL}>{t('person.sex')}</label>
+                <div className="flex gap-1">
+                  {(['', 'M', 'F'] as const).map(v => (
+                    <button key={v} type="button" onClick={() => setNewSex(v)}
+                      className={`flex-1 px-2 py-1.5 rounded-lg text-xs transition-colors ${newSex === v ? 'bg-brand-500 text-white' : 'bg-zinc-700 border border-zinc-600 text-zinc-400 hover:bg-zinc-650'}`}>
+                      {v === '' ? '—' : v === 'M' ? t('person.sexMale') : t('person.sexFemale')}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
             {displayName && (
               <p className="text-xs text-zinc-500">
@@ -646,7 +661,7 @@ function RelRow({
   const addButton = editing && !addDisabled && (
     <button onClick={onAdd}
       className="inline-flex items-center gap-1 h-7 px-2.5 text-xs text-zinc-500 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-dashed border-zinc-700 hover:border-zinc-500 rounded-full transition-colors shrink-0">
-      + {addLabel}
+      {addLabel}
     </button>
   )
 

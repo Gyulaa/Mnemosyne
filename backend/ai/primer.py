@@ -26,6 +26,7 @@ misses it. The marks are counts of sorted queries, so they keep that property.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -614,6 +615,27 @@ rather than inventing a full date.
 """
 
 
+def build_today_note() -> str:
+    """State today's date plainly — nothing else in the prompt does.
+
+    Without this the model has no way to know what "this week", "how old is
+    X now" or "how long ago" refer to, and either guesses or declines to
+    answer. It is read from the server's own clock, not sent by the client:
+    this is a local desktop app, so the two are the same machine.
+    """
+    return (
+        "\n## Today's date\n"
+        f"Today is {date.today().isoformat()}. Use it for anything relative to "
+        "now — a current age, \"this week\", \"how long ago\". Never hand-compute "
+        "a list of upcoming birth or death anniversaries by scanning the tree "
+        "skeleton (it only has whole years, not the day) or by calling "
+        "get_person on everyone and comparing dates yourself — call "
+        "get_upcoming_anniversaries, which does that comparison, including the "
+        "year-boundary wraparound, correctly. Deceased people keep their "
+        "birthday; that tool includes them on purpose.\n"
+    )
+
+
 def build_asker_note(db: Session, proband_id: int | None) -> str:
     """Tell the model who "I" is, from the tree's configured starting person.
 
@@ -680,7 +702,7 @@ def build_system_blocks(
     inventory = build_inventory(db, allow_private=allow_private)
 
     return [
-        {"type": "text", "text": instructions + privacy_note + build_asker_note(db, proband_id)},
+        {"type": "text", "text": instructions + privacy_note + build_today_note() + build_asker_note(db, proband_id)},
         {
             "type": "text",
             "text": f"{inventory}\n\n{primer}",

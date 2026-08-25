@@ -788,6 +788,12 @@ A truncated list is indistinguishable from a complete one unless the tool says s
 
 Nothing else in the prompt identifies the user, so a question like "who is my oldest ancestor" would otherwise be unanswerable. `build_asker_note()` resolves it from the project's stored `default_proband_id` — the same person the tree opens on — and states the id in the system prompt, at request time. It is never baked into prompt text, and with no proband set the model is told to ask rather than guess. The prompt also tells it to say who it took the asker to be, so a wrong pin surfaces immediately.
 
+### Today's date, and calendar questions
+
+Nothing in the prompt used to state the current date at all, so "who has a birthday this week" was unanswerable in principle — not a missing tool, a missing fact. The model had no "this week" to compare anything against, and reached for whatever tools looked date-adjacent (`get_person`, `search_text`) rather than admitting it had no way to know. `build_today_note()` states today's date, read from the server's own clock (this is a local desktop app, so that is the user's clock too), in the same per-request block as the asker note.
+
+Stating the date is necessary but not sufficient — the actual comparison (does this person's month-and-day fall in the next N days, wrapping correctly across a year boundary) is exactly the kind of arithmetic the rest of this section already distrusts a model to do by hand over dozens of people. So `get_upcoming_anniversaries` does it server-side: it reads `persons.birth_date` / `death_date` directly, because the tree skeleton only carries whole years and cannot answer this at all, and only a full `YYYY-MM-DD` date carries a day to compare. Deceased people are included deliberately — a death date removes nobody's birthday, it just changes how the answer should phrase it (the tool marks `deceased` per result so the model can say "would have turned" rather than "turns").
+
 ### Clickable references
 
 Raw ids in an answer are dead ends — a user cannot click the number `299`. `markdown.ts` resolves five constructs, and the system prompt requires them:
