@@ -3867,6 +3867,11 @@ def list_field_values(db: Session = Depends(get_db)):
 
 from . import updater as _updater  # noqa: E402
 
+# Reads the breadcrumb the updater script left behind: if this process is the
+# restart of a failed update, the version did not change and the user has to be
+# told — otherwise the same release is simply offered again, forever.
+_updater.check_install_result()
+
 
 @app.get('/api/update/status')
 def update_status():

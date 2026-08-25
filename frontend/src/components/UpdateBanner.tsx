@@ -13,9 +13,10 @@ function fmtMB(bytes: number) {
 
 // ── Header icon button ────────────────────────────────────────────────────────
 
-function UpdateIcon({ status, onClick }: { status: UpdateStatus['status'] | 'unknown'; onClick: () => void }) {
+function UpdateIcon({ status, failed, onClick }: { status: UpdateStatus['status'] | 'unknown'; failed: boolean; onClick: () => void }) {
   const t = useT()
   const dotColor =
+    failed                        ? 'bg-red-400' :
     status === 'error'            ? 'bg-red-400' :
     status === 'ready'            ? 'bg-green-400' :
     status === 'downloading'      ? 'bg-blue-400' :
@@ -128,6 +129,23 @@ function Modal({
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {/* Previous attempt restarted the app on the old version */}
+          {status.install_failed && (
+            <div className="p-3 bg-red-950/40 border border-red-800/40 rounded-xl space-y-1.5">
+              <p className="text-xs font-semibold text-red-300">{t('update.installFailed')}</p>
+              <p className="text-xs text-red-200/80 leading-relaxed">
+                {t('update.installFailedBody', {
+                  current:  status.install_failed.current,
+                  expected: status.install_failed.expected,
+                })}
+              </p>
+              <p className="font-mono text-[11px] text-red-300/60 break-all">
+                {t('update.installFailedLog', { log: status.install_failed.log })}
+                {status.install_failed.detail ? ` (${status.install_failed.detail})` : ''}
+              </p>
             </div>
           )}
 
@@ -384,6 +402,7 @@ export default function UpdateBanner() {
     <>
       <UpdateIcon
         status={status?.status ?? 'unknown'}
+        failed={!!status?.install_failed}
         onClick={() => setModalOpen(true)}
       />
       {modalOpen && status && (

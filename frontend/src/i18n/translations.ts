@@ -1244,6 +1244,9 @@ const en: Record<string, string> = {
   'update.download': 'Download update',
   'update.later': 'Later',
   'update.applyRestart': 'Apply & Restart',
+  'update.installFailed': 'The last update did not install',
+  'update.installFailedBody': 'The app restarted on {current} instead of {expected} — the new files could not be written into the app folder. Try again; if it fails a second time, move the app to a folder you own (avoid network or cloud-synced drives) or download the new version manually from the release page.',
+  'update.installFailedLog': 'Log: {log}',
   // NAME EDITOR
   'nameEditor.firstName': 'First name',
   'nameEditor.lastName': 'Last name',
@@ -2694,6 +2697,9 @@ const hu: Record<string, string> = {
   'update.download': 'Frissítés letöltése',
   'update.later': 'Később',
   'update.applyRestart': 'Alkalmaz & Újraindítás',
+  'update.installFailed': 'Az előző frissítés nem települt',
+  'update.installFailedBody': 'Az alkalmazás {expected} helyett {current} verzióval indult újra — az új fájlokat nem sikerült beírni az alkalmazás mappájába. Próbáld újra; ha másodszorra sem sikerül, tedd át az alkalmazást egy saját mappába (kerüld a hálózati és felhőben szinkronizált meghajtókat), vagy töltsd le kézzel az új verziót a kiadási oldalról.',
+  'update.installFailedLog': 'Napló: {log}',
   // NAME EDITOR
   'nameEditor.firstName': 'Keresztnév',
   'nameEditor.lastName': 'Vezetéknév',

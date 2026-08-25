@@ -283,7 +283,7 @@ Mnemosyne is one FastAPI process serving a React single-page app and one SQLite 
 | Place names, autocomplete, the place hierarchy | [Places](#places) | `backend/places.py`, `components/PlaceInput.tsx`, `frontend/src/placeKey.ts` |
 | A field that should offer what was typed before | [Suggesting what the project already uses](#suggesting-what-the-project-already-uses) | `backend/field_values.py`, `components/SuggestInput.tsx`, `components/VocabInput.tsx` |
 | Global search, or the relationship finder | [Global Search](#global-search), [Relationship Path Finder](#relationship-path-finder) | `SearchPalette.tsx`, `RelationPathModal.tsx` |
-| Updating, packaging, bundled files | [Auto-update](#auto-update-implementation-detail) | `updater.py`, `launcher.py`, `mnemosyne.spec`, `UpdateBanner.tsx` |
+| Updating, packaging, bundled files | [Auto-update](#auto-update-implementation-detail) | `updater.py`, `launcher.py`, `mnemosyne.spec`, `main.py` (`/api/update/*` + the startup `check_install_result()`), `UpdateBanner.tsx`, `types.ts` (`UpdateStatus`) |
 | A user-visible string, a date, a language issue | [Keeping this document up to date](#keeping-this-document-up-to-date) | `i18n/translations.ts`, `SettingsContext.tsx` |
 | What a feature is *supposed* to do for the user | [What you can do](#what-you-can-do) | — |
 | Where a file lives at all | [Project structure](#project-structure) | — |
@@ -1191,12 +1191,24 @@ State is held in a module-level dict (`_state`) protected by a `threading.Lock`.
 
 **Version format**: `build-YYYYMMDD-N` where N is `github.run_number` (not zero-padded). Comparison uses `_parse_version()` which returns `(int(date), int(run_number))` tuples — necessary because `"9" > "14"` as strings.
 
+**A local build carries a CI tag, not its own identity.** `build_win.bat` stamps `version.txt` from `git describe --tags --abbrev=0`, and the tags in this repo are the release tags CI creates. So an app built locally claims to be whichever release was last tagged, regardless of what is actually in the working tree — and the updater will happily offer to "update" it to a newer release, replacing a hand-built app with a CI one. That is usually what you want, but it means the version in the UI is a statement about the last tag, not about the code that is running. Bear it in mind before concluding from a version string that a build is old.
+
 **Platform behaviour**:
 
 | Platform | ZIP structure | Updater script | Relaunch |
 |---|---|---|---|
-| Windows | Files at ZIP root (CI: `Compress-Archive -Path dist\Mnemosyne\*`) | `%TEMP%\mnemosyne_updater.bat` — `robocopy /E /IS /IT` | `start "" "%APP%\Mnemosyne.exe"` |
+| Windows | Files at ZIP root (CI: `Compress-Archive -Path dist\Mnemosyne\*`) | `%TEMP%\mnemosyne_updater.bat` — `robocopy /E /IS /IT /R:2 /W:2`, merged into the existing folder | `start "" "%APP%\Mnemosyne.exe"` |
 | macOS | `Mnemosyne.app/` at ZIP root | `/tmp/mnemosyne_updater.sh` — `mv`; falls back to `osascript` admin prompt if in `/Applications` | `open "$OLD"` + `xattr -cr` to clear quarantine |
+
+**The scripts take their paths as arguments, never baked into the file.** A script file is read back in the *platform's* encoding, and on Windows that is not the one Python wrote: `cmd.exe` parses a `.bat` in the console OEM code page (cp852 on a Hungarian install) while `write_text` produced UTF-8. One accented character anywhere in the install path — `…\Programozás\Mnemosyne` — therefore turned `%APP%` into a different, non-existent directory; robocopy then **created** it, copied the new build into it, exited 3 (success), and the batch restarted the untouched old app. The app came back on the old version, found the same release again, and offered the same update forever. Arguments go through `CreateProcessW` as Unicode and survive intact, so the script files stay pure ASCII (`encoding='ascii'` is asserted at write time by the codec itself). The same applies to any future script the app generates.
+
+**Windows merges, macOS replaces.** `robocopy` without `/PURGE` never touches destination-only files, so `projects/`, `config.json` and `models/` in the app folder survive a Windows update untouched — they are `/XD`/`/XF`-excluded as a belt, not copied out to the temp dir and back. On macOS the whole `.app` is `mv`-ed, so there the user data genuinely has to be carried into the new bundle first. Do not "simplify" the two into one shape.
+
+**Two robocopy details are load-bearing.** Its built-in retry defaults are `/R:1000000 /W:30`, so a single file it cannot open — the old process still running, a scanner holding the freshly extracted DLLs — makes it retry for weeks instead of failing; `/R:2 /W:2` bounds it. And exit codes below 8 mean success while 8 and above mean at least one file was not copied: nothing used to read that, so a completely failed replace still ended with the batch cheerfully restarting the old app.
+
+**The version stamp is written last.** `_internal/version.txt` is excluded from the main pass and copied separately only after it succeeds. robocopy walks the root first, so it can fail on the locked `Mnemosyne.exe` and *still* reach `_internal` on the same run — which would leave the old binary in place stamped with the new version, a worse failure than the loop because the app then reports itself up to date. With the stamp written last, the version the app reads always means "this build is fully installed".
+
+**Waiting for the old process is a PID check, not a sleep.** The script polls `tasklist` / `kill -0` for the app's own pid (up to 60 s) before copying. A fixed sleep raced the `os._exit(0)` that follows one second later, and losing that race means robocopy meets a process that still holds every DLL it loaded.
 
 **Two different directories — do not confuse them.** `launcher.py` exports both:
 
@@ -1210,6 +1222,22 @@ State is held in a module-level dict (`_state`) protected by a `threading.Lock`.
 The app exits via `os._exit(0)` (not `sys.exit`) one second after launching the updater script, to guarantee the process terminates even if FastAPI shutdown hooks are slow.
 
 **Unversioned builds**: when `current_version == 'dev'` the tag cannot be compared, so `_do_check()` reports status `dev_build` rather than `up_to_date` — claiming "up to date" here hides real updates. The UI surfaces it as its own state with a link to the release page. `apply_update()` still raises `RuntimeError` when `IS_FROZEN` is false.
+
+### Verifying that the update landed
+
+The updater script runs after the process that started it is gone, so nothing it does can be reported through `_state`. It leaves a breadcrumb instead, and the *next* process reads it:
+
+| File | Written by | Holds |
+|---|---|---|
+| `%TEMP%\mnemosyne_update\attempt.json` | `_write_attempt()` before the exit | which version this restart is supposed to come back as |
+| `%TEMP%\mnemosyne_update\result.txt` | the updater script | `robocopy=<code>` · `replace=ok\|fail` · `stamp=fail` |
+| `%TEMP%\mnemosyne_update.log` | the updater script | the full transcript; the UI shows its *path* when an install fails, so the user has something to send back |
+
+`check_install_result()` runs once at startup (called from `main.py` right after the `updater` import) and compares the recorded expectation with `get_current_version()` **and** with the script's own verdict — a version match alone is not proof, which is why `_copy_ok()` exists. A mismatch sets `install_failed` in the state dict; `UpdateBanner.tsx` shows it as a red block in the modal and a red dot on the header icon, and it is never cleared by a later check.
+
+This is the part that matters most. Every individual failure above is recoverable; what made the bug intolerable was that a failed install is otherwise **indistinguishable from never having tried** — the app restarts on the old version, the next check finds the same release, and the user repeats a 160 MB download forever with nothing anywhere saying it did not work.
+
+`apply_update()` also has to fail loudly: it wraps extraction and script launch, and on any exception sets `status='error'` before re-raising, because the UI has already been switched to `applying` and would otherwise spin on a spinner for a restart that is never coming.
 
 ---
 
@@ -1514,6 +1542,8 @@ Each entry below is **trigger → the files that must change together**. They ex
 - **Any UI that shows a date or a month name** → take the locale from `useDateLocale()` and format through `formatPartialDate()` / `monthNames()` in `SettingsContext.tsx`. Never pass a literal `'hu-HU'` / `'en-GB'` to `toLocale*`, and never keep a local `MONTHS_EN` array: both pin the output to one language regardless of the user's setting, and Intl is what gets the part *order* right (`1950. március 12.` vs `12 March 1950`). Module-level helpers take `locale` as a parameter rather than reading it themselves
 - **New built-in document type** → add it to the migration seed in `database.py`, to `SEED_LABELS` in `docTypes.ts` (with the exact seeded English label), and add a `docType.<key>` entry to both dictionaries
 - **New file bundled into the build** → add it to `datas` in `mnemosyne.spec` **and** read it via `MNEMOSYNE_BUNDLE_DIR`, not `MNEMOSYNE_APP_DIR` — see *Auto-update* for why the two are not interchangeable
+- **Change to the update scripts in `updater.py`** → the script text is only half of it. Keep the paths as script *arguments* (never interpolated into the file, which is read back in the platform's own encoding), keep the file pure ASCII, keep `robocopy`'s retries bounded and its exit code read, keep `_internal/version.txt` copied last, and make sure whatever new way the update can fail ends up in `result.txt` so `check_install_result()` and `_copy_ok()` can see it. A new failure state that reaches the user needs `install_failed` in `updater.py`, the `UpdateStatus` interface in `types.ts`, the red block in `UpdateBanner.tsx`, and its keys in **both** dictionaries. See *Auto-update → Verifying that the update landed* — an update path that can fail silently is the one bug in this repo that costs the user a 160 MB download every time they retry
+- **Any generated script or file a platform tool reads back** (a `.bat` for `cmd.exe`, an `.sh`, an `.ini`) → decide its encoding deliberately. Python writes UTF-8; `cmd.exe` reads a batch file in the console **OEM** code page. Pass variable text as arguments and keep the file itself ASCII rather than hoping the two agree
 - **New streaming ZIP endpoint** → wrap the pipe in `NonSeekableWriter` (see *ZIP export*), otherwise the archive is silently corrupt on Windows
 - **New UI that removes a shared object from one person's page** (a document row, a linked cluster, anything a second person can also be attached to) → call the *unlink* endpoint, never the delete one — for documents that is `DELETE /api/documents/{id}/persons/{person_id}` via `api.documents.unlinkPerson()`. A person's page shows one person's view of something shared, so an X there means "not on this page"; wiring it to the delete endpoint destroys the object for everybody else too, with nothing on screen to warn the user. Deleting outright belongs on the tab that lists every owner. Invalidate both `['person-docs', personId]` and `['docs-all']` afterwards
 - **New data table with `person_id` FK** → update `_delete_persons` in `export_utils.py` with an explicit `DELETE FROM <table> WHERE person_id IN (...)` line before the `DELETE FROM persons` line. If the table has `ON DELETE CASCADE` (like `person_subclusters`) the cascade would handle it automatically, but being explicit is the established pattern here

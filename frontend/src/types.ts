@@ -567,6 +567,13 @@ export interface UpdateStatus {
   total: number
   zip_path: string | null
   error: string | null
+  /** Set when the previous restart was supposed to install a new version and came back on the old one. */
+  install_failed: {
+    expected: string
+    current: string
+    log: string
+    detail: string | null
+  } | null
 }
 
 
